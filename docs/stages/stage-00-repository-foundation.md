@@ -1,10 +1,12 @@
 # AtlasRAG Stage 0 — Repository Foundation
 
-**Status:** LOCAL COMPLETE — PUBLICATION PENDING
+**Status:** CORRECTIVE PUBLICATION PENDING
 
-Stage 0 is not complete until the Stage commit is pushed successfully and the
-remote CI result is green. This report records the verified local,
-pre-publication state; the publication finalizer has not yet run.
+The initial Stage commit was pushed successfully, but its first remote CI run
+failed before any project command executed because the configured `setup-uv`
+action alias did not exist. The corrective workflow and this updated report
+remain local and uncommitted. Stage 0 completes only when the commit containing
+this report is visible on `origin` and its remote CI result is green.
 
 ## Scope
 
@@ -58,7 +60,9 @@ Stage that uses it.
   `typecheck`, `architecture-check`, `test`, and `verify`.
 - Added secret-free, service-free CI that installs Python 3.11 and `uv`, performs
   a frozen sync, and runs `make verify` without PostgreSQL, Redis, Milvus,
-  SearXNG, LangSmith, or model services.
+  SearXNG, LangSmith, or model services. The `setup-uv` step is pinned to the
+  official v10.2.0 immutable commit
+  `c18668ad3cf93ea998bef934396af7bb5c839dc7`.
 - Added a reusable safe Stage finalizer that requires the expected branch and a
   configured `origin`, runs the gates, requires the report, validates staged
   content, creates one commit, and pushes without force. It does not validate the
@@ -83,7 +87,8 @@ Stage that uses it.
   `tests/integration/`.
 - Offline tests: `tests/test_repository_foundation.py`,
   `tests/test_import_boundaries.py`, `tests/test_forbidden_tracked_files.py`, and
-  `tests/test_finalize_stage.py`.
+  `tests/test_finalize_stage.py`, plus the CI workflow regression test
+  `tests/test_ci_workflow.py`.
 - Deleted legacy template categories: `src/retrieval_graph/`, template unit and
   integration tests plus their shared configuration, `langgraph.json`, legacy
   CI workflows, the Studio UI image, `.codespellignore`, and template-only
@@ -104,8 +109,11 @@ Stage that uses it.
   missing-report, failed-verification, forbidden-file, empty-commit, successful
   local push, rejected-push, authentication classification, and URL-redaction
   behavior against temporary local Git repositories.
+- `test_ci_workflow.py` verifies offline that `setup-uv` uses the exact official
+  v10.2.0 immutable commit and that the nonexistent floating `v10` alias cannot
+  return.
 
-The current independent test result is `78 passed`.
+The current independent test result is `79 passed`.
 
 ## Verification
 
@@ -122,15 +130,14 @@ environment variables were unset for the run. No network service was required.
 | Command | Result |
 | --- | --- |
 | `uv sync --frozen --python /tmp/atlasrag-uv-python/cpython-3.11.16-linux-x86_64-gnu/bin/python3.11` | PASS — frozen environment checked 14 packages |
-| `make format-check` | PASS — 22 files already formatted |
+| `make format-check` | PASS — 23 files already formatted |
 | `make lint` | PASS — all Ruff checks passed |
-| `make typecheck` | PASS — no issues in 16 source files |
+| `make typecheck` | PASS — no issues in 17 source files |
 | `make architecture-check` | PASS — import-boundary and forbidden-tracked-file checks emitted no diagnostics |
-| `make test` | PASS — 78 collected, 78 passed |
-| `make verify` | PASS — format, lint, type, architecture, and test gates all passed; 78 tests passed |
-| `git status --short` before this report | PASS — clean worktree |
-| `git status --short` after this report | PASS — only `?? docs/stages/stage-00-repository-foundation.md` |
-| `git diff --check` after this report | PASS — no whitespace errors in tracked changes |
+| `make test` | PASS — 79 collected, 79 passed |
+| `make verify` | PASS — format, lint, type, architecture, and test gates all passed; 79 tests passed |
+| `git status --short` after the corrective changes | PASS — exactly the workflow and this report modified, the CI regression test untracked, and nothing staged |
+| `git diff --check` after the corrective changes | PASS — no whitespace errors in tracked changes |
 
 Ignore-policy evidence from `git check-ignore -v`:
 
@@ -141,9 +148,12 @@ Ignore-policy evidence from `git check-ignore -v`:
 .gitignore:32:/models/          models/example.safetensors
 ```
 
-The full gate was rerun after this report was created, while the report remained
-untracked. The finalizer will stage it and run `git diff --cached --check` plus
-the staged forbidden-artifact check. No remote CI claim is made here.
+The initial finalizer created and pushed Stage commit
+`0b912b8afb45f5fa500a5700dfa7bda988d678e3`. CI run `35900374986` then failed
+while resolving the nonexistent `astral-sh/setup-uv@v10` alias, before frozen
+sync or any repository quality gate ran. The corrective changes remain
+uncommitted and unpushed pending review and another finalizer run. No green
+remote CI claim is made here.
 
 ## Known limitations
 
@@ -151,8 +161,9 @@ the staged forbidden-artifact check. No remote CI claim is made here.
   model, graph, business CLI, or application runtime implementation.
 - PostgreSQL, Redis, Milvus, SearXNG, model, and other service integration
   validation is deferred to the Stage that introduces each integration.
-- This report is in the pre-publication state and remains uncommitted until the
-  reviewed finalizer creates the required final Stage commit and pushes it.
+- The initial Stage commit is published, but CI run `35900374986` did not reach
+  project verification because its `setup-uv` reference could not resolve. The
+  corrective commit containing this report is not yet created or published.
 
 ## Architecture deviations
 
@@ -161,11 +172,14 @@ NONE
 ## Git and publication
 
 - Branch: `stage/00-repository-foundation`
-- Pre-finalization HEAD:
-  `05de63175fa388f187d0c98cf676348b61d0619c`
+- Initial published Stage commit:
+  `0b912b8afb45f5fa500a5700dfa7bda988d678e3`
 - Expected origin: `https://github.com/Melon235/AtlasRAG.git`
-- Publication: `PENDING — finalizer not yet run`
-- Remote CI: `PENDING`
+- Initial publication: `PUSHED`
+- Initial remote CI: `FAILED — run 35900374986 could not resolve the nonexistent setup-uv v10 alias before project commands`
+- Corrective publication: `PENDING — workflow, regression test, and this report remain uncommitted and unpushed`
+- Completion condition: the commit containing this report is visible on
+  `origin` and its remote CI result is green.
 
 ## Next
 
