@@ -5,12 +5,34 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pytest
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_SUBPACKAGES = (
+    "atlasrag.application",
+    "atlasrag.config",
+    "atlasrag.domain",
+    "atlasrag.graphs",
+    "atlasrag.observability",
+    "atlasrag.providers",
+    "atlasrag.repositories",
+    "atlasrag.runtime",
+    "atlasrag.services",
+)
 
 
 def test_package_imports() -> None:
     """The AtlasRAG package is importable from the src layout."""
     assert importlib.import_module("atlasrag") is not None
+
+
+@pytest.mark.parametrize("package_name", REQUIRED_SUBPACKAGES)
+def test_required_subpackage_imports(package_name: str) -> None:
+    """Every required Stage 0 subpackage is a regular importable package."""
+    package = importlib.import_module(package_name)
+
+    assert package.__file__ is not None
+    assert Path(package.__file__).name == "__init__.py"
 
 
 def test_repository_has_architecture_manual() -> None:
