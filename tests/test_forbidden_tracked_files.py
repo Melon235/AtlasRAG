@@ -79,6 +79,8 @@ def test_allowed_tracked_paths_pass(tmp_path: Path) -> None:
         ".env",
         ".env.production",
         ".venv/pyvenv.cfg",
+        "venv/pyvenv.cfg",
+        "env/pyvenv.cfg",
         "src/atlasrag/__pycache__/module.pyc",
         ".pytest_cache/v/cache/nodeids",
         ".mypy_cache/3.11/cache.json",

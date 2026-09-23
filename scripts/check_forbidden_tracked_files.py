@@ -19,6 +19,7 @@ ROOT_FORBIDDEN_DIRECTORIES = frozenset(
         "benchmark_data",
         "benchmark_runs",
         "data",
+        "env",
         "etcd_data",
         "logs",
         "milvus_data",
@@ -29,6 +30,7 @@ ROOT_FORBIDDEN_DIRECTORIES = frozenset(
         "redis_data",
         "runtime",
         "traces",
+        "venv",
     }
 )
 CACHE_DIRECTORIES = frozenset(
