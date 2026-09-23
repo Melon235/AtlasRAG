@@ -190,6 +190,19 @@ def test_non_repository_fails_closed_with_clear_diagnostic(tmp_path: Path) -> No
     assert "unable to resolve Git repository root:" in result.stderr
 
 
+def test_repository_root_preserves_trailing_newline_in_basename(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository\n"
+    initialize_repository(repository)
+    write_file(repository, "README.md")
+    run_git(repository, "add", "README.md")
+
+    result = run_checker(repository)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_control_characters_are_escaped_on_one_diagnostic_line(tmp_path: Path) -> None:
     initialize_repository(tmp_path)
     forbidden_path = ".env.bad\n\tname"

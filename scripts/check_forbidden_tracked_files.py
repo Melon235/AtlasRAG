@@ -102,7 +102,7 @@ def git_repository_root() -> tuple[Path | None, str | None]:
     if result.returncode != 0:
         diagnostic = result.stderr.decode("utf-8", errors="replace").strip()
         return None, diagnostic or "Git repository root query failed"
-    decoded = result.stdout.decode("utf-8", errors="surrogateescape").rstrip("\n")
+    decoded = result.stdout.decode("utf-8", errors="surrogateescape").removesuffix("\n")
     if not decoded:
         return None, "Git returned an empty repository root"
     return Path(decoded), None
