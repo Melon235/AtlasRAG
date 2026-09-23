@@ -1,0 +1,2 @@
+# Preserve the authoritative manual byte-for-byte, including its source whitespace.
+docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md -whitespace
