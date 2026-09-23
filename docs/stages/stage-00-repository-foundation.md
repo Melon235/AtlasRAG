@@ -1,12 +1,15 @@
 # AtlasRAG Stage 0 — Repository Foundation
 
-**Status:** CORRECTIVE PUBLICATION PENDING
+**Status:** COMPLETE
 
-The initial Stage commit was pushed successfully, but its first remote CI run
-failed before any project command executed because the configured `setup-uv`
-action alias did not exist. The corrective workflow and this updated report
-remain local and uncommitted. Stage 0 completes only when the commit containing
-this report is visible on `origin` and its remote CI result is green.
+The Stage 0 corrective implementation commit
+`4d0d9b99362e74722732fb88dd44b615f2e83c38` was pushed successfully. CI #2,
+run `35902190420`, completed successfully. CI #1, run `35900374986`, had failed
+before any project command executed because the configured
+`astral-sh/setup-uv@v10` alias did not exist; the corrective commit replaced it
+with the immutable v10.2.0 action SHA. This final status-only report update
+remains local until the finalizer commits and pushes it, and its resulting CI
+must also be green before handoff.
 
 ## Scope
 
@@ -136,8 +139,8 @@ environment variables were unset for the run. No network service was required.
 | `make architecture-check` | PASS — import-boundary and forbidden-tracked-file checks emitted no diagnostics |
 | `make test` | PASS — 79 collected, 79 passed |
 | `make verify` | PASS — format, lint, type, architecture, and test gates all passed; 79 tests passed |
-| `git status --short` after the corrective changes | PASS — exactly the workflow and this report modified, the CI regression test untracked, and nothing staged |
-| `git diff --check` after the corrective changes | PASS — no whitespace errors in tracked changes |
+| `git status --short` after this final status update | PASS — only this report modified and nothing staged |
+| `git diff --check` after this final status update | PASS — no whitespace errors |
 
 Ignore-policy evidence from `git check-ignore -v`:
 
@@ -149,11 +152,16 @@ Ignore-policy evidence from `git check-ignore -v`:
 ```
 
 The initial finalizer created and pushed Stage commit
-`0b912b8afb45f5fa500a5700dfa7bda988d678e3`. CI run `35900374986` then failed
-while resolving the nonexistent `astral-sh/setup-uv@v10` alias, before frozen
-sync or any repository quality gate ran. The corrective changes remain
-uncommitted and unpushed pending review and another finalizer run. No green
-remote CI claim is made here.
+`0b912b8afb45f5fa500a5700dfa7bda988d678e3`. CI #1 run `35900374986` then
+failed while resolving the nonexistent `astral-sh/setup-uv@v10` alias, before
+checkout, frozen sync, or any repository quality gate ran. Corrective commit
+`4d0d9b99362e74722732fb88dd44b615f2e83c38` was pushed normally. CI #2, run
+`35902190420`, completed successfully for that commit using the immutable
+v10.2.0 action SHA `c18668ad3cf93ea998bef934396af7bb5c839dc7`; checkout,
+Python setup, uv installation, frozen sync, and the full `make verify` workflow
+all passed. This final status-only report update is not part of that corrective
+commit and must still be committed and pushed by the finalizer, followed by a
+green CI result before handoff.
 
 ## Known limitations
 
@@ -161,9 +169,6 @@ remote CI claim is made here.
   model, graph, business CLI, or application runtime implementation.
 - PostgreSQL, Redis, Milvus, SearXNG, model, and other service integration
   validation is deferred to the Stage that introduces each integration.
-- The initial Stage commit is published, but CI run `35900374986` did not reach
-  project verification because its `setup-uv` reference could not resolve. The
-  corrective commit containing this report is not yet created or published.
 
 ## Architecture deviations
 
@@ -172,14 +177,17 @@ NONE
 ## Git and publication
 
 - Branch: `stage/00-repository-foundation`
+- Origin: `https://github.com/Melon235/AtlasRAG.git`
 - Initial published Stage commit:
   `0b912b8afb45f5fa500a5700dfa7bda988d678e3`
-- Expected origin: `https://github.com/Melon235/AtlasRAG.git`
 - Initial publication: `PUSHED`
-- Initial remote CI: `FAILED — run 35900374986 could not resolve the nonexistent setup-uv v10 alias before project commands`
-- Corrective publication: `PENDING — workflow, regression test, and this report remain uncommitted and unpushed`
-- Completion condition: the commit containing this report is visible on
-  `origin` and its remote CI result is green.
+- Initial remote CI: `FAILED — CI #1 run 35900374986 could not resolve the nonexistent setup-uv v10 alias before project commands`
+- Corrective implementation commit:
+  `4d0d9b99362e74722732fb88dd44b615f2e83c38`
+- Corrective publication: `PUSHED — normal push; no force push`
+- Corrective remote CI: `PASS — CI #2 run 35902190420 completed successfully`
+- Integration: no merge was performed.
+- Final report publication: `PENDING — this status-only update will be committed and pushed by the finalizer and must receive green CI before handoff`
 
 ## Next
 
