@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 ROOT_FORBIDDEN_DIRECTORIES = frozenset(
     {
@@ -66,14 +66,61 @@ def is_forbidden(path: str) -> bool:
     return parsed_path.suffix.lower() in MODEL_WEIGHT_SUFFIXES
 
 
-def git_paths(staged: bool) -> tuple[list[str], str | None]:
+def escape_path(path: str) -> str:
+    """Render control characters and surrogateescaped bytes on one line."""
+    escaped: list[str] = []
+    for character in path:
+        code_point = ord(character)
+        if character == "\\":
+            escaped.append("\\\\")
+        elif character == "\n":
+            escaped.append("\\n")
+        elif character == "\r":
+            escaped.append("\\r")
+        elif character == "\t":
+            escaped.append("\\t")
+        elif 0xDC80 <= code_point <= 0xDCFF:
+            escaped.append(f"\\x{code_point - 0xDC00:02x}")
+        elif code_point < 0x20 or code_point == 0x7F:
+            escaped.append(f"\\x{code_point:02x}")
+        elif character.isprintable():
+            escaped.append(character)
+        elif code_point <= 0xFFFF:
+            escaped.append(f"\\u{code_point:04x}")
+        else:
+            escaped.append(f"\\U{code_point:08x}")
+    return "".join(escaped)
+
+
+def git_repository_root() -> tuple[Path | None, str | None]:
+    """Resolve the repository root from any working-tree subdirectory."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        diagnostic = result.stderr.decode("utf-8", errors="replace").strip()
+        return None, diagnostic or "Git repository root query failed"
+    decoded = result.stdout.decode("utf-8", errors="surrogateescape").rstrip("\n")
+    if not decoded:
+        return None, "Git returned an empty repository root"
+    return Path(decoded), None
+
+
+def git_paths(staged: bool, repository_root: Path) -> tuple[list[str], str | None]:
     """Read tracked or staged paths from Git without consulting the worktree."""
     command = (
         ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"]
         if staged
         else ["git", "ls-files", "-z"]
     )
-    result = subprocess.run(command, check=False, capture_output=True)
+    result = subprocess.run(
+        command,
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+    )
     if result.returncode != 0:
         diagnostic = result.stderr.decode("utf-8", errors="replace").strip()
         return [], diagnostic or "Git index query failed"
@@ -95,14 +142,22 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     """Run the Git-index policy check and return a process exit code."""
     arguments = parse_args()
-    paths, git_error = git_paths(arguments.staged)
+    repository_root, root_error = git_repository_root()
+    if root_error is not None or repository_root is None:
+        print(
+            f"unable to resolve Git repository root: {root_error}",
+            file=sys.stderr,
+        )
+        return 2
+
+    paths, git_error = git_paths(arguments.staged, repository_root)
     if git_error is not None:
         print(f"unable to inspect Git paths: {git_error}", file=sys.stderr)
         return 2
 
     violations = sorted(path for path in paths if is_forbidden(path))
     for path in violations:
-        print(f"{path}: forbidden tracked artifact", file=sys.stderr)
+        print(f"{escape_path(path)}: forbidden tracked artifact", file=sys.stderr)
     return 1 if violations else 0
 
 

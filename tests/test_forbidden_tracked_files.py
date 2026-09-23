@@ -44,11 +44,13 @@ def write_file(
     target.write_text(content, encoding="utf-8")
 
 
-def run_checker(repository: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def run_checker(
+    repository: Path, *arguments: str, working_directory: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     """Execute the real checker in a temporary Git repository."""
     return subprocess.run(
         [sys.executable, str(CHECKER), *arguments],
-        cwd=repository,
+        cwd=working_directory or repository,
         check=False,
         capture_output=True,
         text=True,
@@ -148,6 +150,75 @@ def test_staged_mode_ignores_unstaged_forbidden_file(tmp_path: Path) -> None:
     result = run_checker(tmp_path, "--staged")
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_default_mode_checks_the_whole_repository_from_nested_cwd(
+    tmp_path: Path,
+) -> None:
+    initialize_repository(tmp_path)
+    write_file(tmp_path, "nested/tracked.txt")
+    write_file(tmp_path, ".env.local")
+    run_git(tmp_path, "add", "nested/tracked.txt")
+    run_git(tmp_path, "add", "--force", ".env.local")
+
+    result = run_checker(tmp_path, working_directory=tmp_path / "nested")
+
+    assert result.returncode != 0
+    assert ".env.local: forbidden tracked artifact" in result.stderr
+
+
+def test_staged_mode_checks_the_whole_repository_from_nested_cwd(
+    tmp_path: Path,
+) -> None:
+    initialize_repository(tmp_path)
+    write_file(tmp_path, "nested/tracked.txt")
+    run_git(tmp_path, "add", "nested/tracked.txt")
+    run_git(tmp_path, "commit", "--quiet", "-m", "initial")
+    write_file(tmp_path, ".env.local")
+    run_git(tmp_path, "add", "--force", ".env.local")
+
+    result = run_checker(tmp_path, "--staged", working_directory=tmp_path / "nested")
+
+    assert result.returncode != 0
+    assert ".env.local: forbidden tracked artifact" in result.stderr
+
+
+def test_non_repository_fails_closed_with_clear_diagnostic(tmp_path: Path) -> None:
+    result = run_checker(tmp_path)
+
+    assert result.returncode == 2
+    assert "unable to resolve Git repository root:" in result.stderr
+
+
+def test_control_characters_are_escaped_on_one_diagnostic_line(tmp_path: Path) -> None:
+    initialize_repository(tmp_path)
+    forbidden_path = ".env.bad\n\tname"
+    write_file(tmp_path, forbidden_path)
+    run_git(tmp_path, "add", "--force", "--", forbidden_path)
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode != 0
+    assert result.stderr.splitlines() == [
+        r".env.bad\n\tname: forbidden tracked artifact"
+    ]
+
+
+def test_surrogateescaped_byte_is_rendered_deterministically(tmp_path: Path) -> None:
+    initialize_repository(tmp_path)
+    forbidden_path = ".env.bad-\udcff"
+    write_file(tmp_path, forbidden_path)
+    run_git(tmp_path, "add", "--force", "--", forbidden_path)
+
+    result = subprocess.run(
+        [sys.executable, str(CHECKER)],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert result.stderr == b".env.bad-\\xff: forbidden tracked artifact\n"
 
 
 def test_violations_are_sorted_deterministically(tmp_path: Path) -> None:

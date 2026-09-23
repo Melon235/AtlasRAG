@@ -219,3 +219,50 @@ def test_remote_rejection_uses_generic_push_failure_not_auth_token(
     assert "GITHUB_PUSH_FAILED" in combined_output(result)
     assert "GITHUB_AUTH_FAILED" not in combined_output(result)
     assert "policy rejection" in combined_output(result)
+
+
+def test_github_ssh_permission_denial_uses_auth_failure_token(
+    tmp_path: Path,
+) -> None:
+    repository, remote = initialize_stage_repository(tmp_path)
+    hook = remote / "hooks" / "pre-receive"
+    hook.write_text(
+        "#!/bin/sh\n"
+        "echo 'ERROR: Permission to owner/repository.git denied to octocat.' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
+    (repository / "change.txt").write_text("ready\n", encoding="utf-8")
+
+    result = run_finalizer(repository)
+
+    assert result.returncode != 0
+    assert "GITHUB_AUTH_FAILED" in combined_output(result)
+    assert "GITHUB_PUSH_FAILED" not in combined_output(result)
+    assert "Permission to owner/repository.git denied to octocat" in combined_output(
+        result
+    )
+
+
+def test_push_failure_redacts_credential_bearing_urls(tmp_path: Path) -> None:
+    repository, remote = initialize_stage_repository(tmp_path)
+    hook = remote / "hooks" / "pre-receive"
+    hook.write_text(
+        "#!/bin/sh\n"
+        "echo 'diagnostic endpoint https://octocat:secret-token@example.invalid/path' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
+    (repository / "change.txt").write_text("ready\n", encoding="utf-8")
+
+    result = run_finalizer(repository)
+    output = combined_output(result)
+
+    assert result.returncode != 0
+    assert "GITHUB_PUSH_FAILED" in output
+    assert "diagnostic endpoint" in output
+    assert "<redacted-url>" in output
+    assert "octocat" not in output
+    assert "secret-token" not in output

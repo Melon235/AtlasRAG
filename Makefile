@@ -4,23 +4,23 @@ setup:
 	uv sync
 
 format:
-	uv run ruff format .
+	uv run --frozen ruff format .
 
 format-check:
-	uv run ruff format --check .
+	uv run --frozen ruff format --check .
 
 lint:
-	uv run ruff check .
+	uv run --frozen ruff check .
 
 typecheck:
-	uv run mypy src/atlasrag scripts tests
+	uv run --frozen mypy src/atlasrag scripts tests
 
 test:
-	uv run pytest
+	uv run --frozen pytest
 
 architecture-check:
-	uv run python scripts/check_import_boundaries.py
-	uv run python scripts/check_forbidden_tracked_files.py
+	uv run --frozen python scripts/check_import_boundaries.py
+	uv run --frozen python scripts/check_forbidden_tracked_files.py
 
 verify:
 	$(MAKE) format-check

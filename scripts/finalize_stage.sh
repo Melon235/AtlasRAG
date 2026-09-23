@@ -75,13 +75,13 @@ print(
 PY
 }
 
-if GIT_TERMINAL_PROMPT=0 git push -u origin HEAD 2>"$push_stderr"; then
+if LC_ALL=C GIT_TERMINAL_PROMPT=0 git push -u origin HEAD 2>"$push_stderr"; then
     print_sanitized_push_stderr
     exit 0
 fi
 
-if grep -Eiq \
-    'authentication failed|authorization failed|could not read (username|password)|permission denied|access denied|write access.*not granted|http[^0-9]*(401|403)|returned error: 40(1|3)' \
+if LC_ALL=C grep -Eiq \
+    'authentication failed|authorization failed|could not read (username|password)|permission denied|permission to .* denied to|access denied|write access.*not granted|http[^0-9]*(401|403)|returned error: 40(1|3)' \
     "$push_stderr"; then
     echo 'GITHUB_AUTH_FAILED: GitHub authentication or push permission failed' >&2
 else
