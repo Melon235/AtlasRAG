@@ -5,7 +5,7 @@ description = "Repository foundation for the architecture-governed AtlasRAG plat
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 license = "MIT"
-dependencies = []
+dependencies = ["pydantic>=2.12.0,<3.0.0"]
 
 [dependency-groups]
 dev = [
