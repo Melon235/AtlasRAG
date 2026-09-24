@@ -88,6 +88,4 @@ class CandidatePool(FrozenModel):
     def _mode_matches_candidates(self) -> Self:
         if self.retrieval_mode is RetrievalMode.UNAVAILABLE and self.candidates:
             raise ValueError("UNAVAILABLE requires empty candidates")
-        if self.retrieval_mode is not RetrievalMode.UNAVAILABLE and not self.candidates:
-            raise ValueError("available retrieval modes require non-empty candidates")
         return self

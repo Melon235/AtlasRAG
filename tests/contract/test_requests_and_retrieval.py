@@ -580,22 +580,32 @@ def test_unavailable_candidate_pool_is_empty_without_constraining_ordering(
 
 
 @pytest.mark.parametrize(
-    ("retrieval_mode", "candidates"),
+    "retrieval_mode",
     (
-        (RetrievalMode.UNAVAILABLE, (_candidate(),)),
-        (RetrievalMode.HYBRID, ()),
-        (RetrievalMode.DENSE_ONLY, ()),
-        (RetrievalMode.BM25_ONLY, ()),
+        RetrievalMode.HYBRID,
+        RetrievalMode.DENSE_ONLY,
+        RetrievalMode.BM25_ONLY,
     ),
 )
-def test_candidate_pool_enforces_mode_cardinality(
+def test_available_candidate_pool_modes_allow_empty_candidates(
     retrieval_mode: RetrievalMode,
-    candidates: tuple[RetrievalCandidate, ...],
 ) -> None:
+    pool = CandidatePool(
+        candidates=(),
+        retrieval_mode=retrieval_mode,
+        ordering=CandidateOrdering.RRF,
+        degraded=False,
+    )
+
+    assert pool.candidates == ()
+    assert pool.retrieval_mode is retrieval_mode
+
+
+def test_unavailable_candidate_pool_rejects_candidates() -> None:
     with pytest.raises(ValidationError, match="candidates"):
         CandidatePool(
-            candidates=candidates,
-            retrieval_mode=retrieval_mode,
+            candidates=(_candidate(),),
+            retrieval_mode=RetrievalMode.UNAVAILABLE,
             ordering=CandidateOrdering.RRF,
             degraded=False,
         )
