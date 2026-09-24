@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Annotated, Self
+from urllib.parse import urlsplit
 
 from pydantic import (
     BeforeValidator,
@@ -85,16 +86,30 @@ class _WebSourceBase(FrozenModel):
     @classmethod
     def _host_only_domain(cls, value: str) -> str:
         _validate_nonblank(value)
-        if value != value.strip() or value.endswith("."):
+        if value != value.strip() or value.endswith(".") or "\\" in value:
             raise ValueError("domain must use host-only syntax")
         try:
+            components = urlsplit(f"https://{value}")
+            authority = components.netloc
+            has_port_syntax = (not authority.startswith("[") and ":" in authority) or (
+                authority.startswith("[") and not authority.endswith("]")
+            )
+            if (
+                authority != value
+                or components.username is not None
+                or components.password is not None
+                or has_port_syntax
+                or components.path
+                or components.query
+                or components.fragment
+            ):
+                raise ValueError("domain must use host-only syntax")
             parsed = _HTTP_URL_ADAPTER.validate_python(f"https://{value}")
-            canonical_domain = value.encode("idna").decode("ascii").casefold()
-        except (UnicodeError, ValidationError) as error:
+        except (ValueError, ValidationError) as error:
             raise ValueError("domain must use host-only syntax") from error
-        if parsed.host is None or parsed.host.casefold() != canonical_domain:
+        if parsed.host is None:
             raise ValueError("domain must use host-only syntax")
-        return canonical_domain
+        return parsed.host.casefold()
 
     @model_validator(mode="after")
     def _domain_matches_url_hostname(self) -> Self:

@@ -170,6 +170,19 @@ def test_web_source_models_canonicalize_matching_unicode_idn_domains(
     assert model.domain == "xn--bcher-kva.example"
 
 
+def test_web_source_models_share_modern_idn_normalization_for_sharp_s() -> None:
+    result = WebSearchResult.model_validate(
+        {
+            **_search_payload(),
+            "url": "https://faß.de/path",
+            "domain": "faß.de",
+        }
+    )
+
+    assert result.url.host == "xn--fa-hia.de"
+    assert result.domain == "xn--fa-hia.de"
+
+
 def test_web_source_url_ports_remain_valid_without_entering_domain() -> None:
     result = WebSearchResult.model_validate(
         {
