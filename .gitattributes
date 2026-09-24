@@ -1,0 +1,2 @@
+# Suppress Git whitespace diagnostics only for the byte-identical imported manual.
+docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md -whitespace
