@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import pickle
+from collections.abc import Callable
+from copy import copy, deepcopy
 from enum import StrEnum
 from math import inf, nan
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
@@ -179,7 +183,7 @@ def test_exception_hierarchy_distinguishes_dependency_failures() -> None:
         assert not issubclass(exception_type, DependencyError)
 
 
-FIXED_ERROR_CASES: tuple[tuple[type[AtlasRAGError], ErrorCode, str], ...] = (
+FIXED_ERROR_CASES: tuple[tuple[Callable[[], AtlasRAGError], ErrorCode, str], ...] = (
     (
         DependencyUnavailableError,
         ErrorCode.DEPENDENCY_UNAVAILABLE,
@@ -227,7 +231,7 @@ FIXED_ERROR_CASES: tuple[tuple[type[AtlasRAGError], ErrorCode, str], ...] = (
     ("exception_type", "expected_code", "expected_message"), FIXED_ERROR_CASES
 )
 def test_fixed_exceptions_expose_stable_code_and_caller_safe_message(
-    exception_type: type[AtlasRAGError],
+    exception_type: Callable[[], AtlasRAGError],
     expected_code: ErrorCode,
     expected_message: str,
 ) -> None:
@@ -247,8 +251,20 @@ def test_dependency_error_accepts_only_dependency_codes(code: ErrorCode) -> None
     error = DependencyError(code)
 
     assert error.code is code
+    assert type(error.code) is ErrorCode
     assert error.safe_message == "A required dependency failed."
     assert str(error) == error.safe_message
+
+
+@pytest.mark.parametrize(
+    "invalid_code",
+    ("DEPENDENCY_TIMEOUT", "DEPENDENCY_UNAVAILABLE", None, 0, object()),
+)
+def test_dependency_error_rejects_values_that_are_not_error_codes(
+    invalid_code: object,
+) -> None:
+    with pytest.raises(TypeError, match="code must be an ErrorCode"):
+        DependencyError(invalid_code)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -262,6 +278,111 @@ def test_dependency_error_accepts_only_dependency_codes(code: ErrorCode) -> None
 def test_dependency_error_rejects_non_dependency_codes(code: ErrorCode) -> None:
     with pytest.raises(ValueError, match="dependency error code"):
         DependencyError(code)
+
+
+def _generic_atlasrag_error() -> AtlasRAGError:
+    return AtlasRAGError(
+        ErrorCode.INVARIANT_VIOLATION,
+        "A caller-safe technical failure occurred.",
+    )
+
+
+def _generic_dependency_error() -> AtlasRAGError:
+    return DependencyError(ErrorCode.DEPENDENCY_TIMEOUT)
+
+
+ERROR_RECONSTRUCTION_CASES: tuple[
+    tuple[str, Callable[[], AtlasRAGError], tuple[object, ...]], ...
+] = (
+    (
+        "AtlasRAGError",
+        _generic_atlasrag_error,
+        (
+            ErrorCode.INVARIANT_VIOLATION,
+            "A caller-safe technical failure occurred.",
+        ),
+    ),
+    (
+        "DependencyError",
+        _generic_dependency_error,
+        (ErrorCode.DEPENDENCY_TIMEOUT,),
+    ),
+    ("DependencyUnavailableError", DependencyUnavailableError, ()),
+    ("DependencyTimeoutError", DependencyTimeoutError, ()),
+    ("ProviderResponseError", ProviderResponseError, ()),
+    ("CanonicalDataError", CanonicalDataError, ()),
+    ("InvariantViolationError", InvariantViolationError, ()),
+    ("ResourceExhaustedError", ResourceExhaustedError, ()),
+    ("ConfigurationError", ConfigurationError, ()),
+    ("SourceMutationError", SourceMutationError, ()),
+)
+
+
+def _copy_error(error: AtlasRAGError) -> AtlasRAGError:
+    return copy(error)
+
+
+def _deepcopy_error(error: AtlasRAGError) -> AtlasRAGError:
+    return deepcopy(error)
+
+
+def _pickle_error(error: AtlasRAGError) -> AtlasRAGError:
+    return cast(AtlasRAGError, pickle.loads(pickle.dumps(error)))
+
+
+ERROR_ROUND_TRIPS: tuple[tuple[str, Callable[[AtlasRAGError], AtlasRAGError]], ...] = (
+    ("copy", _copy_error),
+    ("deepcopy", _deepcopy_error),
+    ("pickle", _pickle_error),
+)
+
+
+@pytest.mark.parametrize(
+    ("_case_name", "error_factory", "expected_constructor_args"),
+    ERROR_RECONSTRUCTION_CASES,
+    ids=tuple(case_name for case_name, _, _ in ERROR_RECONSTRUCTION_CASES),
+)
+def test_exception_args_match_constructor_inputs(
+    _case_name: str,
+    error_factory: Callable[[], AtlasRAGError],
+    expected_constructor_args: tuple[object, ...],
+) -> None:
+    error = error_factory()
+
+    assert error.args == expected_constructor_args
+
+
+@pytest.mark.parametrize(
+    ("_round_trip_name", "round_trip"),
+    ERROR_ROUND_TRIPS,
+    ids=tuple(name for name, _ in ERROR_ROUND_TRIPS),
+)
+@pytest.mark.parametrize(
+    ("_case_name", "error_factory", "expected_constructor_args"),
+    ERROR_RECONSTRUCTION_CASES,
+    ids=tuple(case_name for case_name, _, _ in ERROR_RECONSTRUCTION_CASES),
+)
+def test_exceptions_survive_copy_deepcopy_and_pickle_round_trips(
+    _round_trip_name: str,
+    round_trip: Callable[[AtlasRAGError], AtlasRAGError],
+    _case_name: str,
+    error_factory: Callable[[], AtlasRAGError],
+    expected_constructor_args: tuple[object, ...],
+) -> None:
+    original = error_factory()
+
+    assert type(original.code) is ErrorCode
+    assert str(original) == original.safe_message
+
+    reconstructed = round_trip(original)
+
+    assert reconstructed is not original
+    assert type(reconstructed) is type(original)
+    assert type(reconstructed.code) is ErrorCode
+    assert reconstructed.code is original.code
+    assert reconstructed.safe_message == original.safe_message
+    assert str(reconstructed) == str(original)
+    assert reconstructed.args == expected_constructor_args
 
 
 def test_normal_negative_outcomes_are_not_error_codes() -> None:

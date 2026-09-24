@@ -20,8 +20,23 @@ class AtlasRAGError(Exception):
     code: ErrorCode
     safe_message: str
 
+    def __init__(self, code: ErrorCode, safe_message: str) -> None:
+        if not isinstance(code, ErrorCode):
+            raise TypeError("code must be an ErrorCode")
+        self.code = code
+        self.safe_message = safe_message
+        super().__init__(code, safe_message)
+
+    def __str__(self) -> str:
+        return self.safe_message
+
+
+class _FixedAtlasRAGError(AtlasRAGError):
+    """Base for fixed-code, no-argument technical exceptions."""
+
     def __init__(self) -> None:
-        super().__init__(self.safe_message)
+        super().__init__(self.code, self.safe_message)
+        self.args = ()
 
 
 class DependencyError(AtlasRAGError):
@@ -33,10 +48,12 @@ class DependencyError(AtlasRAGError):
     )
 
     def __init__(self, code: ErrorCode) -> None:
+        if not isinstance(code, ErrorCode):
+            raise TypeError("code must be an ErrorCode")
         if code not in self._allowed_codes:
             raise ValueError(f"unsupported dependency error code: {code}")
-        self.code = code
-        super().__init__()
+        super().__init__(code, self.safe_message)
+        self.args = (code,)
 
 
 class DependencyUnavailableError(DependencyError):
@@ -45,6 +62,7 @@ class DependencyUnavailableError(DependencyError):
 
     def __init__(self) -> None:
         super().__init__(self.code)
+        self.args = ()
 
 
 class DependencyTimeoutError(DependencyError):
@@ -53,33 +71,34 @@ class DependencyTimeoutError(DependencyError):
 
     def __init__(self) -> None:
         super().__init__(self.code)
+        self.args = ()
 
 
-class ProviderResponseError(AtlasRAGError):
+class ProviderResponseError(_FixedAtlasRAGError):
     code = ErrorCode.INVALID_PROVIDER_RESPONSE
     safe_message = "A provider returned an invalid response."
 
 
-class CanonicalDataError(AtlasRAGError):
+class CanonicalDataError(_FixedAtlasRAGError):
     code = ErrorCode.CANONICAL_DATA_INCONSISTENT
     safe_message = "Canonical data is inconsistent."
 
 
-class InvariantViolationError(AtlasRAGError):
+class InvariantViolationError(_FixedAtlasRAGError):
     code = ErrorCode.INVARIANT_VIOLATION
     safe_message = "An internal invariant was violated."
 
 
-class ResourceExhaustedError(AtlasRAGError):
+class ResourceExhaustedError(_FixedAtlasRAGError):
     code = ErrorCode.RESOURCE_EXHAUSTED
     safe_message = "A required resource was exhausted."
 
 
-class ConfigurationError(AtlasRAGError):
+class ConfigurationError(_FixedAtlasRAGError):
     code = ErrorCode.INVALID_CONFIGURATION
     safe_message = "Configuration is invalid."
 
 
-class SourceMutationError(AtlasRAGError):
+class SourceMutationError(_FixedAtlasRAGError):
     code = ErrorCode.SOURCE_MUTATED
     safe_message = "The source changed during processing."
