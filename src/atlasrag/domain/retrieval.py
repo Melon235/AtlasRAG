@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import field_validator, model_validator
+from pydantic import (
+    BeforeValidator,
+    StrictBool,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
-from atlasrag.domain.base import FrozenModel
+from atlasrag.domain.base import (
+    FrozenModel,
+    StrictReal,
+    validate_ordered_collection_input,
+    validate_string_enum_input,
+)
 from atlasrag.domain.enums import (
     CandidateOrdering,
     RetrievalBranch,
@@ -14,6 +25,22 @@ from atlasrag.domain.enums import (
     RetrievalChunkType,
     RetrievalMode,
 )
+
+_RetrievalChunkTypeInput = Annotated[
+    RetrievalChunkType, BeforeValidator(validate_string_enum_input)
+]
+_RetrievalBranchInput = Annotated[
+    RetrievalBranch, BeforeValidator(validate_string_enum_input)
+]
+_RetrievalBranchStatusInput = Annotated[
+    RetrievalBranchStatus, BeforeValidator(validate_string_enum_input)
+]
+_RetrievalModeInput = Annotated[
+    RetrievalMode, BeforeValidator(validate_string_enum_input)
+]
+_CandidateOrderingInput = Annotated[
+    CandidateOrdering, BeforeValidator(validate_string_enum_input)
+]
 
 
 def _validate_nonblank(value: str) -> str:
@@ -25,21 +52,21 @@ def _validate_nonblank(value: str) -> str:
 class CandidateScores(FrozenModel):
     """Optional score slots for the current retrieval candidate."""
 
-    dense_score: float | None = None
-    bm25_score: float | None = None
-    fusion_score: float | None = None
-    rerank_score: float | None = None
+    dense_score: StrictReal | None = None
+    bm25_score: StrictReal | None = None
+    fusion_score: StrictReal | None = None
+    rerank_score: StrictReal | None = None
 
 
 class RetrievalCandidate(FrozenModel):
     """One retrievable TEXT_CHILD or TABLE candidate."""
 
-    chunk_id: str
-    document_id: str
-    revision_id: str
-    chunk_type: RetrievalChunkType
-    parent_id: str | None = None
-    retrieval_text: str
+    chunk_id: StrictStr
+    document_id: StrictStr
+    revision_id: StrictStr
+    chunk_type: _RetrievalChunkTypeInput
+    parent_id: StrictStr | None = None
+    retrieval_text: StrictStr
     scores: CandidateScores
 
     _nonblank_required_strings = field_validator(
@@ -63,9 +90,12 @@ class RetrievalCandidate(FrozenModel):
 class RetrievalBranchResult(FrozenModel):
     """Normal outcome from one retrieval capability branch."""
 
-    branch: RetrievalBranch
-    status: RetrievalBranchStatus
-    candidates: tuple[RetrievalCandidate, ...]
+    branch: _RetrievalBranchInput
+    status: _RetrievalBranchStatusInput
+    candidates: Annotated[
+        tuple[RetrievalCandidate, ...],
+        BeforeValidator(validate_ordered_collection_input),
+    ]
 
     @model_validator(mode="after")
     def _status_matches_candidates(self) -> Self:
@@ -79,10 +109,13 @@ class RetrievalBranchResult(FrozenModel):
 class CandidatePool(FrozenModel):
     """Ordered candidates after branch selection or fusion."""
 
-    candidates: tuple[RetrievalCandidate, ...]
-    retrieval_mode: RetrievalMode
-    ordering: CandidateOrdering
-    degraded: bool
+    candidates: Annotated[
+        tuple[RetrievalCandidate, ...],
+        BeforeValidator(validate_ordered_collection_input),
+    ]
+    retrieval_mode: _RetrievalModeInput
+    ordering: _CandidateOrderingInput
+    degraded: StrictBool
 
     @model_validator(mode="after")
     def _mode_matches_candidates(self) -> Self:

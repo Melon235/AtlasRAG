@@ -5,14 +5,35 @@ from __future__ import annotations
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Annotated, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import (
+    BeforeValidator,
+    Field,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
-from atlasrag.domain.base import FrozenModel
+from atlasrag.domain.base import (
+    FrozenModel,
+    validate_ordered_collection_input,
+    validate_string_enum_input,
+)
 from atlasrag.domain.enums import (
     EvidenceType,
     LocalEvidenceStatus,
     LocalExecutionStatus,
 )
+
+_EvidenceTypeInput = Annotated[
+    EvidenceType, BeforeValidator(validate_string_enum_input)
+]
+_LocalExecutionStatusInput = Annotated[
+    LocalExecutionStatus, BeforeValidator(validate_string_enum_input)
+]
+_LocalEvidenceStatusInput = Annotated[
+    LocalEvidenceStatus, BeforeValidator(validate_string_enum_input)
+]
 
 
 def _validate_nonblank(value: str) -> str:
@@ -24,10 +45,10 @@ def _validate_nonblank(value: str) -> str:
 class SourceAnchor(FrozenModel):
     """Minimal source-specific location for canonical local evidence."""
 
-    page_number: Annotated[int, Field(ge=1)] | None = None
-    heading: str | None = None
-    sheet_name: str | None = None
-    cell_range: str | None = None
+    page_number: Annotated[StrictInt, Field(ge=1)] | None = None
+    heading: StrictStr | None = None
+    sheet_name: StrictStr | None = None
+    cell_range: StrictStr | None = None
 
     @field_validator("heading", "sheet_name", "cell_range")
     @classmethod
@@ -54,9 +75,11 @@ class SourceAnchor(FrozenModel):
 class LocalProvenance(FrozenModel):
     """Canonical file and structural location for local evidence."""
 
-    file_name: str
-    relative_source_path: str
-    section_path: tuple[str, ...] = ()
+    file_name: StrictStr
+    relative_source_path: StrictStr
+    section_path: Annotated[
+        tuple[StrictStr, ...], BeforeValidator(validate_ordered_collection_input)
+    ] = ()
     source_anchor: SourceAnchor | None = None
 
     _nonblank_required_strings = field_validator("file_name", "relative_source_path")(
@@ -65,13 +88,23 @@ class LocalProvenance(FrozenModel):
 
     @field_validator("relative_source_path")
     @classmethod
-    def _relative_path_without_parent_traversal(cls, value: str) -> str:
+    def _canonical_relative_source_path(cls, value: str) -> str:
         posix_path = PurePosixPath(value)
         windows_path = PureWindowsPath(value)
-        if posix_path.is_absolute() or windows_path.anchor:
-            raise ValueError("relative_source_path must be relative")
-        if ".." in posix_path.parts or ".." in windows_path.parts:
-            raise ValueError("relative_source_path must not contain '..'")
+        if (
+            not value
+            or value == "."
+            or value != value.strip()
+            or "\x00" in value
+            or "\\" in value
+            or posix_path.is_absolute()
+            or windows_path.anchor
+            or ".." in posix_path.parts
+            or posix_path.as_posix() != value
+        ):
+            raise ValueError(
+                "relative_source_path must be a canonical POSIX relative path"
+            )
         return value
 
     @field_validator("section_path")
@@ -85,10 +118,10 @@ class LocalProvenance(FrozenModel):
 class EvidenceRef(FrozenModel):
     """Retrieval-to-evidence bridge containing only canonical context identity."""
 
-    evidence_type: EvidenceType
-    context_id: str
-    document_id: str
-    revision_id: str
+    evidence_type: _EvidenceTypeInput
+    context_id: StrictStr
+    document_id: StrictStr
+    revision_id: StrictStr
 
     _nonblank_ids = field_validator("context_id", "document_id", "revision_id")(
         _validate_nonblank
@@ -98,11 +131,11 @@ class EvidenceRef(FrozenModel):
 class LocalEvidence(FrozenModel):
     """Complete canonical parent or table context for answer generation."""
 
-    evidence_type: EvidenceType
-    context_id: str
-    document_id: str
-    revision_id: str
-    content: str
+    evidence_type: _EvidenceTypeInput
+    context_id: StrictStr
+    document_id: StrictStr
+    revision_id: StrictStr
+    content: StrictStr
     provenance: LocalProvenance
 
     _nonblank_identity_and_content = field_validator(
@@ -123,9 +156,11 @@ class LocalEvidence(FrozenModel):
 class LocalEvidenceResult(FrozenModel):
     """Local execution outcome kept separate from evidence sufficiency."""
 
-    execution_status: LocalExecutionStatus
-    evidence_status: LocalEvidenceStatus | None = None
-    selected_evidence: tuple[LocalEvidence, ...] = ()
+    execution_status: _LocalExecutionStatusInput
+    evidence_status: _LocalEvidenceStatusInput | None = None
+    selected_evidence: Annotated[
+        tuple[LocalEvidence, ...], BeforeValidator(validate_ordered_collection_input)
+    ] = ()
     best_available_evidence: LocalEvidence | None = None
 
     @model_validator(mode="after")

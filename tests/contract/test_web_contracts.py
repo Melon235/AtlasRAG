@@ -21,6 +21,18 @@ from atlasrag.domain.web import (
 )
 
 
+def _unordered_collection(kind: str, values: tuple[object, ...]) -> object:
+    if kind == "set":
+        return set(values)
+    if kind == "frozenset":
+        return frozenset(values)
+    if kind == "mapping":
+        return dict.fromkeys(values)
+    if kind == "generator":
+        return (value for value in values)
+    raise AssertionError(f"unsupported unordered collection kind: {kind}")
+
+
 def _search_payload() -> dict[str, object]:
     return {
         "title": "AtlasRAG documentation",
@@ -102,6 +114,11 @@ def test_web_evidence_request_rejects_blank_query(blank: str) -> None:
         WebEvidenceRequest(original_query=blank)
 
 
+def test_web_evidence_request_rejects_byte_query() -> None:
+    with pytest.raises(ValidationError, match="original_query"):
+        WebEvidenceRequest.model_validate({"original_query": b"query"})
+
+
 @pytest.mark.parametrize(
     ("model_type", "payload"),
     (
@@ -126,7 +143,103 @@ def test_web_source_models_accept_strict_http_urls_and_matching_domains(
 
     assert isinstance(model.url, HttpUrl)
     assert model.url.host == "example.com"
-    assert model.domain == "EXAMPLE.com"
+    assert model.domain == "example.com"
+
+
+@pytest.mark.parametrize(
+    ("model_type", "payload"),
+    (
+        (WebSearchResult, _search_payload()),
+        (PreparedWebSource, _prepared_payload()),
+        (WebEvidence, _evidence_payload()),
+    ),
+)
+def test_web_source_models_canonicalize_matching_unicode_idn_domains(
+    model_type: type[WebSearchResult] | type[PreparedWebSource] | type[WebEvidence],
+    payload: dict[str, object],
+) -> None:
+    model = model_type.model_validate(
+        {
+            **payload,
+            "url": "https://BÜCHER.Example/article",
+            "domain": "BÜCHER.Example",
+        }
+    )
+
+    assert model.url.host == "xn--bcher-kva.example"
+    assert model.domain == "xn--bcher-kva.example"
+
+
+def test_web_source_url_ports_remain_valid_without_entering_domain() -> None:
+    result = WebSearchResult.model_validate(
+        {
+            **_search_payload(),
+            "url": "https://EXAMPLE.com:8443/article",
+            "domain": "EXAMPLE.com",
+        }
+    )
+
+    assert result.url.port == 8443
+    assert result.domain == "example.com"
+
+
+@pytest.mark.parametrize(
+    "userinfo_url",
+    (
+        "https://user@example.com/article",
+        "https://user:never-serialize-this-secret@example.com/article",
+    ),
+)
+@pytest.mark.parametrize(
+    ("model_type", "payload"),
+    (
+        (WebSearchResult, _search_payload()),
+        (PreparedWebSource, _prepared_payload()),
+        (WebEvidence, _evidence_payload()),
+    ),
+)
+def test_web_source_models_reject_userinfo_before_it_can_serialize(
+    model_type: type[BaseModel],
+    payload: dict[str, object],
+    userinfo_url: str,
+) -> None:
+    with pytest.raises(ValidationError, match="url"):
+        model_type.model_validate(
+            {**payload, "url": userinfo_url, "domain": "example.com"}
+        )
+
+
+@pytest.mark.parametrize(
+    ("model_type", "payload"),
+    (
+        (WebSearchResult, _search_payload()),
+        (PreparedWebSource, _prepared_payload()),
+        (WebEvidence, _evidence_payload()),
+    ),
+)
+def test_web_source_models_reject_byte_url_inputs(
+    model_type: type[BaseModel], payload: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError, match="url"):
+        model_type.model_validate(
+            {**payload, "url": b"https://docs.example.com/article"}
+        )
+
+
+@pytest.mark.parametrize(
+    ("url", "domain", "error_field"),
+    (
+        ("https://example.com./article", "example.com", "url"),
+        ("https://example.com/article", "example.com.", "domain"),
+    ),
+)
+def test_web_source_models_reject_trailing_dot_host_aliases(
+    url: str, domain: str, error_field: str
+) -> None:
+    with pytest.raises(ValidationError, match=error_field):
+        WebSearchResult.model_validate(
+            {**_search_payload(), "url": url, "domain": domain}
+        )
 
 
 @pytest.mark.parametrize(
@@ -205,6 +318,25 @@ def test_web_source_models_reject_blank_text_fields_when_present(
         model_type.model_validate({**payload, field_name: " \t "})
 
 
+@pytest.mark.parametrize(
+    ("model_type", "payload", "field_name"),
+    (
+        (WebSearchResult, _search_payload(), "title"),
+        (WebSearchResult, _search_payload(), "domain"),
+        (WebSearchResult, _search_payload(), "snippet"),
+        (PreparedWebSource, _prepared_payload(), "content"),
+        (WebEvidence, _evidence_payload(), "content"),
+    ),
+)
+def test_web_source_models_reject_byte_text_fields(
+    model_type: type[BaseModel],
+    payload: dict[str, object],
+    field_name: str,
+) -> None:
+    with pytest.raises(ValidationError, match=field_name):
+        model_type.model_validate({**payload, field_name: b"bytes are not text"})
+
+
 def test_web_search_snippet_is_optional_but_nonblank_when_present() -> None:
     payload = _search_payload()
     payload.pop("snippet")
@@ -232,6 +364,24 @@ def test_web_source_models_require_positive_search_rank(
         model_type.model_validate({**payload, "search_rank": invalid_rank})
 
     assert exc_info.value.errors()[0]["type"] == "greater_than_equal"
+
+
+@pytest.mark.parametrize("malformed_rank", (True, "1"))
+@pytest.mark.parametrize(
+    ("model_type", "payload"),
+    (
+        (WebSearchResult, _search_payload()),
+        (PreparedWebSource, _prepared_payload()),
+        (WebEvidence, _evidence_payload()),
+    ),
+)
+def test_web_source_models_reject_boolean_and_string_search_ranks(
+    model_type: type[BaseModel],
+    payload: dict[str, object],
+    malformed_rank: object,
+) -> None:
+    with pytest.raises(ValidationError, match="search_rank"):
+        model_type.model_validate({**payload, "search_rank": malformed_rank})
 
 
 @pytest.mark.parametrize("content_origin", tuple(WebContentOrigin))
@@ -297,6 +447,32 @@ def test_successful_web_outcomes_require_immutable_nonempty_evidence(
     assert result.execution_status is execution_status
     assert result.evidence == (first, second)
     assert isinstance(result.evidence, tuple)
+
+
+@pytest.mark.parametrize("unordered_kind", ("set", "frozenset", "mapping", "generator"))
+def test_ordered_web_evidence_rejects_unordered_iterables(
+    unordered_kind: str,
+) -> None:
+    values = (_web_evidence(search_rank=1), _web_evidence(search_rank=2))
+
+    with pytest.raises(ValidationError, match="evidence"):
+        WebEvidenceResult.model_validate(
+            {
+                "execution_status": WebExecutionStatus.OK,
+                "evidence": _unordered_collection(unordered_kind, values),
+            }
+        )
+
+
+def test_ordered_web_evidence_accepts_json_arrays() -> None:
+    result = WebEvidenceResult(
+        execution_status=WebExecutionStatus.OK,
+        evidence=(_web_evidence(),),
+    )
+
+    restored = WebEvidenceResult.model_validate_json(result.model_dump_json())
+
+    assert isinstance(restored.evidence, tuple)
 
 
 @pytest.mark.parametrize(

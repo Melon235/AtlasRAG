@@ -32,6 +32,18 @@ from atlasrag.domain.retrieval import (
 )
 
 
+def _unordered_collection(kind: str, values: tuple[object, ...]) -> object:
+    if kind == "set":
+        return set(values)
+    if kind == "frozenset":
+        return frozenset(values)
+    if kind == "mapping":
+        return dict.fromkeys(values)
+    if kind == "generator":
+        return (value for value in values)
+    raise AssertionError(f"unsupported unordered collection kind: {kind}")
+
+
 def _assert_extra_field_rejected(
     model_type: type[BaseModel], payload: dict[str, object]
 ) -> None:
@@ -139,10 +151,10 @@ def test_request_and_scope_models_have_exact_field_sets() -> None:
     )
 
 
-def test_user_turn_request_preserves_original_nonblank_text() -> None:
+def test_user_turn_request_canonicalizes_session_id_and_preserves_query() -> None:
     request = UserTurnRequest(session_id="  session-1  ", query="  What is C++?  ")
 
-    assert request.session_id == "  session-1  "
+    assert request.session_id == "session-1"
     assert request.query == "  What is C++?  "
     assert request.filters is None
 
@@ -157,6 +169,26 @@ def test_user_turn_request_rejects_blank_required_strings(
 
     with pytest.raises(ValidationError, match=field_name):
         UserTurnRequest.model_validate(payload)
+
+
+@pytest.mark.parametrize("field_name", ("session_id", "query"))
+def test_user_turn_request_rejects_byte_strings(field_name: str) -> None:
+    payload: dict[str, object] = {"session_id": "session-1", "query": "question"}
+    payload[field_name] = b"bytes are not text"
+
+    with pytest.raises(ValidationError, match=field_name):
+        UserTurnRequest.model_validate(payload)
+
+
+def test_request_json_keeps_string_enums_and_raw_query_compatible() -> None:
+    request = UserTurnRequest.model_validate_json(
+        '{"session_id":"  session-1  ","query":"  raw query  ",'
+        '"filters":{"source_type":"PDF"}}'
+    )
+
+    assert request.session_id == "session-1"
+    assert request.query == "  raw query  "
+    assert request.filters == QueryFilters(source_type=SourceType.PDF)
 
 
 def test_query_filters_are_a_typed_external_allowlist() -> None:
@@ -187,6 +219,11 @@ def test_query_filters_reject_unknown_source_types() -> None:
         QueryFilters(source_type="HTML")  # type: ignore[arg-type]
 
     assert exc_info.value.errors()[0]["type"] == "enum"
+
+
+def test_query_filters_reject_byte_source_type() -> None:
+    with pytest.raises(ValidationError, match="source_type"):
+        QueryFilters.model_validate({"source_type": b"PDF"})
 
 
 @pytest.mark.parametrize("field_name", ("original_query", "retrieval_query"))
@@ -408,6 +445,22 @@ def test_candidate_scores_reject_non_finite_values(
     assert exc_info.value.errors()[0]["type"] == "finite_number"
 
 
+@pytest.mark.parametrize("score_name", tuple(CandidateScores.model_fields))
+@pytest.mark.parametrize("malformed_score", (True, "1"))
+def test_candidate_scores_reject_boolean_and_string_inputs(
+    score_name: str, malformed_score: object
+) -> None:
+    with pytest.raises(ValidationError, match=score_name):
+        CandidateScores.model_validate({score_name: malformed_score})
+
+
+def test_candidate_scores_accept_real_integer_and_float_inputs() -> None:
+    scores = CandidateScores.model_validate({"dense_score": 1, "bm25_score": 2.5})
+
+    assert scores.dense_score == 1.0
+    assert scores.bm25_score == 2.5
+
+
 def test_text_child_requires_a_nonblank_parent_id() -> None:
     with pytest.raises(ValidationError, match="parent_id"):
         _candidate(parent_id=None)
@@ -460,6 +513,26 @@ def test_retrieval_candidate_rejects_blank_identity_and_text_fields(
         "scores": CandidateScores(),
     }
     payload[field_name] = " \t "
+
+    with pytest.raises(ValidationError, match=field_name):
+        RetrievalCandidate.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ("chunk_id", "document_id", "revision_id", "parent_id", "retrieval_text"),
+)
+def test_retrieval_candidate_rejects_byte_text_fields(field_name: str) -> None:
+    payload: dict[str, object] = {
+        "chunk_id": "chunk-1",
+        "document_id": "document-1",
+        "revision_id": "revision-1",
+        "chunk_type": RetrievalChunkType.TEXT_CHILD,
+        "parent_id": "parent-1",
+        "retrieval_text": "text",
+        "scores": CandidateScores(),
+    }
+    payload[field_name] = b"bytes are not text"
 
     with pytest.raises(ValidationError, match=field_name):
         RetrievalCandidate.model_validate(payload)
@@ -563,6 +636,21 @@ def test_available_candidate_pool_modes_accept_every_declared_ordering(
     assert isinstance(pool.candidates, tuple)
 
 
+@pytest.mark.parametrize("malformed_degraded", ("false", 0))
+def test_candidate_pool_requires_a_real_boolean_degraded_flag(
+    malformed_degraded: object,
+) -> None:
+    with pytest.raises(ValidationError, match="degraded"):
+        CandidatePool.model_validate(
+            {
+                "candidates": (_candidate(),),
+                "retrieval_mode": RetrievalMode.HYBRID,
+                "ordering": CandidateOrdering.RRF,
+                "degraded": malformed_degraded,
+            }
+        )
+
+
 @pytest.mark.parametrize("ordering", tuple(CandidateOrdering))
 def test_unavailable_candidate_pool_is_empty_without_constraining_ordering(
     ordering: CandidateOrdering,
@@ -609,6 +697,101 @@ def test_unavailable_candidate_pool_rejects_candidates() -> None:
             ordering=CandidateOrdering.RRF,
             degraded=False,
         )
+
+
+@pytest.mark.parametrize("unordered_kind", ("set", "frozenset", "mapping", "generator"))
+@pytest.mark.parametrize(
+    ("model_type", "payload", "field_name", "values"),
+    (
+        (
+            InternalRetrievalFilters,
+            {},
+            "chunk_types",
+            (RetrievalChunkType.TEXT_CHILD, RetrievalChunkType.TABLE),
+        ),
+        (
+            ResolvedRetrievalScope,
+            {},
+            "chunk_types",
+            (RetrievalChunkType.TEXT_CHILD, RetrievalChunkType.TABLE),
+        ),
+        (
+            RetrievalBranchResult,
+            {
+                "branch": RetrievalBranch.DENSE,
+                "status": RetrievalBranchStatus.OK,
+            },
+            "candidates",
+            (_candidate(chunk_id="chunk-1"), _candidate(chunk_id="chunk-2")),
+        ),
+        (
+            CandidatePool,
+            {
+                "retrieval_mode": RetrievalMode.HYBRID,
+                "ordering": CandidateOrdering.RRF,
+                "degraded": False,
+            },
+            "candidates",
+            (_candidate(chunk_id="chunk-1"), _candidate(chunk_id="chunk-2")),
+        ),
+    ),
+)
+def test_ordered_request_and_retrieval_collections_reject_unordered_iterables(
+    model_type: type[BaseModel],
+    payload: dict[str, object],
+    field_name: str,
+    values: tuple[object, ...],
+    unordered_kind: str,
+) -> None:
+    with pytest.raises(ValidationError, match=field_name):
+        model_type.model_validate(
+            {
+                **payload,
+                field_name: _unordered_collection(unordered_kind, values),
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("model", "field_name"),
+    (
+        (
+            InternalRetrievalFilters(
+                chunk_types=(RetrievalChunkType.TEXT_CHILD, RetrievalChunkType.TABLE)
+            ),
+            "chunk_types",
+        ),
+        (
+            ResolvedRetrievalScope(
+                chunk_types=(RetrievalChunkType.TEXT_CHILD, RetrievalChunkType.TABLE)
+            ),
+            "chunk_types",
+        ),
+        (
+            RetrievalBranchResult(
+                branch=RetrievalBranch.DENSE,
+                status=RetrievalBranchStatus.OK,
+                candidates=(_candidate(),),
+            ),
+            "candidates",
+        ),
+        (
+            CandidatePool(
+                candidates=(_candidate(),),
+                retrieval_mode=RetrievalMode.HYBRID,
+                ordering=CandidateOrdering.RRF,
+                degraded=False,
+            ),
+            "candidates",
+        ),
+    ),
+)
+def test_ordered_request_and_retrieval_collections_accept_json_arrays(
+    model: BaseModel, field_name: str
+) -> None:
+    restored = type(model).model_validate_json(model.model_dump_json())
+
+    assert isinstance(getattr(restored, field_name), tuple)
 
 
 @pytest.mark.parametrize(

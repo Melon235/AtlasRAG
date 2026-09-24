@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
-from pydantic import field_validator
+from typing import Annotated
 
-from atlasrag.domain.base import FrozenModel
+from pydantic import BeforeValidator, StrictStr, field_validator
+
+from atlasrag.domain.base import (
+    FrozenModel,
+    validate_ordered_collection_input,
+    validate_string_enum_input,
+)
 from atlasrag.domain.enums import RetrievalChunkType, SourceType
+
+_SourceTypeInput = Annotated[SourceType, BeforeValidator(validate_string_enum_input)]
+_RetrievalChunkTypeInput = Annotated[
+    RetrievalChunkType, BeforeValidator(validate_string_enum_input)
+]
 
 
 def _validate_nonblank(value: str) -> str:
@@ -33,9 +44,9 @@ def _validate_chunk_types(
 class QueryFilters(FrozenModel):
     """Explicit user-facing metadata filter allowlist."""
 
-    file_name: str | None = None
-    source_type: SourceType | None = None
-    sheet_name: str | None = None
+    file_name: StrictStr | None = None
+    source_type: _SourceTypeInput | None = None
+    sheet_name: StrictStr | None = None
 
     _nonblank_optional_strings = field_validator("file_name", "sheet_name")(
         _validate_optional_nonblank
@@ -45,20 +56,23 @@ class QueryFilters(FrozenModel):
 class UserTurnRequest(FrozenModel):
     """Raw immutable request admitted at the user/session boundary."""
 
-    session_id: str
-    query: str
+    session_id: StrictStr
+    query: StrictStr
     filters: QueryFilters | None = None
 
-    _nonblank_required_strings = field_validator("session_id", "query")(
-        _validate_nonblank
-    )
+    @field_validator("session_id")
+    @classmethod
+    def _canonical_session_id(cls, value: str) -> str:
+        return _validate_nonblank(value).strip()
+
+    _nonblank_query = field_validator("query")(_validate_nonblank)
 
 
 class LocalRetrievalRequest(FrozenModel):
     """Input to local retrieval after query construction."""
 
-    original_query: str
-    retrieval_query: str
+    original_query: StrictStr
+    retrieval_query: StrictStr
     filters: QueryFilters | None = None
 
     _nonblank_queries = field_validator("original_query", "retrieval_query")(
@@ -69,7 +83,13 @@ class LocalRetrievalRequest(FrozenModel):
 class InternalRetrievalFilters(FrozenModel):
     """Minimal internal-only retrieval constraints."""
 
-    chunk_types: tuple[RetrievalChunkType, ...] | None = None
+    chunk_types: (
+        Annotated[
+            tuple[_RetrievalChunkTypeInput, ...],
+            BeforeValidator(validate_ordered_collection_input),
+        ]
+        | None
+    ) = None
 
     @field_validator("chunk_types")
     @classmethod
@@ -84,10 +104,13 @@ class InternalRetrievalFilters(FrozenModel):
 class ResolvedRetrievalScope(FrozenModel):
     """Flattened deterministic scope consumed by all retrieval branches."""
 
-    file_name: str | None = None
-    source_type: SourceType | None = None
-    sheet_name: str | None = None
-    chunk_types: tuple[RetrievalChunkType, ...]
+    file_name: StrictStr | None = None
+    source_type: _SourceTypeInput | None = None
+    sheet_name: StrictStr | None = None
+    chunk_types: Annotated[
+        tuple[_RetrievalChunkTypeInput, ...],
+        BeforeValidator(validate_ordered_collection_input),
+    ]
 
     _nonblank_optional_strings = field_validator("file_name", "sheet_name")(
         _validate_optional_nonblank

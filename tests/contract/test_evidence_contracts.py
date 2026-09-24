@@ -21,6 +21,18 @@ from atlasrag.domain.evidence import (
 )
 
 
+def _unordered_collection(kind: str, values: tuple[object, ...]) -> object:
+    if kind == "set":
+        return set(values)
+    if kind == "frozenset":
+        return frozenset(values)
+    if kind == "mapping":
+        return dict.fromkeys(values)
+    if kind == "generator":
+        return (value for value in values)
+    raise AssertionError(f"unsupported unordered collection kind: {kind}")
+
+
 def _provenance() -> LocalProvenance:
     return LocalProvenance(
         file_name="guide.pdf",
@@ -125,6 +137,14 @@ def test_source_anchor_requires_positive_page_numbers(page_number: int) -> None:
     assert exc_info.value.errors()[0]["type"] == "greater_than_equal"
 
 
+@pytest.mark.parametrize("malformed_page_number", (True, "1"))
+def test_source_anchor_rejects_boolean_and_string_page_numbers(
+    malformed_page_number: object,
+) -> None:
+    with pytest.raises(ValidationError, match="page_number"):
+        SourceAnchor.model_validate({"page_number": malformed_page_number})
+
+
 def test_local_provenance_is_typed_and_uses_an_immutable_section_path() -> None:
     provenance = LocalProvenance.model_validate(
         {
@@ -163,20 +183,42 @@ def test_local_provenance_rejects_blank_required_strings(field_name: str) -> Non
         LocalProvenance.model_validate(payload)
 
 
+@pytest.mark.parametrize("field_name", ("file_name", "relative_source_path"))
+def test_local_provenance_rejects_byte_text_fields(field_name: str) -> None:
+    payload: dict[str, object] = {
+        "file_name": "notes.md",
+        "relative_source_path": "notes.md",
+    }
+    payload[field_name] = b"bytes are not text"
+
+    with pytest.raises(ValidationError, match=field_name):
+        LocalProvenance.model_validate(payload)
+
+
 @pytest.mark.parametrize(
     "relative_path",
     (
+        "",
+        ".",
+        "./notes.md",
+        "docs//notes.md",
+        "docs/./notes.md",
+        "docs/notes.md/",
+        " docs/notes.md",
+        "docs/notes.md ",
+        "docs/\x00notes.md",
         "/srv/atlasrag/notes.md",
         "../notes.md",
         "documents/../notes.md",
         r"C:\documents\notes.md",
         r"C:notes.md",
         r"\documents\notes.md",
+        r"documents\notes.md",
         r"documents\..\notes.md",
         r"\\server\share\notes.md",
     ),
 )
-def test_local_provenance_rejects_absolute_or_parent_traversal_paths(
+def test_local_provenance_rejects_noncanonical_or_unsafe_paths(
     relative_path: str,
 ) -> None:
     with pytest.raises(ValidationError, match="relative_source_path"):
@@ -184,6 +226,15 @@ def test_local_provenance_rejects_absolute_or_parent_traversal_paths(
             file_name="notes.md",
             relative_source_path=relative_path,
         )
+
+
+def test_local_provenance_accepts_canonical_posix_relative_path() -> None:
+    provenance = LocalProvenance(
+        file_name="notes.md",
+        relative_source_path="docs/notes.md",
+    )
+
+    assert provenance.relative_source_path == "docs/notes.md"
 
 
 def test_local_provenance_rejects_blank_section_path_elements() -> None:
@@ -235,6 +286,20 @@ def test_evidence_ref_rejects_blank_ids(field_name: str) -> None:
         EvidenceRef.model_validate(payload)
 
 
+@pytest.mark.parametrize("field_name", ("context_id", "document_id", "revision_id"))
+def test_evidence_ref_rejects_byte_ids(field_name: str) -> None:
+    payload: dict[str, object] = {
+        "evidence_type": EvidenceType.TABLE,
+        "context_id": "table-1",
+        "document_id": "document-1",
+        "revision_id": "revision-1",
+    }
+    payload[field_name] = b"bytes are not text"
+
+    with pytest.raises(ValidationError, match=field_name):
+        EvidenceRef.model_validate(payload)
+
+
 def test_local_evidence_has_stable_nonserialized_identity() -> None:
     first = _evidence()
     second = _evidence()
@@ -263,6 +328,24 @@ def test_local_evidence_rejects_blank_ids_and_content(field_name: str) -> None:
         "provenance": _provenance(),
     }
     payload[field_name] = " \n "
+
+    with pytest.raises(ValidationError, match=field_name):
+        LocalEvidence.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "field_name", ("context_id", "document_id", "revision_id", "content")
+)
+def test_local_evidence_rejects_byte_identity_and_content(field_name: str) -> None:
+    payload: dict[str, object] = {
+        "evidence_type": EvidenceType.TEXT_PARENT,
+        "context_id": "parent-1",
+        "document_id": "document-1",
+        "revision_id": "revision-1",
+        "content": "canonical context",
+        "provenance": _provenance(),
+    }
+    payload[field_name] = b"bytes are not text"
 
     with pytest.raises(ValidationError, match=field_name):
         LocalEvidence.model_validate(payload)
@@ -403,6 +486,75 @@ def test_unavailable_local_execution_rejects_all_evidence_data(
         LocalEvidenceResult.model_validate(
             {"execution_status": LocalExecutionStatus.UNAVAILABLE, **payload}
         )
+
+
+@pytest.mark.parametrize("unordered_kind", ("set", "frozenset", "mapping", "generator"))
+@pytest.mark.parametrize(
+    ("model_type", "payload", "field_name", "values"),
+    (
+        (
+            LocalProvenance,
+            {
+                "file_name": "notes.md",
+                "relative_source_path": "notes.md",
+            },
+            "section_path",
+            ("Chapter 1", "Overview"),
+        ),
+        (
+            LocalEvidenceResult,
+            {
+                "execution_status": LocalExecutionStatus.OK,
+                "evidence_status": LocalEvidenceStatus.SUFFICIENT,
+            },
+            "selected_evidence",
+            (_evidence(context_id="parent-1"), _evidence(context_id="parent-2")),
+        ),
+    ),
+)
+def test_ordered_local_evidence_collections_reject_unordered_iterables(
+    model_type: type[BaseModel],
+    payload: dict[str, object],
+    field_name: str,
+    values: tuple[object, ...],
+    unordered_kind: str,
+) -> None:
+    with pytest.raises(ValidationError, match=field_name):
+        model_type.model_validate(
+            {
+                **payload,
+                field_name: _unordered_collection(unordered_kind, values),
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("model", "field_name"),
+    (
+        (
+            LocalProvenance(
+                file_name="notes.md",
+                relative_source_path="notes.md",
+                section_path=("Chapter 1", "Overview"),
+            ),
+            "section_path",
+        ),
+        (
+            LocalEvidenceResult(
+                execution_status=LocalExecutionStatus.OK,
+                evidence_status=LocalEvidenceStatus.SUFFICIENT,
+                selected_evidence=(_evidence(),),
+            ),
+            "selected_evidence",
+        ),
+    ),
+)
+def test_ordered_local_evidence_collections_accept_json_arrays(
+    model: BaseModel, field_name: str
+) -> None:
+    restored = type(model).model_validate_json(model.model_dump_json())
+
+    assert isinstance(getattr(restored, field_name), tuple)
 
 
 @pytest.mark.parametrize(
