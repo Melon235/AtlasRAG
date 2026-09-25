@@ -415,7 +415,7 @@ def test_sufficient_local_evidence_does_not_overconstrain_best_match() -> None:
         best_available_evidence=evidence,
     )
 
-    assert result.best_available_evidence is evidence
+    assert result.best_available_evidence == evidence
 
 
 @pytest.mark.parametrize("best_available", (None, _evidence()))
@@ -429,7 +429,7 @@ def test_insufficient_local_evidence_has_no_selection_and_optional_best_match(
     )
 
     assert result.selected_evidence == ()
-    assert result.best_available_evidence is best_available
+    assert result.best_available_evidence == best_available
 
 
 def test_insufficient_local_evidence_rejects_selected_evidence() -> None:

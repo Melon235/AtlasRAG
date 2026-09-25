@@ -551,7 +551,7 @@ def test_rag_core_result_accepts_each_frozen_completion_status(
         completion_status=completion_status,
     )
 
-    assert result.final_response is response
+    assert result.final_response == response
     assert result.completion_status is completion_status
     assert not hasattr(result, "cache_eligible")
     assert not hasattr(result, "degraded")

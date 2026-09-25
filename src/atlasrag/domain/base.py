@@ -32,4 +32,9 @@ StrictReal = Annotated[float, BeforeValidator(validate_real_number_input)]
 class FrozenModel(BaseModel):
     """Immutable model base with strict field and finite-number boundaries."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        allow_inf_nan=False,
+        revalidate_instances="always",
+    )
