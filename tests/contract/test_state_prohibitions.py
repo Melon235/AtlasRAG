@@ -237,6 +237,8 @@ class _CyclicAnnotation:
 
 BoundProvider = TypeVar("BoundProvider", bound=ProviderClient)
 ConstrainedProvider = TypeVar("ConstrainedProvider", ProviderClient, Any)
+SafeT = TypeVar("SafeT", ProviderClient, Any)
+BoundSafeT = TypeVar("BoundSafeT", bound=ProviderClient)
 OpaqueAlias = TypeAliasType("OpaqueAlias", ProviderClient)
 OpaqueAnyAlias = TypeAliasType("OpaqueAnyAlias", Any)
 OpaqueCallableProviderAlias = TypeAliasType(
@@ -254,6 +256,8 @@ OpaqueConstrainedProviderAlias = TypeAliasType(
     ConstrainedProvider,
     type_params=(ConstrainedProvider,),
 )
+SafeAlias = TypeAliasType("SafeAlias", int, type_params=(SafeT,))
+BoundSafeAlias = TypeAliasType("BoundSafeAlias", int, type_params=(BoundSafeT,))
 OpaqueHandle = NewType("OpaqueHandle", ProviderClient)
 
 
@@ -300,6 +304,7 @@ def _annotation_names(annotation: object) -> frozenset[str]:
 
         if isinstance(value, TypeAliasType):
             visit(value.__value__)
+            visit(value.__type_params__)
         if isinstance(value, ForwardRef):
             visit(value.__forward_arg__)
         if isinstance(value, TypeVar):
@@ -328,28 +333,41 @@ def _relative_state_path(path: Path) -> str:
 
 def _state_module_paths() -> tuple[Path, ...]:
     assert STATE_DIRECTORY.is_dir(), f"missing State package: {STATE_DIRECTORY}"
-    paths = tuple(
-        sorted(
-            STATE_DIRECTORY.rglob("*.py"),
-            key=lambda path: _relative_state_path(path),
+    actual_files: set[str] = set()
+    unexpected_entries: list[str] = []
+
+    for path in STATE_DIRECTORY.rglob("*"):
+        relative_path = path.relative_to(STATE_DIRECTORY)
+        relative_name = relative_path.as_posix()
+        is_pycache_directory = relative_path.parts == ("__pycache__",)
+        is_pycache_artifact = (
+            len(relative_path.parts) == 2
+            and relative_path.parts[0] == "__pycache__"
+            and relative_path.suffix == ".pyc"
         )
-    )
-    actual_files = {_relative_state_path(path) for path in paths}
-    nested_directories = {
-        _relative_state_path(path)
-        for path in STATE_DIRECTORY.rglob("*")
-        if path.is_dir()
-        and "__pycache__" not in path.relative_to(STATE_DIRECTORY).parts
-    }
+
+        if path.is_symlink():
+            unexpected_entries.append(relative_name)
+        elif path.is_dir():
+            if not is_pycache_directory:
+                unexpected_entries.append(relative_name)
+        elif path.is_file():
+            if relative_name in EXPECTED_STATE_FILES:
+                actual_files.add(relative_name)
+            elif not is_pycache_artifact:
+                unexpected_entries.append(relative_name)
+        else:
+            unexpected_entries.append(relative_name)
+
     missing = sorted(EXPECTED_STATE_FILES - actual_files)
-    unexpected = sorted(actual_files - EXPECTED_STATE_FILES)
-    if missing or unexpected or nested_directories:
+    unexpected = sorted(unexpected_entries)
+    if missing or unexpected:
         raise AssertionError(
             "State module set mismatch; "
-            f"missing: {missing}; unexpected State module(s): {unexpected}; "
-            f"unexpected directories: {sorted(nested_directories)}"
+            f"missing: {missing}; "
+            f"unexpected State module(s) or package entries: {unexpected}"
         )
-    return paths
+    return tuple(STATE_DIRECTORY / name for name in sorted(actual_files))
 
 
 def _class_declaration_names(tree: ast.Module) -> tuple[str, ...]:
@@ -642,6 +660,22 @@ def test_state_file_discovery_rejects_nested_python_modules(
         _state_module_paths()
 
 
+@pytest.mark.parametrize(
+    "filename",
+    ("answer.so", "answer.pyd", "unexpected.txt"),
+    ids=("linux-extension", "windows-extension", "regular-file"),
+)
+def test_state_file_discovery_rejects_shadow_and_unexpected_files(
+    filename: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_directory = _copied_state_directory(tmp_path)
+    (state_directory / filename).write_bytes(b"")
+    _use_state_directory(monkeypatch, state_directory)
+
+    with pytest.raises(AssertionError, match=re.escape(filename)):
+        _state_module_paths()
+
+
 def test_declaration_guard_rejects_unexported_typed_dict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -817,6 +851,21 @@ def test_annotation_inspection_traverses_type_var_constraints(
     assert ProviderClient.__name__ in names
     assert f"{ProviderClient.__module__}.{ProviderClient.__qualname__}" in names
     assert "Any" in names
+
+
+def test_annotation_inspection_traverses_type_alias_type_parameters() -> None:
+    names = _annotation_names(SafeAlias)
+
+    assert ProviderClient.__name__ in names
+    assert f"{ProviderClient.__module__}.{ProviderClient.__qualname__}" in names
+    assert "Any" in names
+
+
+def test_annotation_inspection_traverses_bound_type_alias_type_parameters() -> None:
+    names = _annotation_names(BoundSafeAlias)
+
+    assert ProviderClient.__name__ in names
+    assert f"{ProviderClient.__module__}.{ProviderClient.__qualname__}" in names
 
 
 @pytest.mark.parametrize(
