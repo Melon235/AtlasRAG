@@ -7,9 +7,20 @@ import re
 import shutil
 import sys
 from collections import Counter
+from collections.abc import Callable
 from importlib import import_module
 from pathlib import Path
-from typing import Any, NewType, TypedDict, cast, get_args, get_origin, get_type_hints
+from typing import (
+    Any,
+    ForwardRef,
+    NewType,
+    TypedDict,
+    TypeVar,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 import pytest
 from typing_extensions import TypeAliasType
@@ -207,7 +218,7 @@ FORBIDDEN_SCHEMA_WORDS = frozenset(
 _IDENTIFIER_WORD = re.compile(r"[A-Z]+(?=[A-Z][a-z]|[0-9]|$)|[A-Z]?[a-z]+|[0-9]+")
 
 
-class _ProviderClient:
+class ProviderClient:
     pass
 
 
@@ -224,9 +235,26 @@ class _CyclicAnnotation:
         self.__supertype__ = self
 
 
-OpaqueAlias = TypeAliasType("OpaqueAlias", _ProviderClient)
+BoundProvider = TypeVar("BoundProvider", bound=ProviderClient)
+ConstrainedProvider = TypeVar("ConstrainedProvider", ProviderClient, Any)
+OpaqueAlias = TypeAliasType("OpaqueAlias", ProviderClient)
 OpaqueAnyAlias = TypeAliasType("OpaqueAnyAlias", Any)
-OpaqueHandle = NewType("OpaqueHandle", _ProviderClient)
+OpaqueCallableProviderAlias = TypeAliasType(
+    "OpaqueCallableProviderAlias", Callable[[ProviderClient], int]
+)
+OpaqueCallableAnyAlias = TypeAliasType("OpaqueCallableAnyAlias", Callable[[Any], int])
+OpaqueForwardProviderAlias = cast(Any, TypeAliasType)(
+    "OpaqueForwardProviderAlias", ForwardRef("ProviderClient")
+)
+OpaqueBoundProviderAlias = TypeAliasType(
+    "OpaqueBoundProviderAlias", BoundProvider, type_params=(BoundProvider,)
+)
+OpaqueConstrainedProviderAlias = TypeAliasType(
+    "OpaqueConstrainedProviderAlias",
+    ConstrainedProvider,
+    type_params=(ConstrainedProvider,),
+)
+OpaqueHandle = NewType("OpaqueHandle", ProviderClient)
 
 
 def _words(identifier: str) -> frozenset[str]:
@@ -248,6 +276,15 @@ def _annotation_names(annotation: object) -> frozenset[str]:
         if isinstance(value, str):
             names.add(value)
             return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                visit(key)
+                visit(item)
+            return
+        if isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                visit(item)
+            return
         if value is Any:
             names.add("Any")
 
@@ -263,6 +300,13 @@ def _annotation_names(annotation: object) -> frozenset[str]:
 
         if isinstance(value, TypeAliasType):
             visit(value.__value__)
+        if isinstance(value, ForwardRef):
+            visit(value.__forward_arg__)
+        if isinstance(value, TypeVar):
+            bound = value.__bound__
+            if bound is not None:
+                visit(bound)
+            visit(value.__constraints__)
 
         supertype = getattr(value, "__supertype__", None)
         if supertype is not None:
@@ -704,8 +748,8 @@ def test_init_guard_rejects_non_declarative_assignments(
 def test_annotation_inspection_unwraps_type_alias_value() -> None:
     names = _annotation_names(OpaqueAlias)
 
-    assert _ProviderClient.__name__ in names
-    assert f"{_ProviderClient.__module__}.{_ProviderClient.__qualname__}" in names
+    assert ProviderClient.__name__ in names
+    assert f"{ProviderClient.__module__}.{ProviderClient.__qualname__}" in names
 
 
 def test_annotation_inspection_unwraps_type_alias_any() -> None:
@@ -715,8 +759,80 @@ def test_annotation_inspection_unwraps_type_alias_any() -> None:
 def test_annotation_inspection_unwraps_new_type_supertype() -> None:
     names = _annotation_names(OpaqueHandle)
 
-    assert _ProviderClient.__name__ in names
-    assert f"{_ProviderClient.__module__}.{_ProviderClient.__qualname__}" in names
+    assert ProviderClient.__name__ in names
+    assert f"{ProviderClient.__module__}.{ProviderClient.__qualname__}" in names
+
+
+def test_annotation_inspection_traverses_callable_parameter_lists() -> None:
+    names = _annotation_names(Callable[[ProviderClient], int])
+
+    assert ProviderClient.__name__ in names
+    assert f"{ProviderClient.__module__}.{ProviderClient.__qualname__}" in names
+
+
+def test_annotation_inspection_finds_any_in_callable_parameter_lists() -> None:
+    assert "Any" in _annotation_names(Callable[[Any], int])
+
+
+@pytest.mark.parametrize(
+    ("annotation", "expected_name"),
+    (
+        (OpaqueCallableProviderAlias, "ProviderClient"),
+        (OpaqueCallableAnyAlias, "Any"),
+    ),
+    ids=("provider-client", "any"),
+)
+def test_annotation_inspection_traverses_callable_type_alias_values(
+    annotation: object, expected_name: str
+) -> None:
+    assert expected_name in _annotation_names(annotation)
+
+
+def test_annotation_inspection_reads_forward_ref_identifier_in_type_alias() -> None:
+    assert "ProviderClient" in _annotation_names(OpaqueForwardProviderAlias)
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    (BoundProvider, OpaqueBoundProviderAlias),
+    ids=("direct", "type-alias"),
+)
+def test_annotation_inspection_traverses_type_var_bounds(annotation: object) -> None:
+    names = _annotation_names(annotation)
+
+    assert ProviderClient.__name__ in names
+    assert f"{ProviderClient.__module__}.{ProviderClient.__qualname__}" in names
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    (ConstrainedProvider, OpaqueConstrainedProviderAlias),
+    ids=("direct", "type-alias"),
+)
+def test_annotation_inspection_traverses_type_var_constraints(
+    annotation: object,
+) -> None:
+    names = _annotation_names(annotation)
+
+    assert ProviderClient.__name__ in names
+    assert f"{ProviderClient.__module__}.{ProviderClient.__qualname__}" in names
+    assert "Any" in names
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    (
+        [ProviderClient],
+        (ProviderClient,),
+        {ProviderClient},
+        frozenset({ProviderClient}),
+        {ProviderClient: int},
+        {"provider": ProviderClient},
+    ),
+    ids=("list", "tuple", "set", "frozenset", "dict-key", "dict-value"),
+)
+def test_annotation_inspection_traverses_runtime_containers(annotation: object) -> None:
+    assert ProviderClient.__name__ in _annotation_names(annotation)
 
 
 def test_annotation_inspection_stops_at_recursive_wrapper_cycles() -> None:
