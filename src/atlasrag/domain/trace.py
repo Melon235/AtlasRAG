@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Self, TypeAlias
 from unicodedata import normalize
@@ -147,8 +147,6 @@ _TraceStatusInput = Annotated[TraceStatus, BeforeValidator(validate_string_enum_
 _ErrorCodeInput = Annotated[ErrorCode, BeforeValidator(validate_string_enum_input)]
 _NonnegativeStrictInt = Annotated[StrictInt, Field(ge=0)]
 _NonnegativeReal = Annotated[StrictReal, Field(ge=0)]
-_SECONDS_PER_DAY = 86_400
-_MICROSECONDS_PER_SECOND = 1_000_000
 
 
 def _validate_nonblank(value: str) -> str:
@@ -161,24 +159,6 @@ def _validate_optional_nonblank(value: str | None) -> str | None:
     if value is not None:
         _validate_nonblank(value)
     return value
-
-
-def _absolute_instant_key(value: datetime) -> int:
-    """Represent an aware datetime as exact UTC-relative microseconds."""
-    offset = value.utcoffset()
-    if offset is None:
-        raise ValueError("timestamp must be timezone-aware")
-    wall_seconds = (
-        (value.toordinal() - 1) * _SECONDS_PER_DAY
-        + value.hour * 3_600
-        + value.minute * 60
-        + value.second
-    )
-    wall_microseconds = wall_seconds * _MICROSECONDS_PER_SECOND + value.microsecond
-    offset_microseconds = (
-        offset.days * _SECONDS_PER_DAY + offset.seconds
-    ) * _MICROSECONDS_PER_SECOND + offset.microseconds
-    return wall_microseconds - offset_microseconds
 
 
 class SpanRecord(FrozenModel):
@@ -208,12 +188,15 @@ class SpanRecord(FrozenModel):
     def _timezone_aware(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("timestamp must be timezone-aware")
-        return value
+        try:
+            return value.astimezone(UTC)
+        except OverflowError as exc:
+            raise ValueError(
+                "timestamp instant is outside Python datetime UTC range"
+            ) from exc
 
     @model_validator(mode="after")
     def _ordered_timestamps(self) -> Self:
-        if _absolute_instant_key(self.ended_at) < _absolute_instant_key(
-            self.started_at
-        ):
+        if self.ended_at < self.started_at:
             raise ValueError("ended_at must be greater than or equal to started_at")
         return self

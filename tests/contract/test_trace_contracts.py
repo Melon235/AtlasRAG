@@ -36,6 +36,24 @@ def span_record(**changes: object) -> SpanRecord:
     return SpanRecord.model_validate(values)
 
 
+def span_record_json(started_at: datetime, ended_at: datetime) -> str:
+    return json.dumps(
+        {
+            "trace_id": "trace-1",
+            "span_id": "span-1",
+            "parent_span_id": None,
+            "stage": "local_retrieval",
+            "attempt": 0,
+            "started_at": started_at.isoformat(),
+            "ended_at": ended_at.isoformat(),
+            "duration_ms": 0,
+            "status": "OK",
+            "error_code": None,
+            "attributes": {},
+        }
+    )
+
+
 def test_span_record_has_exact_fields_and_optional_identifiers() -> None:
     assert set(SpanRecord.model_fields) == {
         "trace_id",
@@ -162,72 +180,100 @@ def test_span_timestamp_order_allows_normal_cross_timezone_instants() -> None:
         datetime.max.replace(tzinfo=timezone(-timedelta(hours=12))),
     ],
 )
-def test_extreme_offset_timestamp_equality_validates_from_python_and_json(
+def test_extreme_offset_timestamps_outside_utc_range_are_rejected_from_python(
     boundary: datetime,
 ) -> None:
-    record = span_record(started_at=boundary, ended_at=boundary, duration_ms=0)
-
-    assert record.started_at == record.ended_at
-    assert SpanRecord.model_validate_json(record.model_dump_json()) == record
+    with pytest.raises(ValidationError, match="UTC range"):
+        span_record(started_at=boundary, ended_at=boundary, duration_ms=0)
 
 
 @pytest.mark.parametrize(
-    ("started_at", "ended_at"),
+    "boundary",
     [
-        (
-            datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
-            datetime.min.replace(microsecond=1, tzinfo=timezone(timedelta(hours=14))),
-        ),
-        (
-            datetime.max.replace(
-                microsecond=999_998, tzinfo=timezone(-timedelta(hours=12))
-            ),
-            datetime.max.replace(tzinfo=timezone(-timedelta(hours=12))),
-        ),
+        datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+        datetime.max.replace(tzinfo=timezone(-timedelta(hours=12))),
     ],
 )
-def test_extreme_offset_timestamp_order_validates_from_python_and_json(
-    started_at: datetime, ended_at: datetime
+def test_extreme_offset_timestamps_outside_utc_range_are_rejected_from_json(
+    boundary: datetime,
 ) -> None:
-    record = span_record(started_at=started_at, ended_at=ended_at)
-
-    assert record.started_at == started_at
-    assert record.ended_at == ended_at
-    assert SpanRecord.model_validate_json(record.model_dump_json()) == record
+    with pytest.raises(ValidationError, match="UTC range"):
+        SpanRecord.model_validate_json(span_record_json(boundary, boundary))
 
 
 @pytest.mark.parametrize(
-    ("started_at", "ended_at"),
+    ("source", "expected_utc"),
     [
         (
-            datetime.min.replace(microsecond=1, tzinfo=timezone(timedelta(hours=14))),
-            datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+            datetime(
+                2026,
+                1,
+                2,
+                microsecond=123_456,
+                tzinfo=timezone(
+                    timedelta(
+                        hours=5,
+                        minutes=30,
+                        seconds=45,
+                        microseconds=123_456,
+                    )
+                ),
+            ),
+            datetime(2026, 1, 1, 18, 29, 15, tzinfo=UTC),
         ),
         (
-            datetime.max.replace(tzinfo=timezone(-timedelta(hours=12))),
-            datetime.max.replace(
-                microsecond=999_998, tzinfo=timezone(-timedelta(hours=12))
+            datetime(
+                2026,
+                1,
+                2,
+                microsecond=654_321,
+                tzinfo=timezone(
+                    -timedelta(
+                        hours=3,
+                        minutes=15,
+                        seconds=20,
+                        microseconds=234_567,
+                    )
+                ),
             ),
+            datetime(2026, 1, 2, 3, 15, 20, 888_888, tzinfo=UTC),
         ),
     ],
 )
-def test_extreme_offset_reversed_timestamps_raise_validation_error(
-    started_at: datetime, ended_at: datetime
+def test_subminute_offset_timestamps_canonicalize_and_roundtrip_exactly(
+    source: datetime, expected_utc: datetime
 ) -> None:
-    with pytest.raises(ValidationError, match="ended_at"):
-        span_record(started_at=started_at, ended_at=ended_at)
+    record = span_record(started_at=source, ended_at=expected_utc, duration_ms=0)
+    parsed = SpanRecord.model_validate_json(record.model_dump_json())
+
+    assert record.started_at == expected_utc
+    assert record.started_at.tzinfo is UTC
+    assert record.ended_at == expected_utc
+    assert record.ended_at.tzinfo is UTC
+    assert parsed == record
 
 
-def test_timestamp_order_supports_subminute_offsets_without_precision_loss() -> None:
-    precise_offset = timezone(
-        timedelta(hours=5, minutes=30, seconds=45, microseconds=123_456)
+@pytest.mark.parametrize(
+    ("fold", "expected_utc"),
+    [
+        (0, datetime(2026, 11, 1, 5, 30, tzinfo=UTC)),
+        (1, datetime(2026, 11, 1, 6, 30, tzinfo=UTC)),
+    ],
+)
+def test_dst_fold_timestamps_canonicalize_and_roundtrip_semantically(
+    fold: int, expected_utc: datetime
+) -> None:
+    source = datetime(
+        2026, 11, 1, 1, 30, tzinfo=ZoneInfo("America/New_York"), fold=fold
     )
-    started_at = datetime(2026, 1, 2, microsecond=123_456, tzinfo=precise_offset)
-    same_instant = datetime(2026, 1, 1, 18, 29, 15, tzinfo=UTC)
+    record = span_record(started_at=source, ended_at=source, duration_ms=0)
+    parsed = SpanRecord.model_validate_json(record.model_dump_json())
 
-    record = span_record(started_at=started_at, ended_at=same_instant)
-
-    assert record.started_at == record.ended_at
+    assert record.started_at == expected_utc
+    assert record.started_at.tzinfo is UTC
+    assert record.ended_at == expected_utc
+    assert record.ended_at.tzinfo is UTC
+    assert parsed == record
 
 
 @pytest.mark.parametrize("status", [TraceStatus.OK, "OK", "DEGRADED", "ERROR"])
