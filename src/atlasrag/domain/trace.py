@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Self, TypeAlias
+from unicodedata import normalize
 
 from pydantic import (
     BeforeValidator,
@@ -19,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from atlasrag._canonical import validate_unicode_scalar_text
 from atlasrag.domain.base import (
     FrozenModel,
     StrictReal,
@@ -63,12 +65,16 @@ _SENSITIVE_KEYS = frozenset(
 
 
 def _normalize_attribute_key(key: str) -> str:
-    return "".join(character for character in key.casefold() if character.isalnum())
+    compatible = normalize("NFKC", key)
+    return "".join(
+        character for character in compatible.casefold() if character.isalnum()
+    )
 
 
 def _validate_attribute_key(key: object) -> str:
     if not isinstance(key, str):
         raise ValueError("attribute keys must be strings")
+    validate_unicode_scalar_text(key)
     if not key.strip():
         raise ValueError("attribute keys must not be blank")
     normalized = _normalize_attribute_key(key)
@@ -78,8 +84,10 @@ def _validate_attribute_key(key: object) -> str:
 
 
 def _freeze_json_value(value: object, active_containers: set[int]) -> _FrozenJsonValue:
-    if value is None or isinstance(value, (bool, int, str)):
+    if value is None or isinstance(value, (bool, int)):
         return value
+    if isinstance(value, str):
+        return validate_unicode_scalar_text(value)
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError("trace attribute numbers must be finite")
@@ -144,7 +152,7 @@ _NonnegativeReal = Annotated[StrictReal, Field(ge=0)]
 def _validate_nonblank(value: str) -> str:
     if not value.strip():
         raise ValueError("must not be blank")
-    return value
+    return validate_unicode_scalar_text(value)
 
 
 def _validate_optional_nonblank(value: str | None) -> str | None:
@@ -184,6 +192,6 @@ class SpanRecord(FrozenModel):
 
     @model_validator(mode="after")
     def _ordered_timestamps(self) -> Self:
-        if self.ended_at < self.started_at:
+        if self.ended_at.astimezone(UTC) < self.started_at.astimezone(UTC):
             raise ValueError("ended_at must be greater than or equal to started_at")
         return self

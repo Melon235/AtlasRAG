@@ -6,6 +6,7 @@ from typing import Annotated
 
 from pydantic import BeforeValidator, StrictStr, field_validator
 
+from atlasrag._canonical import validate_unicode_scalar_text
 from atlasrag.domain.base import (
     FrozenModel,
     validate_ordered_collection_input,
@@ -22,7 +23,7 @@ _RetrievalChunkTypeInput = Annotated[
 def _validate_nonblank(value: str) -> str:
     if not value.strip():
         raise ValueError("must not be blank")
-    return value
+    return validate_unicode_scalar_text(value)
 
 
 def _validate_optional_nonblank(value: str | None) -> str | None:

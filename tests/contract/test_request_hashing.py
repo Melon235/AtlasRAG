@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
+from atlasrag._canonical import canonical_sha256
 from atlasrag.application.hashing import request_hash
 from atlasrag.domain.enums import SourceType
 from atlasrag.domain.requests import QueryFilters, UserTurnRequest
@@ -92,6 +94,50 @@ def test_request_hash_preserves_supplied_filter_text() -> None:
     assert request_hash(
         user_request(filters=QueryFilters(file_name="handbook.pdf"))
     ) != request_hash(user_request(filters=QueryFilters(file_name=" handbook.pdf ")))
+
+
+def test_request_query_rejects_unicode_surrogates_at_model_boundary() -> None:
+    with pytest.raises(ValidationError, match="surrogate"):
+        user_request(query="invalid-\ud800-query")
+
+
+@pytest.mark.parametrize("field_name", ["file_name", "sheet_name"])
+def test_request_filter_text_rejects_unicode_surrogates(field_name: str) -> None:
+    with pytest.raises(ValidationError, match="surrogate"):
+        QueryFilters.model_validate({field_name: f"invalid-\ud800-{field_name}"})
+
+
+def test_request_filter_rejects_a_realistic_surrogateescaped_path() -> None:
+    surrogateescaped_path = b"handbook-\xff.pdf".decode(
+        "utf-8", errors="surrogateescape"
+    )
+
+    with pytest.raises(ValidationError, match="surrogate"):
+        QueryFilters(file_name=surrogateescaped_path)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"invalid-\ud800-key": "value"},
+        {"nested": ["value", "invalid-\ud800-text"]},
+    ],
+)
+def test_canonical_hash_rejects_surrogates_with_clear_value_error(
+    payload: object,
+) -> None:
+    with pytest.raises(ValueError, match="surrogate") as exc_info:
+        canonical_sha256(payload)
+    assert type(exc_info.value) is ValueError
+
+
+def test_request_hash_allows_valid_non_ascii_and_emoji() -> None:
+    request = user_request(
+        query="请总结休假政策 🧭",
+        filters=QueryFilters(file_name="员工手册-📘.pdf", sheet_name="政策-✨"),
+    )
+
+    assert request_hash(request) == request_hash(request)
 
 
 def test_request_hash_is_available_from_the_public_application_package() -> None:

@@ -4,6 +4,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict
 
+from atlasrag._canonical import validate_unicode_scalar_text
+
 
 def validate_ordered_collection_input(value: object) -> object:
     """Admit only order-preserving inputs before tuple coercion."""
@@ -16,7 +18,7 @@ def validate_string_enum_input(value: object) -> object:
     """Reject byte and scalar coercion while retaining string-enum parsing."""
     if not isinstance(value, str):
         raise ValueError("enum input must be a string")
-    return value
+    return validate_unicode_scalar_text(value)
 
 
 def validate_real_number_input(value: object) -> object:

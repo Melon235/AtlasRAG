@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from typing import cast
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
@@ -87,6 +88,20 @@ def test_parent_span_id_is_nonblank_when_present(invalid_value: object) -> None:
         span_record(parent_span_id=invalid_value)
 
 
+@pytest.mark.parametrize(
+    "field_name", ["trace_id", "span_id", "parent_span_id", "stage"]
+)
+def test_trace_text_fields_reject_unicode_surrogates(field_name: str) -> None:
+    with pytest.raises(ValidationError, match="surrogate"):
+        span_record(**{field_name: f"invalid-\ud800-{field_name}"})
+
+
+@pytest.mark.parametrize("field_name", ["status", "error_code"])
+def test_trace_enum_text_rejects_unicode_surrogates(field_name: str) -> None:
+    with pytest.raises(ValidationError):
+        span_record(**{field_name: "invalid-\ud800-enum"})
+
+
 @pytest.mark.parametrize("invalid_value", [-1, True, "1", 1.0])
 def test_attempt_is_a_strict_nonnegative_integer(invalid_value: object) -> None:
     with pytest.raises(ValidationError):
@@ -117,6 +132,27 @@ def test_equal_span_timestamps_are_allowed() -> None:
 
     assert record.ended_at == record.started_at
     assert record.duration_ms == 0.0
+
+
+def test_span_timestamp_order_uses_absolute_instants_across_dst_fold() -> None:
+    new_york = ZoneInfo("America/New_York")
+    started_at = datetime(2026, 11, 1, 1, 30, tzinfo=new_york, fold=1)
+    ended_at = datetime(2026, 11, 1, 1, 45, tzinfo=new_york, fold=0)
+
+    assert started_at.astimezone(UTC) == datetime(2026, 11, 1, 6, 30, tzinfo=UTC)
+    assert ended_at.astimezone(UTC) == datetime(2026, 11, 1, 5, 45, tzinfo=UTC)
+    with pytest.raises(ValidationError, match="ended_at"):
+        span_record(started_at=started_at, ended_at=ended_at)
+
+
+def test_span_timestamp_order_allows_normal_cross_timezone_instants() -> None:
+    started_at = datetime(2026, 9, 26, 18, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    ended_at = datetime(2026, 9, 26, 5, 30, tzinfo=ZoneInfo("America/New_York"))
+
+    record = span_record(started_at=started_at, ended_at=ended_at)
+
+    assert record.started_at == started_at
+    assert record.ended_at == ended_at
 
 
 @pytest.mark.parametrize("status", [TraceStatus.OK, "OK", "DEGRADED", "ERROR"])
@@ -221,6 +257,22 @@ def test_attribute_keys_are_nonblank_strings(invalid_key: object) -> None:
 
 
 @pytest.mark.parametrize(
+    "attributes",
+    [
+        {"invalid-\ud800-key": "value"},
+        {"value": "invalid-\ud800-value"},
+        {"nested": {"value": "invalid-\ud800-nested"}},
+        {"items": ["valid", "invalid-\ud800-list-item"]},
+    ],
+)
+def test_attributes_reject_unicode_surrogates_recursively(
+    attributes: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="surrogate"):
+        span_record(attributes=attributes)
+
+
+@pytest.mark.parametrize(
     "sensitive_key",
     [
         "chain_of_thought",
@@ -258,6 +310,34 @@ def test_attributes_reject_normalized_sensitive_or_control_keys(
 def test_sensitive_attribute_keys_are_rejected_recursively() -> None:
     with pytest.raises(ValidationError, match="sensitive"):
         span_record(attributes={"safe": [{"API-KEY": "forbidden"}]})
+
+
+@pytest.mark.parametrize(
+    ("sensitive_key", "nested"),
+    [
+        ("ＡＰＩ＿ＫＥＹ", False),
+        ("ｃｈａｉｎ＿ｏｆ＿ｔｈｏｕｇｈｔ", True),
+    ],
+)
+def test_sensitive_attribute_keys_reject_nfkc_compatibility_forms(
+    sensitive_key: str, *, nested: bool
+) -> None:
+    attributes: dict[str, object] = (
+        {"safe": [{sensitive_key: "forbidden"}]}
+        if nested
+        else {sensitive_key: "forbidden"}
+    )
+
+    with pytest.raises(ValidationError, match="sensitive"):
+        span_record(attributes=attributes)
+
+
+def test_nfkc_sensitive_key_detection_does_not_rewrite_allowed_keys() -> None:
+    allowed_key = "ＴＯＫＥＮ＿ＣＯＵＮＴ"
+
+    record = span_record(attributes={allowed_key: 42})
+
+    assert record.model_dump(mode="json")["attributes"] == {allowed_key: 42}
 
 
 def test_attributes_are_deep_copied_and_deeply_immutable() -> None:
@@ -304,6 +384,18 @@ def test_attributes_serialize_as_normal_json_and_roundtrip_semantically() -> Non
     assert isinstance(decoded["attributes"], dict)
     assert isinstance(decoded["attributes"]["scores"], list)
     assert SpanRecord.model_validate_json(encoded) == record
+
+
+def test_trace_allows_valid_non_ascii_and_emoji_text_to_roundtrip() -> None:
+    record = span_record(
+        trace_id="追踪-🧭",
+        span_id="跨度-✨",
+        parent_span_id="父级-🌏",
+        stage="本地检索-🔎",
+        attributes={"说明-📝": ["中文", "emoji-✅"]},
+    )
+
+    assert SpanRecord.model_validate_json(record.model_dump_json()) == record
 
 
 def test_span_record_is_available_from_the_public_domain_package() -> None:

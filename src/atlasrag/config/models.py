@@ -13,6 +13,7 @@ from pydantic import (
     field_validator,
 )
 
+from atlasrag._canonical import validate_unicode_scalar_text
 from atlasrag.domain.base import FrozenModel, StrictReal
 
 _HTTP_URL_ADAPTER: TypeAdapter[AnyHttpUrl] = TypeAdapter(AnyHttpUrl)
@@ -25,7 +26,7 @@ SampleRate = Annotated[StrictReal, Field(ge=0, le=1)]
 def _validate_nonblank(value: str) -> str:
     if not value.strip():
         raise ValueError("must not be blank")
-    return value
+    return validate_unicode_scalar_text(value)
 
 
 def _validate_http_url_without_userinfo(value: str) -> str:

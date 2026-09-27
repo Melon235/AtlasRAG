@@ -321,6 +321,17 @@ def test_semantic_text_fields_require_strict_nonblank_strings(
         factory(**{field_name: b"bytes"})
     with pytest.raises(ValidationError):
         factory(**{field_name: 123})
+    with pytest.raises(ValidationError, match="surrogate"):
+        factory(**{field_name: f"invalid-\ud800-{field_name}"})
+
+
+def test_config_rejects_a_realistic_surrogateescaped_knowledge_path() -> None:
+    surrogateescaped_path = b"/srv/atlasrag/knowledge-\xff".decode(
+        "utf-8", errors="surrogateescape"
+    )
+
+    with pytest.raises(ValidationError, match="surrogate"):
+        infrastructure_config(knowledge_directory=surrogateescaped_path)
 
 
 @pytest.mark.parametrize("field_name", ["postgres_port", "redis_port", "milvus_port"])
@@ -412,6 +423,16 @@ def test_runtime_config_revalidates_constructed_nested_models() -> None:
         runtime_config(part_i=invalid_part_i)
 
 
+def test_runtime_config_rejects_constructed_nested_surrogate_text() -> None:
+    invalid_models = ModelConfig.model_construct(
+        **model_config().model_dump(exclude={"embedding_model_id"}),
+        embedding_model_id="invalid-\ud800-model",
+    )
+
+    with pytest.raises(ValidationError, match="surrogate"):
+        runtime_config(models=invalid_models)
+
+
 def test_fingerprints_are_repeatable_lowercase_sha256_hex() -> None:
     config = runtime_config()
 
@@ -426,6 +447,20 @@ def test_fingerprints_are_repeatable_lowercase_sha256_hex() -> None:
     assert len(first_runtime) == 64
     assert set(first_pipeline) <= set("0123456789abcdef")
     assert set(first_runtime) <= set("0123456789abcdef")
+
+
+def test_fingerprints_allow_valid_non_ascii_and_emoji_text() -> None:
+    config = runtime_config(
+        models=model_config(
+            embedding_model_id="嵌入模型-🧭",
+            generation_model_revision="生成版本-✨",
+        ),
+        part_i=part_i_config(representation_version="表示版本-📚"),
+        answer=answer_config(generation_prompt_version="提示版本-✅"),
+    )
+
+    assert pipeline_fingerprint(config) == pipeline_fingerprint(config)
+    assert runtime_fingerprint(config) == runtime_fingerprint(config)
 
 
 def _reverse_mappings(value: object) -> object:
