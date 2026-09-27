@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from typing import cast
 from zoneinfo import ZoneInfo
 
@@ -153,6 +153,81 @@ def test_span_timestamp_order_allows_normal_cross_timezone_instants() -> None:
 
     assert record.started_at == started_at
     assert record.ended_at == ended_at
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+        datetime.max.replace(tzinfo=timezone(-timedelta(hours=12))),
+    ],
+)
+def test_extreme_offset_timestamp_equality_validates_from_python_and_json(
+    boundary: datetime,
+) -> None:
+    record = span_record(started_at=boundary, ended_at=boundary, duration_ms=0)
+
+    assert record.started_at == record.ended_at
+    assert SpanRecord.model_validate_json(record.model_dump_json()) == record
+
+
+@pytest.mark.parametrize(
+    ("started_at", "ended_at"),
+    [
+        (
+            datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+            datetime.min.replace(microsecond=1, tzinfo=timezone(timedelta(hours=14))),
+        ),
+        (
+            datetime.max.replace(
+                microsecond=999_998, tzinfo=timezone(-timedelta(hours=12))
+            ),
+            datetime.max.replace(tzinfo=timezone(-timedelta(hours=12))),
+        ),
+    ],
+)
+def test_extreme_offset_timestamp_order_validates_from_python_and_json(
+    started_at: datetime, ended_at: datetime
+) -> None:
+    record = span_record(started_at=started_at, ended_at=ended_at)
+
+    assert record.started_at == started_at
+    assert record.ended_at == ended_at
+    assert SpanRecord.model_validate_json(record.model_dump_json()) == record
+
+
+@pytest.mark.parametrize(
+    ("started_at", "ended_at"),
+    [
+        (
+            datetime.min.replace(microsecond=1, tzinfo=timezone(timedelta(hours=14))),
+            datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+        ),
+        (
+            datetime.max.replace(tzinfo=timezone(-timedelta(hours=12))),
+            datetime.max.replace(
+                microsecond=999_998, tzinfo=timezone(-timedelta(hours=12))
+            ),
+        ),
+    ],
+)
+def test_extreme_offset_reversed_timestamps_raise_validation_error(
+    started_at: datetime, ended_at: datetime
+) -> None:
+    with pytest.raises(ValidationError, match="ended_at"):
+        span_record(started_at=started_at, ended_at=ended_at)
+
+
+def test_timestamp_order_supports_subminute_offsets_without_precision_loss() -> None:
+    precise_offset = timezone(
+        timedelta(hours=5, minutes=30, seconds=45, microseconds=123_456)
+    )
+    started_at = datetime(2026, 1, 2, microsecond=123_456, tzinfo=precise_offset)
+    same_instant = datetime(2026, 1, 1, 18, 29, 15, tzinfo=UTC)
+
+    record = span_record(started_at=started_at, ended_at=same_instant)
+
+    assert record.started_at == record.ended_at
 
 
 @pytest.mark.parametrize("status", [TraceStatus.OK, "OK", "DEGRADED", "ERROR"])
