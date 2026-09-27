@@ -35,6 +35,7 @@ from atlasrag.domain.retrieval import (
     RetrievalBranchResult,
     RetrievalCandidate,
 )
+from atlasrag.domain.trace import SpanRecord
 from atlasrag.domain.web import (
     PreparedWebSource,
     WebEvidence,
@@ -68,6 +69,7 @@ __all__ = [
     "RetrievalBranchResult",
     "RetrievalCandidate",
     "SourceAnchor",
+    "SpanRecord",
     "UserTurnRequest",
     "WebEvidence",
     "WebEvidenceRequest",
