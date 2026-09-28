@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from types import MappingProxyType
@@ -60,8 +61,101 @@ _SENSITIVE_KEYS = frozenset(
         "clientcredentials",
         "clientsecret",
         "systeminstruction",
+        "goldlabel",
+        "goldanswer",
+        "golddocumentid",
+        "goldsectionid",
+        "goldenanswer",
+        "queryid",
+        "alignedevidenceids",
+        "alignmentconfidence",
+        "qrel",
+        "expectedanswer",
+        "benchmarkcasetype",
+        "benchmarkcaseid",
+        "leaderboardscore",
+        "experimentid",
+        "experimentmetadata",
+        "candidatestrategyset",
+        "candidatestrategysets",
+        "evaluationdatabase",
+        "evaluationdatabases",
+        "metricobject",
+        "metricobjects",
     }
 )
+_SENSITIVE_TOKEN_SEQUENCES = (
+    ("chain", "of", "thought"),
+    ("system", "prompt"),
+    ("raw", "evidence"),
+    ("full", "evidence"),
+    ("evidence", "content"),
+    ("raw", "html"),
+    ("api", "key"),
+    ("api", "keys"),
+    ("authorization",),
+    ("password",),
+    ("passwords",),
+    ("secret",),
+    ("secrets",),
+    ("access", "token"),
+    ("access", "tokens"),
+    ("refresh", "token"),
+    ("refresh", "tokens"),
+    ("private", "key"),
+    ("private", "keys"),
+    ("auth", "header"),
+    ("auth", "headers"),
+    ("bearer", "token"),
+    ("bearer", "tokens"),
+    ("client", "credentials"),
+    ("client", "secret"),
+    ("client", "secrets"),
+    ("system", "instruction"),
+    ("system", "instructions"),
+    ("gold", "label"),
+    ("gold", "answer"),
+    ("gold", "document"),
+    ("gold", "section"),
+    ("gold", "reference"),
+    ("gold", "citation"),
+    ("gold", "relevance"),
+    ("golden", "answer"),
+    ("golden", "label"),
+    ("qrel",),
+    ("qrels",),
+    ("expected", "answer"),
+    ("expected", "answers"),
+    ("benchmark",),
+    ("leaderboard", "score"),
+    ("leaderboard", "scores"),
+    ("experiment",),
+    ("experiments",),
+    ("candidate", "strategy", "set"),
+    ("candidate", "strategy", "sets"),
+    ("evaluation", "database"),
+    ("evaluation", "databases"),
+    ("metric", "object"),
+    ("metric", "objects"),
+)
+_SENSITIVE_NORMALIZED_AFFIXES = frozenset(
+    _SENSITIVE_KEYS - {"cot", "password", "queryid", "secret", "qrel"}
+)
+_SENSITIVE_NORMALIZED_PREFIXES = frozenset({"benchmark", "experiment", "qrel"})
+_SENSITIVE_NORMALIZED_SUFFIXES = frozenset(
+    {
+        "apikey",
+        "apikeys",
+        "password",
+        "passwords",
+        "secret",
+        "secrets",
+        "qrel",
+        "qrels",
+    }
+)
+_CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_KEY_TOKEN = re.compile(r"[^\W_]+")
 
 
 def _normalize_attribute_key(key: str) -> str:
@@ -71,14 +165,52 @@ def _normalize_attribute_key(key: str) -> str:
     )
 
 
+def _attribute_key_tokens(key: str) -> tuple[str, ...]:
+    compatible = normalize("NFKC", key)
+    separated = _CAMEL_CASE_BOUNDARY.sub(" ", compatible)
+    return tuple(token.casefold() for token in _KEY_TOKEN.findall(separated))
+
+
+def _contains_token_sequence(
+    tokens: tuple[str, ...], sequence: tuple[str, ...]
+) -> bool:
+    width = len(sequence)
+    return any(
+        tokens[index : index + width] == sequence
+        for index in range(len(tokens) - width + 1)
+    )
+
+
+def _is_sensitive_attribute_key(key: str) -> bool:
+    normalized = _normalize_attribute_key(key)
+    tokens = _attribute_key_tokens(key)
+    return (
+        normalized in _SENSITIVE_KEYS
+        or any(
+            normalized.startswith(fragment) or normalized.endswith(fragment)
+            for fragment in _SENSITIVE_NORMALIZED_AFFIXES
+        )
+        or any(
+            normalized.startswith(fragment)
+            for fragment in _SENSITIVE_NORMALIZED_PREFIXES
+        )
+        or any(
+            normalized.endswith(fragment) for fragment in _SENSITIVE_NORMALIZED_SUFFIXES
+        )
+        or any(
+            _contains_token_sequence(tokens, sequence)
+            for sequence in _SENSITIVE_TOKEN_SEQUENCES
+        )
+    )
+
+
 def _validate_attribute_key(key: object) -> str:
     if not isinstance(key, str):
         raise ValueError("attribute keys must be strings")
     validate_unicode_scalar_text(key)
     if not key.strip():
         raise ValueError("attribute keys must not be blank")
-    normalized = _normalize_attribute_key(key)
-    if normalized in _SENSITIVE_KEYS:
+    if _is_sensitive_attribute_key(key):
         raise ValueError(f"sensitive trace attribute key is not permitted: {key}")
     return key
 

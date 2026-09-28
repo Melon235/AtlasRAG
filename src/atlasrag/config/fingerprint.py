@@ -10,6 +10,10 @@ def pipeline_fingerprint(config: RuntimeConfig) -> str:
         "models": {
             "embedding_model_id": config.models.embedding_model_id,
             "embedding_model_revision": config.models.embedding_model_revision,
+            "embedding_tokenizer_id": config.models.embedding_tokenizer_id,
+            "embedding_tokenizer_revision": (
+                config.models.embedding_tokenizer_revision
+            ),
         },
         "part_i": {
             "loader_behavior_version": config.part_i.loader_behavior_version,

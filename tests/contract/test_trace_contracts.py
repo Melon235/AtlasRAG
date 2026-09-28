@@ -338,6 +338,8 @@ def test_attributes_admit_recursive_json_values_and_legitimate_aggregate_keys() 
         "reason_codes": ["LOCAL_EMPTY", "WEB_USED"],
         "secretary_count": 2,
         "secretion_rate": 0.1,
+        "goldsmith_service": "available",
+        "golden_signal_latency_ms": 12.5,
         "nested": {"selected": False, "ranks": [1, 2]},
     }
 
@@ -419,6 +421,32 @@ def test_attributes_reject_unicode_surrogates_recursively(
         "client_credentials",
         "client-secret",
         "system instruction",
+        "db_password",
+        "deepseek_api_key",
+        "raw_evidence_content",
+        "systemPromptText",
+        "gold_label",
+        "qrel",
+        "expected_answer",
+        "benchmark_case_type",
+        "benchmark_case_id",
+        "leaderboard_score",
+        "api_secrets",
+        "secrets",
+        "qrels",
+        "qrels_id",
+        "gold_answer",
+        "gold_document_id",
+        "gold_section_id",
+        "golden_answer",
+        "query_id",
+        "aligned_evidence_ids",
+        "alignment_confidence",
+        "experiment_id",
+        "experiment_metadata",
+        "candidate_strategy_set",
+        "evaluation_database",
+        "metric_object",
     ],
 )
 def test_attributes_reject_normalized_sensitive_or_control_keys(
@@ -428,9 +456,23 @@ def test_attributes_reject_normalized_sensitive_or_control_keys(
         span_record(attributes={sensitive_key: "forbidden"})
 
 
-def test_sensitive_attribute_keys_are_rejected_recursively() -> None:
+@pytest.mark.parametrize(
+    "sensitive_key",
+    [
+        "API-KEY",
+        "db_password",
+        "raw_evidence_content",
+        "gold_label",
+        "gold_document_id",
+        "qrel",
+        "qrels",
+    ],
+)
+def test_sensitive_attribute_keys_are_rejected_recursively(
+    sensitive_key: str,
+) -> None:
     with pytest.raises(ValidationError, match="sensitive"):
-        span_record(attributes={"safe": [{"API-KEY": "forbidden"}]})
+        span_record(attributes={"safe": [{sensitive_key: "forbidden"}]})
 
 
 @pytest.mark.parametrize(

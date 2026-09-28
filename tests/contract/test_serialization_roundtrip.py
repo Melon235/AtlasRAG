@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from atlasrag.domain.answer import (
     AnswerInput,
@@ -205,6 +205,45 @@ def _roundtrip_cases() -> tuple[BaseModel, ...]:
     )
 
 
+def _replace_at_path(
+    value: object, path: tuple[str | int, ...], replacement: object
+) -> object:
+    if not path:
+        return replacement
+    head, *tail = path
+    if isinstance(head, str):
+        assert isinstance(value, dict)
+        copied = dict(value)
+        copied[head] = _replace_at_path(copied[head], tuple(tail), replacement)
+        return copied
+    assert isinstance(value, (list, tuple))
+    copied_items = list(value)
+    copied_items[head] = _replace_at_path(copied_items[head], tuple(tail), replacement)
+    return copied_items
+
+
+def _surrogate_cases() -> tuple[tuple[type[BaseModel], dict[str, object]], ...]:
+    paths: tuple[tuple[str | int, ...], ...] = (
+        ("query",),
+        ("candidates", 0, "retrieval_text"),
+        ("selected_evidence", 0, "content"),
+        ("evidence", 0, "content"),
+        ("local_evidence", 0, "evidence", "content"),
+        ("answer_text",),
+        ("answer_text",),
+        ("final_response", "answer_text"),
+        ("trace_id",),
+    )
+    cases: list[tuple[type[BaseModel], dict[str, object]]] = []
+    for model, path in zip(_roundtrip_cases(), paths, strict=True):
+        payload = _replace_at_path(
+            model.model_dump(mode="python"), path, "invalid-\ud800-text"
+        )
+        assert isinstance(payload, dict)
+        cases.append((type(model), payload))
+    return tuple(cases)
+
+
 @pytest.mark.parametrize(
     "model",
     _roundtrip_cases(),
@@ -217,3 +256,15 @@ def test_boundary_model_json_roundtrip_preserves_semantics(model: BaseModel) -> 
 
     assert type(restored) is model_type
     assert restored == model
+
+
+@pytest.mark.parametrize(
+    ("model_type", "payload"),
+    _surrogate_cases(),
+    ids=lambda value: value.__name__ if isinstance(value, type) else None,
+)
+def test_boundary_models_reject_lone_unicode_surrogates_before_serialization(
+    model_type: type[BaseModel], payload: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError, match="surrogate"):
+        model_type.model_validate(payload)

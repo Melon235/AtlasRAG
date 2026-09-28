@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from pydantic import (
     AnyHttpUrl,
     Field,
+    SecretStr,
     StrictBool,
     StrictInt,
     StrictStr,
@@ -29,6 +30,19 @@ def _validate_nonblank(value: str) -> str:
     return validate_unicode_scalar_text(value)
 
 
+def _validate_secret_text(value: object) -> object:
+    if isinstance(value, SecretStr):
+        raw_value = value.get_secret_value()
+    elif isinstance(value, str):
+        raw_value = value
+    else:
+        raise ValueError("secret must be a string")
+    if not isinstance(raw_value, str):
+        raise ValueError("secret must contain a string")
+    _validate_nonblank(raw_value)
+    return value
+
+
 def _validate_http_url_without_userinfo(value: str) -> str:
     _validate_nonblank(value)
     _HTTP_URL_ADAPTER.validate_python(value, strict=True)
@@ -43,6 +57,9 @@ class InfrastructureConfig(FrozenModel):
     knowledge_directory: StrictStr
     postgres_host: StrictStr
     postgres_port: Port
+    postgres_database: StrictStr
+    postgres_user: StrictStr
+    postgres_password: SecretStr
     redis_host: StrictStr
     redis_port: Port
     milvus_host: StrictStr
@@ -50,8 +67,16 @@ class InfrastructureConfig(FrozenModel):
     searxng_url: StrictStr
 
     _nonblank_values = field_validator(
-        "knowledge_directory", "postgres_host", "redis_host", "milvus_host"
+        "knowledge_directory",
+        "postgres_host",
+        "postgres_database",
+        "postgres_user",
+        "redis_host",
+        "milvus_host",
     )(_validate_nonblank)
+    _valid_postgres_password = field_validator("postgres_password", mode="before")(
+        _validate_secret_text
+    )
     _valid_searxng_url = field_validator("searxng_url")(
         _validate_http_url_without_userinfo
     )
@@ -62,14 +87,33 @@ class ModelConfig(FrozenModel):
 
     embedding_model_id: StrictStr
     embedding_model_revision: StrictStr
+    embedding_tokenizer_id: StrictStr
+    embedding_tokenizer_revision: StrictStr
     reranker_model_id: StrictStr
     reranker_model_revision: StrictStr
     query_model_id: StrictStr
     query_model_revision: StrictStr
     generation_model_id: StrictStr
     generation_model_revision: StrictStr
+    deepseek_api_key: SecretStr
+    model_device: StrictStr
 
-    _nonblank_values = field_validator("*")(_validate_nonblank)
+    _nonblank_values = field_validator(
+        "embedding_model_id",
+        "embedding_model_revision",
+        "embedding_tokenizer_id",
+        "embedding_tokenizer_revision",
+        "reranker_model_id",
+        "reranker_model_revision",
+        "query_model_id",
+        "query_model_revision",
+        "generation_model_id",
+        "generation_model_revision",
+        "model_device",
+    )(_validate_nonblank)
+    _valid_deepseek_api_key = field_validator("deepseek_api_key", mode="before")(
+        _validate_secret_text
+    )
 
 
 class PartIConfig(FrozenModel):

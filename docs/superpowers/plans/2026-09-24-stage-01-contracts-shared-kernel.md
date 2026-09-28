@@ -155,7 +155,6 @@
 - [ ] Run `git diff --check`, inspect `git status`, and audit the complete `origin/main...HEAD` diff for secrets, forbidden artifacts, benchmark contamination, or Stage 2 implementation.
 - [ ] Request an independent whole-stage spec review, then an independent code-quality review; fix every Critical/Important issue and rerun verification.
 - [ ] Complete the Stage report with actual test counts, branch, commit/publication/CI evidence, and `Architecture deviations: NONE` only if verified.
-- [ ] Use `scripts/finalize_stage.sh stage/01-contracts-shared-kernel docs/stages/stage-01-contracts-shared-kernel.md "stage(01): implement contracts and shared kernel"` for the final report/status commit and normal push; never force-push or merge.
+- [ ] Use `scripts/finalize_stage.sh 01 contracts-shared-kernel "stage(01): implement contracts and shared kernel"` for the final report/status commit and normal push; never force-push or merge.
 - [ ] Wait for the Stage branch CI run to finish successfully. If push or CI fails, Stage 1 remains NOT COMPLETE until fixed, recommitted, repushed, and green.
 - [ ] Stop after reporting Stage 1. Do not start PostgreSQL, Redis, Milvus, Docker Compose, providers, graphs, RuntimeGate, CLI business commands, Web UI, benchmarks, or Stage 2.
-

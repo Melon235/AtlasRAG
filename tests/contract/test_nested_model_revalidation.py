@@ -180,6 +180,16 @@ def test_rag_core_result_rejects_constructed_blank_final_response() -> None:
         )
 
 
+def test_parent_boundary_rejects_constructed_nested_surrogate_text() -> None:
+    valid = _local_evidence()
+    forged = LocalEvidence.model_construct(
+        **{**valid.model_dump(), "content": "invalid-\ud800-content"}
+    )
+
+    with pytest.raises(ValidationError, match="surrogate"):
+        AnswerLocalEvidence(citation_id="L1", evidence=forged)
+
+
 def _valid_nested_models() -> tuple[BaseModel, ...]:
     answer_input = AnswerInput.model_validate(
         {

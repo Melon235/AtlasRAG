@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import cast
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from atlasrag.config.fingerprint import pipeline_fingerprint, runtime_fingerprint
 from atlasrag.config.models import (
@@ -26,6 +27,9 @@ def infrastructure_config(**changes: object) -> InfrastructureConfig:
         "knowledge_directory": "/srv/atlasrag/knowledge",
         "postgres_host": "postgres",
         "postgres_port": 5432,
+        "postgres_database": "atlasrag",
+        "postgres_user": "atlasrag",
+        "postgres_password": "postgres-secret",
         "redis_host": "redis",
         "redis_port": 6379,
         "milvus_host": "milvus",
@@ -40,12 +44,16 @@ def model_config(**changes: object) -> ModelConfig:
     values: dict[str, object] = {
         "embedding_model_id": "BAAI/bge-m3",
         "embedding_model_revision": "embed-r1",
+        "embedding_tokenizer_id": "BAAI/bge-m3",
+        "embedding_tokenizer_revision": "tokenizer-r1",
         "reranker_model_id": "BAAI/bge-reranker-v2-m3",
         "reranker_model_revision": "rerank-r1",
         "query_model_id": "deepseek-query",
         "query_model_revision": "query-r1",
         "generation_model_id": "deepseek-generation",
         "generation_model_revision": "generation-r1",
+        "deepseek_api_key": "deepseek-secret",
+        "model_device": "cuda",
     }
     values.update(changes)
     return ModelConfig.model_validate(values)
@@ -146,6 +154,9 @@ def runtime_config(**changes: object) -> RuntimeConfig:
                 "knowledge_directory",
                 "postgres_host",
                 "postgres_port",
+                "postgres_database",
+                "postgres_user",
+                "postgres_password",
                 "redis_host",
                 "redis_port",
                 "milvus_host",
@@ -158,12 +169,16 @@ def runtime_config(**changes: object) -> RuntimeConfig:
             {
                 "embedding_model_id",
                 "embedding_model_revision",
+                "embedding_tokenizer_id",
+                "embedding_tokenizer_revision",
                 "reranker_model_id",
                 "reranker_model_revision",
                 "query_model_id",
                 "query_model_revision",
                 "generation_model_id",
                 "generation_model_revision",
+                "deepseek_api_key",
+                "model_device",
             },
         ),
         (
@@ -280,17 +295,22 @@ def test_config_models_are_frozen_and_forbid_extra_fields(
     [
         (infrastructure_config, "knowledge_directory"),
         (infrastructure_config, "postgres_host"),
+        (infrastructure_config, "postgres_database"),
+        (infrastructure_config, "postgres_user"),
         (infrastructure_config, "redis_host"),
         (infrastructure_config, "milvus_host"),
         (infrastructure_config, "searxng_url"),
         (model_config, "embedding_model_id"),
         (model_config, "embedding_model_revision"),
+        (model_config, "embedding_tokenizer_id"),
+        (model_config, "embedding_tokenizer_revision"),
         (model_config, "reranker_model_id"),
         (model_config, "reranker_model_revision"),
         (model_config, "query_model_id"),
         (model_config, "query_model_revision"),
         (model_config, "generation_model_id"),
         (model_config, "generation_model_revision"),
+        (model_config, "model_device"),
         (part_i_config, "loader_behavior_version"),
         (part_i_config, "parser_behavior_version"),
         (part_i_config, "chunker_behavior_version"),
@@ -332,6 +352,44 @@ def test_config_rejects_a_realistic_surrogateescaped_knowledge_path() -> None:
 
     with pytest.raises(ValidationError, match="surrogate"):
         infrastructure_config(knowledge_directory=surrogateescaped_path)
+
+
+@pytest.mark.parametrize(
+    ("factory", "field_name"),
+    [
+        (infrastructure_config, "postgres_password"),
+        (model_config, "deepseek_api_key"),
+    ],
+)
+@pytest.mark.parametrize(
+    "invalid_value",
+    [
+        "",
+        " \t",
+        b"bytes",
+        123,
+        "bad-\ud800",
+        SecretStr(cast(str, b"wrapped-bytes")),
+        SecretStr(cast(str, 456)),
+    ],
+)
+def test_secret_fields_require_strict_nonblank_unicode_scalar_text(
+    factory: Callable[..., object], field_name: str, invalid_value: object
+) -> None:
+    with pytest.raises(ValidationError):
+        factory(**{field_name: invalid_value})
+
+
+def test_secret_fields_are_redacted_from_repr_and_json_serialization() -> None:
+    config = runtime_config()
+    rendered = repr(config)
+    serialized = config.model_dump_json()
+
+    assert "postgres-secret" not in rendered
+    assert "deepseek-secret" not in rendered
+    assert "postgres-secret" not in serialized
+    assert "deepseek-secret" not in serialized
+    assert serialized.count("**********") == 2
 
 
 @pytest.mark.parametrize("field_name", ["postgres_port", "redis_port", "milvus_port"])
@@ -488,6 +546,8 @@ def test_fingerprints_ignore_mapping_and_model_construction_order() -> None:
     [
         ("models", "embedding_model_id", "BAAI/new-embedding"),
         ("models", "embedding_model_revision", "embed-r2"),
+        ("models", "embedding_tokenizer_id", "BAAI/new-tokenizer"),
+        ("models", "embedding_tokenizer_revision", "tokenizer-r2"),
         ("part_i", "loader_behavior_version", "loader-v2"),
         ("part_i", "parser_behavior_version", "parser-v2"),
         ("part_i", "chunker_behavior_version", "chunker-v2"),
@@ -557,6 +617,9 @@ def test_runtime_inputs_change_only_runtime_fingerprint(
         ("infrastructure", "knowledge_directory", "/different/knowledge"),
         ("infrastructure", "postgres_host", "postgres-2"),
         ("infrastructure", "postgres_port", 15432),
+        ("infrastructure", "postgres_database", "atlasrag-2"),
+        ("infrastructure", "postgres_user", "atlasrag-2"),
+        ("infrastructure", "postgres_password", "postgres-secret-2"),
         ("infrastructure", "redis_host", "redis-2"),
         ("infrastructure", "redis_port", 16379),
         ("infrastructure", "milvus_host", "milvus-2"),
@@ -573,6 +636,8 @@ def test_runtime_inputs_change_only_runtime_fingerprint(
         ("observability", "log_level", "DEBUG"),
         ("observability", "log_directory", "/tmp/atlasrag-logs"),
         ("observability", "log_queries", True),
+        ("models", "deepseek_api_key", "deepseek-secret-2"),
+        ("models", "model_device", "cpu"),
     ],
 )
 def test_operational_inputs_change_neither_fingerprint(
@@ -584,6 +649,7 @@ def test_operational_inputs_change_neither_fingerprint(
         "cache": cache_config,
         "maintenance": maintenance_config,
         "observability": observability_config,
+        "models": model_config,
     }
     changed = runtime_config(
         **{section: factories[section](**{field_name: changed_value})}
