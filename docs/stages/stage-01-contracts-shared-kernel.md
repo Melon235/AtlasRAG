@@ -6,13 +6,11 @@ Stage 1 — Contracts & Shared Kernel.
 
 ## Status
 
-**IMPLEMENTATION COMPLETE — PUBLICATION PENDING**
+**COMPLETE**
 
 The Stage 1 implementation and local verification gates are complete. The
-Stage branch has not yet been published and remote CI has not run. Under the
-repository completion rule, Stage 1 is therefore not yet `COMPLETE`. The
-status must remain publication-pending until the final documentation commit is
-pushed normally and its remote CI run is green.
+verified implementation commit was published normally to the Stage branch and
+its remote CI run succeeded. No force push or automatic merge was performed.
 
 ## Scope
 
@@ -28,8 +26,8 @@ depend:
 - validation, serialization, architecture, and scope-regression tests.
 
 Pydantic is the only production runtime dependency introduced by this Stage.
-The implementation requires no secrets, credentials, network access, or
-running services.
+Implementation and verification require no real secrets, credentials, network
+access, or running services.
 
 This Stage does not implement providers, repositories, infrastructure clients,
 LangGraph business execution, RuntimeGate, parsing/indexing, retrieval, Web
@@ -356,26 +354,25 @@ change was required.
   present.
 - Fingerprint and request-hash helpers define identities only; later stages
   will integrate them with indexing, manifests, sessions, and caches.
-- Remote publication and CI evidence do not yet exist. Stage 1 remains
-  publication-pending until both succeed.
 
 ## Git branch, commit, push, and CI
 
 - Branch: `stage/01-contracts-shared-kernel`
-- Last committed implementation HEAD before final review corrections:
-  `29e67a664a0a7d6f5264db1ecd4e12d9799cebdb`
-- Documentation/final Stage commit: **PENDING — final review corrections,
-  regression tests, plan correction, and delivery documentation are
-  intentionally uncommitted**
-- GitHub push: **PENDING — Stage 1 branch publication has not been performed**
-- Remote CI: **NOT STARTED — no Stage 1 branch push exists to trigger it**
+- Verified implementation Stage commit:
+  `837106afd6704b9ce84fb4e0ce530f52bc495f27`
+- GitHub push: **PASS — branch published normally to
+  `origin/stage/01-contracts-shared-kernel`**
+- Remote CI: **PASS — GitHub Actions CI run
+  [36376129832](https://github.com/Melon235/AtlasRAG/actions/runs/36376129832)**
+- Completion-status documentation: recorded by the documentation-only
+  successor commit containing this report; its resulting HEAD and CI are
+  reported in the final handoff to avoid self-referential commit metadata
 - Force push: not used and prohibited
 - Integration: no merge performed
 
-After review, the existing safe Stage finalizer must re-run local verification,
-create the final documentation/status commit, push normally, and receive green
-remote CI. Only then may this report and the Stage indexes be changed to
-`Stage 1 COMPLETE`.
+The repository finalizer reran `make verify`, checked staged artifacts, created
+the verified implementation commit, and pushed normally. This documentation
+update changes status/evidence only; it does not alter the Stage 1 contracts.
 
 ## Next
 
