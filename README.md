@@ -6,10 +6,18 @@ incrementally through independently verified implementation stages.
 The authoritative design is
 [`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md).
 
-**Current implementation stage: Stage 0**
+**Current implementation stage: Stage 1**
 
-Stage 0 establishes only the repository, packaging, documentation, and quality
-boundaries. It does not implement the Part I-IV business architecture.
+**Status: Stage 1 COMPLETE**
+
+**Next: Stage 2 — Infrastructure & Persistence — NOT STARTED**
+
+Stage 1 implements contracts and the shared kernel only: immutable domain
+models, stable enums/errors, declarative graph State schemas, configuration
+schemas, fingerprints, request hashing, and trace contracts. It does not
+implement providers, infrastructure, persistence, or runtime graph execution.
+The Stage branch is published normally and its implementation commit passed
+remote CI. Stage 2 has not started.
 
 ## Setup
 
