@@ -548,12 +548,13 @@ def _expected_collection_description(
     embedding_dimension: int,
     *,
     analyzer: str,
+    collection_name: str,
 ) -> dict[str, object]:
     raw = build_collection_schema(
         embedding_dimension,
         analyzer=analyzer,
     ).to_dict()
-    return {"collection_name": COLLECTION_NAME, **raw}
+    return {"collection_name": collection_name, **raw}
 
 
 def _expected_index_descriptions() -> list[dict[str, object]]:
@@ -584,6 +585,7 @@ def collection_schema_mismatches(
     *,
     embedding_dimension: int,
     analyzer: str = "standard",
+    collection_name: str = COLLECTION_NAME,
 ) -> tuple[str, ...]:
     """Return every collection incompatibility; an empty tuple means compatible."""
 
@@ -591,6 +593,7 @@ def collection_schema_mismatches(
         _expected_collection_description(
             embedding_dimension,
             analyzer=analyzer,
+            collection_name=collection_name,
         )
     )
     actual = normalize_collection_description(actual_description)

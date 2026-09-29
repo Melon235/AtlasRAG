@@ -171,6 +171,7 @@ STAGE2_PRODUCTION_FILES = frozenset(
         "providers/cache/models.py",
         "providers/cache/redis.py",
         "providers/index/__init__.py",
+        "providers/index/milvus.py",
         "providers/index/models.py",
         "providers/index/schema.py",
         "repositories/postgres/__init__.py",
