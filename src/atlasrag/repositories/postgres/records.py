@@ -76,11 +76,18 @@ else:
     JsonObject = Mapping[str, object]
 
 
+def _postgres_text(value: str) -> str:
+    value = validate_unicode_scalar_text(value)
+    if "\x00" in value:
+        raise ValueError("PostgreSQL text and JSON values must not contain NUL")
+    return value
+
+
 def _freeze_json(value: object, active: set[int]) -> JsonValue:
     if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, str):
-        return validate_unicode_scalar_text(value)
+        return _postgres_text(value)
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError("JSON numbers must be finite")
@@ -96,9 +103,7 @@ def _freeze_json(value: object, active: set[int]) -> JsonValue:
                 for key, item in value.items():
                     if not isinstance(key, str):
                         raise ValueError("JSON object keys must be strings")
-                    frozen[validate_unicode_scalar_text(key)] = _freeze_json(
-                        item, active
-                    )
+                    frozen[_postgres_text(key)] = _freeze_json(item, active)
                 return MappingProxyType(frozen)
             return tuple(_freeze_json(item, active) for item in value)
         finally:
@@ -142,17 +147,27 @@ def _canonical_identifier(value: str) -> str:
         raise ValueError(
             "identifier must be a nonblank canonical string without control characters"
         )
-    return value
+    return _postgres_text(value)
 
 
 def _nonblank(value: str) -> str:
+    value = _postgres_text(value)
     if not value.strip():
         raise ValueError("value must not be blank")
     return value
 
 
+def _postgres_source_anchor(value: SourceAnchor | None) -> SourceAnchor | None:
+    if value is not None:
+        for text in (value.heading, value.sheet_name, value.cell_range):
+            if text is not None:
+                _postgres_text(text)
+    return value
+
+
 CanonicalId = Annotated[StrictStr, AfterValidator(_canonical_identifier)]
 _NonblankString = Annotated[StrictStr, AfterValidator(_nonblank)]
+_PostgresText = Annotated[StrictStr, AfterValidator(_postgres_text)]
 _SectionPath = Annotated[
     tuple[_NonblankString, ...], BeforeValidator(validate_ordered_collection_input)
 ]
@@ -164,6 +179,7 @@ _FailedStage = Annotated[FailedStage, BeforeValidator(validate_string_enum_input
 _StoredChunkType = Annotated[
     StoredChunkType, BeforeValidator(validate_string_enum_input)
 ]
+_SourceAnchor = Annotated[SourceAnchor | None, AfterValidator(_postgres_source_anchor)]
 
 
 class StoredDocument(FrozenModel):
@@ -230,9 +246,9 @@ class StoredElement(FrozenModel):
     revision_id: CanonicalId
     element_type: _NonblankString
     order_index: Annotated[StrictInt, Field(ge=0)]
-    content: StrictStr
+    content: _PostgresText
     section_path: _SectionPath = ()
-    source_anchor: SourceAnchor | None = None
+    source_anchor: _SourceAnchor = None
     structured_content: StructuredMetadata = Field(
         default_factory=dict, validate_default=True
     )
@@ -248,9 +264,9 @@ class StoredChunk(FrozenModel):
     revision_id: CanonicalId
     chunk_type: _StoredChunkType
     parent_id: CanonicalId | None = None
-    content: StrictStr
+    content: _PostgresText
     section_path: _SectionPath = ()
-    source_anchor: SourceAnchor | None = None
+    source_anchor: _SourceAnchor = None
     sheet_name: _NonblankString | None = None
     metadata: StructuredMetadata = Field(default_factory=dict, validate_default=True)
     strategy_metadata: StructuredMetadata = Field(

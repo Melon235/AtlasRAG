@@ -167,7 +167,14 @@ EXPECTED_PRODUCTION_FILES = frozenset(
 STAGE2_PRODUCTION_FILES = frozenset(
     {
         "repositories/postgres/__init__.py",
+        "repositories/postgres/chunks.py",
+        "repositories/postgres/documents.py",
+        "repositories/postgres/elements.py",
+        "repositories/postgres/errors.py",
+        "repositories/postgres/pool.py",
         "repositories/postgres/records.py",
+        "repositories/postgres/runtime_metadata.py",
+        "repositories/postgres/uow.py",
     }
 )
 EXPECTED_PRODUCTION_FILES |= STAGE2_PRODUCTION_FILES
