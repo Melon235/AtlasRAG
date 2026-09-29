@@ -166,6 +166,10 @@ EXPECTED_PRODUCTION_FILES = frozenset(
 )
 STAGE2_PRODUCTION_FILES = frozenset(
     {
+        "providers/cache/__init__.py",
+        "providers/cache/keys.py",
+        "providers/cache/models.py",
+        "providers/cache/redis.py",
         "repositories/postgres/__init__.py",
         "repositories/postgres/chunks.py",
         "repositories/postgres/documents.py",
