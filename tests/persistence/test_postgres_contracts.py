@@ -1202,6 +1202,267 @@ async def test_uow_acquisition_and_cleanup_failures_are_typed() -> None:
     assert return_connection.closes == 1
 
 
+def test_advisory_lock_key_is_stable_validated_signed_int64() -> None:
+    from atlasrag.repositories.postgres.locks import advisory_lock_key
+
+    positive = advisory_lock_key("doc-positive")
+    negative = advisory_lock_key("doc-negative")
+
+    assert positive == 8167232475569918280
+    assert negative == -8328432071101341633
+    assert -(2**63) <= positive < 2**63
+    assert -(2**63) <= negative < 2**63
+    assert positive != negative
+    assert advisory_lock_key("doc-positive") == positive
+    with pytest.raises(InvariantViolationError):
+        advisory_lock_key(" ")
+
+
+@pytest.mark.asyncio
+async def test_advisory_lock_lease_holds_connection_until_idempotent_release() -> None:
+    from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
+
+    connection = FakeConnection()
+    connection.queue_rows({"acquired": True})
+    connection.queue_rows({"released": True})
+    pool = FakePool(connection)
+    manager = PostgresAdvisoryLockManager(cast(Any, pool))
+
+    lease = await manager.try_acquire("doc-positive")
+
+    assert lease is not None
+    acquire_sql, acquire_params = connection.execute_calls[0]
+    assert "pg_try_advisory_lock(%s)" in normalized_sql(acquire_sql)
+    assert acquire_params == (8167232475569918280,)
+    assert connection.rollbacks == 1
+    assert pool.putconn_calls == []
+
+    await lease.release()
+    release_sql, release_params = connection.execute_calls[1]
+    assert "pg_advisory_unlock(%s)" in normalized_sql(release_sql)
+    assert release_params == (8167232475569918280,)
+    assert connection.rollbacks == 2
+    assert pool.putconn_calls == [connection]
+
+    await lease.release()
+    assert len(connection.execute_calls) == 2
+    assert pool.putconn_calls == [connection]
+
+
+@pytest.mark.asyncio
+async def test_advisory_lock_contention_is_the_only_none_result() -> None:
+    from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
+
+    connection = FakeConnection()
+    connection.queue_rows({"acquired": False})
+    pool = FakePool(connection)
+
+    assert (
+        await PostgresAdvisoryLockManager(cast(Any, pool)).try_acquire("doc-1") is None
+    )
+    assert connection.rollbacks == 1
+    assert connection.closes == 0
+    assert pool.putconn_calls == [connection]
+
+
+@pytest.mark.asyncio
+async def test_advisory_lock_rejects_invalid_input_before_pool_acquisition() -> None:
+    from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
+
+    pool = FakePool(FakeConnection())
+
+    with pytest.raises(InvariantViolationError):
+        await PostgresAdvisoryLockManager(cast(Any, pool)).try_acquire("bad\n")
+
+    assert pool.getconn_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rows",
+    [
+        (),
+        ({"unexpected": True},),
+        ({"acquired": 1},),
+    ],
+)
+async def test_advisory_lock_malformed_result_is_not_contention(
+    rows: tuple[object, ...],
+) -> None:
+    from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
+
+    connection = FakeConnection()
+    connection.queue_rows(*rows)
+    pool = FakePool(connection)
+
+    with pytest.raises(CanonicalDataError):
+        await PostgresAdvisoryLockManager(cast(Any, pool)).try_acquire("doc-1")
+
+    assert connection.closes == 1
+    assert pool.putconn_calls == [connection]
+
+
+@pytest.mark.asyncio
+async def test_advisory_lock_acquisition_failures_are_typed_and_cleaned_up() -> None:
+    from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
+
+    timeout_pool = FakePool(FakeConnection())
+    timeout_pool.getconn_error = PoolTimeout("hidden")
+    with pytest.raises(DependencyTimeoutError):
+        await PostgresAdvisoryLockManager(cast(Any, timeout_pool)).try_acquire("doc-1")
+
+    connection = FakeConnection()
+    connection.execute_error = OperationalError("query hidden")
+    unavailable_pool = FakePool(connection)
+    with pytest.raises(DependencyUnavailableError) as raised:
+        await PostgresAdvisoryLockManager(cast(Any, unavailable_pool)).try_acquire(
+            "doc-1"
+        )
+
+    assert "hidden" not in str(raised.value)
+    assert connection.closes == 1
+    assert unavailable_pool.putconn_calls == [connection]
+
+
+@pytest.mark.asyncio
+async def test_advisory_lock_acquisition_preserves_cancellation_after_cleanup() -> None:
+    from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
+
+    cancellation = asyncio.CancelledError()
+    connection = FakeConnection()
+    connection.execute_error = cancellation
+    pool = FakePool(connection)
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await PostgresAdvisoryLockManager(cast(Any, pool)).try_acquire("doc-1")
+
+    assert raised.value is cancellation
+    assert connection.closes == 1
+    assert pool.putconn_calls == [connection]
+
+
+@pytest.mark.asyncio
+async def test_advisory_lock_contention_cleanup_failure_is_not_none() -> None:
+    from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
+
+    connection = FakeConnection()
+    connection.queue_rows({"acquired": False})
+    pool = FakePool(connection)
+    pool.putconn_error = OperationalError("return hidden")
+
+    with pytest.raises(DependencyUnavailableError):
+        await PostgresAdvisoryLockManager(cast(Any, pool)).try_acquire("doc-1")
+
+    assert connection.closes == 1
+    assert pool.putconn_calls == [connection]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("release_error", "expected_error"),
+    [
+        (OperationalError("release hidden"), DependencyUnavailableError),
+        (asyncio.CancelledError(), asyncio.CancelledError),
+    ],
+)
+async def test_advisory_lock_release_failure_discards_connection_and_is_idempotent(
+    release_error: BaseException,
+    expected_error: type[BaseException],
+) -> None:
+    from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
+
+    connection = FakeConnection()
+    connection.queue_rows({"acquired": True})
+    connection.execute_failures[2] = release_error
+    pool = FakePool(connection)
+    lease = await PostgresAdvisoryLockManager(cast(Any, pool)).try_acquire("doc-1")
+    assert lease is not None
+
+    with pytest.raises(expected_error) as raised:
+        await lease.release()
+
+    if isinstance(release_error, asyncio.CancelledError):
+        assert raised.value is release_error
+    assert connection.closes == 1
+    assert pool.putconn_calls == [connection]
+    await lease.release()
+    assert connection.closes == 1
+    assert pool.putconn_calls == [connection]
+
+
+@pytest.mark.asyncio
+async def test_advisory_lock_false_unlock_is_an_invariant_failure() -> None:
+    from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
+
+    connection = FakeConnection()
+    connection.queue_rows({"acquired": True})
+    connection.queue_rows({"released": False})
+    pool = FakePool(connection)
+    lease = await PostgresAdvisoryLockManager(cast(Any, pool)).try_acquire("doc-1")
+    assert lease is not None
+
+    with pytest.raises(InvariantViolationError):
+        await lease.release()
+
+    assert connection.closes == 1
+    assert pool.putconn_calls == [connection]
+
+
+@pytest.mark.asyncio
+async def test_advisory_lock_release_return_failure_closes_unlocked_connection() -> (
+    None
+):
+    from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
+
+    connection = FakeConnection()
+    connection.queue_rows({"acquired": True})
+    connection.queue_rows({"released": True})
+    pool = FakePool(connection)
+    lease = await PostgresAdvisoryLockManager(cast(Any, pool)).try_acquire("doc-1")
+    assert lease is not None
+    pool.putconn_error = OperationalError("return hidden")
+
+    with pytest.raises(DependencyUnavailableError):
+        await lease.release()
+
+    assert connection.closes == 1
+    assert pool.putconn_calls == [connection]
+
+
+@pytest.mark.asyncio
+async def test_advisory_lock_does_not_pool_possibly_locked_connection() -> None:
+    from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
+
+    cancellation = asyncio.CancelledError()
+    connection = FakeConnection()
+    connection.queue_rows({"acquired": True})
+    connection.execute_failures[2] = cancellation
+    connection.close_error = OperationalError("close hidden")
+    pool = FakePool(connection)
+    lease = await PostgresAdvisoryLockManager(cast(Any, pool)).try_acquire("doc-1")
+    assert lease is not None
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await lease.release()
+
+    assert raised.value is cancellation
+    assert connection.closes == 1
+    assert pool.putconn_calls == []
+    assert any("cleanup failure" in note.lower() for note in raised.value.__notes__)
+
+
+def test_advisory_lock_is_session_level_and_separate_from_uow() -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "src/atlasrag/repositories/postgres/locks.py").read_text()
+
+    assert "pg_try_advisory_lock" in source
+    assert "pg_advisory_unlock" in source
+    assert "pg_advisory_xact_lock" not in source
+    assert "PostgresUnitOfWork" not in source
+    assert ".getconn(" in source
+    assert ".putconn(" in source
+
+
 def test_repository_modules_never_commit_and_uow_avoids_pool_context() -> None:
     root = Path(__file__).resolve().parents[2]
     repository_paths = [

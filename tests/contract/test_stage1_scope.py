@@ -171,6 +171,7 @@ STAGE2_PRODUCTION_FILES = frozenset(
         "repositories/postgres/documents.py",
         "repositories/postgres/elements.py",
         "repositories/postgres/errors.py",
+        "repositories/postgres/locks.py",
         "repositories/postgres/pool.py",
         "repositories/postgres/records.py",
         "repositories/postgres/runtime_metadata.py",
