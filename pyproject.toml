@@ -32,8 +32,17 @@ include = ["atlasrag*"]
 namespaces = false
 
 [tool.pytest.ini_options]
-addopts = ["--strict-config", "--strict-markers", "-ra"]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "-ra",
+    "-m",
+    "not integration",
+]
 testpaths = ["tests"]
+markers = [
+    "integration: requires explicitly opted-in local infrastructure",
+]
 
 [tool.ruff]
 target-version = "py311"
