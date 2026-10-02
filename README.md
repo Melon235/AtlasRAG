@@ -8,7 +8,7 @@ The authoritative design is
 
 **Current implementation stage: Stage 2**
 
-**Status: Stage 2 IMPLEMENTATION VERIFIED — PUBLICATION PENDING**
+**Status: Stage 2 COMPLETE**
 
 **Next: Stage 3 — Part I: Parse & Canonical Build — NOT STARTED**
 
@@ -17,7 +17,8 @@ localhost Docker Compose services, canonical PostgreSQL records/migrations and
 repositories, explicit Unit of Work and advisory-lock leases, typed Redis
 caches, a fail-closed Milvus index provider, readiness probes, and isolated
 integration tests. Local offline and service-backed verification are green;
-normal branch publication and both remote workflows are still pending.
+the Stage branch is published, and both remote workflows are green. The branch
+has not been merged into `main`.
 
 Stage 2 does not implement parsing, chunk construction, embeddings, Part I or
 Part II graphs, a real SearXNG provider, cache policy, RuntimeGate, or benchmark

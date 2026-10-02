@@ -6,13 +6,12 @@ Stage 2 — Infrastructure & Persistence.
 
 ## Status
 
-**IMPLEMENTATION VERIFIED — PUBLICATION PENDING**
+**COMPLETE**
 
 The Stage 2 implementation, offline gate, clean-state service-backed gate, and
-local closeout audits are complete. The Stage is not yet complete because its
-final commit has not been published and the branch CI and Integration
-workflows have not yet finished green. No force push or merge has been
-performed.
+local closeout audits are complete. The final implementation commit is
+published on the Stage branch, and its remote CI and Integration workflows
+both completed successfully. No force push or merge has been performed.
 
 ## Scope
 
@@ -274,6 +273,12 @@ destroys containers, networks, volumes, and orphans. It builds MinIO
 binary that does not report that exact release, commit, and runtime. Neither
 workflow reads GitHub secrets.
 
+The first published closeout run failed before Stage verification because the
+GitHub runner denied access to a third-party registry mirror used to recover
+the archived MinIO image. The final implementation commit removed that mirror,
+built the same frozen release from its official fixed source commit, and
+passed both remote workflows.
+
 ## Verification
 
 Fresh final local verification ran on 2026-10-02. The offline path ran with
@@ -337,10 +342,17 @@ runtime safety gates.
 
 - Base: `origin/main` at `0db10fa2aa27f2cac06fbde7a8734862a52834ca`
 - Branch: `stage/02-infrastructure-persistence`
-- Final implementation commit: pending
-- GitHub push: pending
-- Remote CI: pending
-- Remote Integration CI: pending
+- Final implementation commit:
+  `92d656b6058a2741141b5b7373b4075ca5ae67af`
+- GitHub push: PASS — published normally to
+  `origin/stage/02-infrastructure-persistence`
+- Remote CI: PASS —
+  [run 37006636651](https://github.com/Melon235/AtlasRAG/actions/runs/37006636651)
+- Remote Integration CI: PASS —
+  [run 37006636633](https://github.com/Melon235/AtlasRAG/actions/runs/37006636633)
+- Publication-evidence revision: this documentation-only successor; its final
+  commit and workflow reruns are reported in the delivery handoff to avoid a
+  self-referential documentation commit cycle
 - Force push: not used and prohibited
 - Integration into `main`: not performed
 
