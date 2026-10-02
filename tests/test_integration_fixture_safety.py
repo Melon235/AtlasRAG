@@ -124,12 +124,12 @@ async def test_database_is_dropped_when_create_admin_close_fails(
 
     with pytest.raises(RuntimeError, match="administrator close failed"):
         async with integration_fixtures._isolated_postgres_database(
-            "postgresql://local.invalid/atlasrag",
+            "postgresql://127.0.0.1/atlasrag",
             "atlasrag_test_safe",
         ):
             pytest.fail("fixture must not yield after setup failure")
 
-    assert dropped == [("postgresql://local.invalid/atlasrag", "atlasrag_test_safe")]
+    assert dropped == [("postgresql://127.0.0.1/atlasrag", "atlasrag_test_safe")]
 
 
 @pytest.mark.asyncio
@@ -150,7 +150,7 @@ async def test_database_is_dropped_after_body_failure(
 
     with pytest.raises(ValueError, match="body failure"):
         async with integration_fixtures._isolated_postgres_database(
-            "postgresql://local.invalid/atlasrag",
+            "postgresql://127.0.0.1/atlasrag",
             "atlasrag_test_body",
         ):
             raise ValueError("body failure")
@@ -178,7 +178,7 @@ async def test_primary_cancellation_survives_database_drop_failure(
 
     async def exercise() -> None:
         async with integration_fixtures._isolated_postgres_database(
-            "postgresql://local.invalid/atlasrag",
+            "postgresql://127.0.0.1/atlasrag",
             "atlasrag_test_cancel",
         ):
             entered.set()
@@ -242,7 +242,7 @@ async def test_migration_cancellation_waits_for_owned_worker(
     )
 
     operation = asyncio.create_task(
-        integration_fixtures._run_migrations("postgresql://local.invalid/atlasrag")
+        integration_fixtures._run_migrations("postgresql://127.0.0.1/atlasrag")
     )
     assert await asyncio.to_thread(started.wait, 1.0)
     operation.cancel()
@@ -519,6 +519,57 @@ def test_redis_urls_require_explicit_distinct_test_database() -> None:
                 "redis://127.0.0.1:6379/0",
                 invalid,
             )
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://atlasrag:password@example.com:5432/atlasrag",
+        "postgresql://atlasrag:password@10.0.0.8:5432/atlasrag",
+        "postgresql://atlasrag:password@localhost.example:5432/atlasrag",
+    ],
+)
+def test_destructive_postgres_fixture_rejects_non_loopback_dsn(dsn: str) -> None:
+    integration_fixtures = load_integration_fixtures()
+
+    with pytest.raises(ValueError, match="loopback"):
+        integration_fixtures._database_dsn(dsn, "atlasrag_test_safe")
+
+
+@pytest.mark.parametrize(
+    ("application_url", "test_url"),
+    [
+        ("redis://example.com:6379/0", "redis://example.com:6379/15"),
+        ("redis://10.0.0.8:6379/0", "redis://10.0.0.8:6379/15"),
+        (
+            "redis://localhost.example:6379/0",
+            "redis://localhost.example:6379/15",
+        ),
+    ],
+)
+def test_destructive_redis_fixture_rejects_non_loopback_urls(
+    application_url: str,
+    test_url: str,
+) -> None:
+    integration_fixtures = load_integration_fixtures()
+
+    with pytest.raises(ValueError, match="loopback"):
+        integration_fixtures._validate_redis_test_url(application_url, test_url)
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "http://example.com:19530",
+        "http://10.0.0.8:19530",
+        "http://localhost.example:19530",
+    ],
+)
+def test_destructive_milvus_fixture_rejects_non_loopback_uri(uri: str) -> None:
+    integration_fixtures = load_integration_fixtures()
+
+    with pytest.raises(ValueError, match="loopback"):
+        integration_fixtures._validate_milvus_uri(uri)
 
 
 @pytest.mark.asyncio

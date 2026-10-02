@@ -6,18 +6,22 @@ incrementally through independently verified implementation stages.
 The authoritative design is
 [`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md).
 
-**Current implementation stage: Stage 1**
+**Current implementation stage: Stage 2**
 
-**Status: Stage 1 COMPLETE**
+**Status: Stage 2 IMPLEMENTATION VERIFIED — PUBLICATION PENDING**
 
-**Next: Stage 2 — Infrastructure & Persistence — NOT STARTED**
+**Next: Stage 3 — Part I: Parse & Canonical Build — NOT STARTED**
 
-Stage 1 implements contracts and the shared kernel only: immutable domain
-models, stable enums/errors, declarative graph State schemas, configuration
-schemas, fingerprints, request hashing, and trace contracts. It does not
-implement providers, infrastructure, persistence, or runtime graph execution.
-The Stage branch is published normally and its implementation commit passed
-remote CI. Stage 2 has not started.
+Stage 2 implements infrastructure and persistence capabilities only: pinned
+localhost Docker Compose services, canonical PostgreSQL records/migrations and
+repositories, explicit Unit of Work and advisory-lock leases, typed Redis
+caches, a fail-closed Milvus index provider, readiness probes, and isolated
+integration tests. Local offline and service-backed verification are green;
+normal branch publication and both remote workflows are still pending.
+
+Stage 2 does not implement parsing, chunk construction, embeddings, Part I or
+Part II graphs, a real SearXNG provider, cache policy, RuntimeGate, or benchmark
+execution. Stage 3 has not started.
 
 ## Setup
 
@@ -31,6 +35,14 @@ uv sync
 
 ```bash
 make verify
+```
+
+`make verify` is secret-free, CPU-only, and service-free. To run the explicit
+Stage 2 integration gate, copy `deploy/local/.env.example` to the ignored
+`deploy/local/.env`, replace its local-only placeholders, and run:
+
+```bash
+make stage2-verify
 ```
 
 ## Stage-based development

@@ -2,7 +2,7 @@ ATLASRAG_ENV_FILE ?= deploy/local/.env
 COMPOSE_FILE := deploy/local/compose.yaml
 
 .PHONY: setup format format-check lint typecheck test architecture-check verify \
-	infra-up infra-wait infra-status infra-down migrate migration-check \
+	infra-up infra-wait infra-status infra-logs infra-down migrate migration-check \
 	test-integration stage2-verify
 
 setup:
@@ -42,6 +42,9 @@ infra-wait:
 
 infra-status:
 	docker compose --env-file "$(ATLASRAG_ENV_FILE)" -f "$(COMPOSE_FILE)" ps
+
+infra-logs:
+	docker compose --env-file "$(ATLASRAG_ENV_FILE)" -f "$(COMPOSE_FILE)" logs --no-color
 
 infra-down:
 	docker compose --env-file "$(ATLASRAG_ENV_FILE)" -f "$(COMPOSE_FILE)" down

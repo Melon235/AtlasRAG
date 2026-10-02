@@ -1,0 +1,64 @@
+name: Integration
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stage2-integration:
+    name: Stage 2 Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ATLASRAG_ENV_FILE: deploy/local/.env
+      COMPOSE_PROJECT_NAME: atlasrag-ci-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Sync locked dependencies
+        run: uv sync --frozen
+
+      - name: Create ephemeral local configuration
+        run: |
+          cp deploy/local/.env.example deploy/local/.env
+          sed -i "s/replace-with-local-postgres-password/ci-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/g" deploy/local/.env
+          sed -i "s/replace-with-local-minio-user/ci-minio-${GITHUB_RUN_ID}/g" deploy/local/.env
+          sed -i "s/replace-with-local-minio-password/ci-minio-password-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/g" deploy/local/.env
+          sed -i "s/replace-with-local-searxng-secret-at-least-32-characters/ci-searxng-secret-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-local-only/g" deploy/local/.env
+
+      - name: Preload pinned archived MinIO image
+        env:
+          MINIO_SOURCE: m.daocloud.io/quay.io/minio/minio@sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3
+          MINIO_TARGET: minio/minio:RELEASE.2024-12-18T13-15-44Z
+        run: |
+          docker pull "${MINIO_SOURCE}"
+          docker tag "${MINIO_SOURCE}" "${MINIO_TARGET}"
+
+      - name: Verify Stage 2
+        run: make stage2-verify
+
+      - name: Print Compose logs on failure
+        if: failure()
+        run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml logs --no-color
+
+      - name: Destroy ephemeral infrastructure
+        if: always()
+        run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml down -v --remove-orphans

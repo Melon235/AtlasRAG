@@ -1,15 +1,33 @@
 #!/usr/bin/env python3
-"""Reject production imports from the test and benchmark trees."""
+"""Enforce static dependency and transaction boundaries in production code."""
 
 from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-FORBIDDEN_TOP_LEVEL_MODULES = frozenset({"benchmarks", "tests"})
+FORBIDDEN_IMPORT_PREFIXES = (
+    "atlasrag.benchmarks",
+    "atlasrag.tests",
+    "benchmarks",
+    "tests",
+)
+LAYER_FORBIDDEN_PREFIXES = {
+    "repositories": (
+        "atlasrag.benchmarks",
+        "atlasrag.graphs",
+        "atlasrag.providers",
+    ),
+    "providers": (
+        "atlasrag.benchmarks",
+        "atlasrag.graphs",
+        "atlasrag.repositories",
+    ),
+}
 
 
 @dataclass(frozen=True, order=True)
@@ -26,8 +44,57 @@ class Diagnostic:
 
 
 def is_forbidden(module_name: str) -> bool:
-    """Return whether a module starts with a prohibited top-level package."""
-    return module_name.partition(".")[0] in FORBIDDEN_TOP_LEVEL_MODULES
+    """Return whether a module belongs to a prohibited support package."""
+    return any(
+        module_name == prefix or module_name.startswith(f"{prefix}.")
+        for prefix in FORBIDDEN_IMPORT_PREFIXES
+    )
+
+
+def _architecture_layer(relative_path: str) -> str | None:
+    parts = Path(relative_path).parts
+    if len(parts) >= 3 and parts[:2] == ("src", "atlasrag"):
+        candidate = parts[2]
+        if candidate in LAYER_FORBIDDEN_PREFIXES:
+            return candidate
+    return None
+
+
+def _package_name(path: Path, root: Path) -> str:
+    relative = path.relative_to(root / "src").with_suffix("")
+    parts = list(relative.parts)
+    parts.pop()
+    return ".".join(parts)
+
+
+def _import_targets(
+    node: ast.Import | ast.ImportFrom, path: Path, root: Path
+) -> tuple[str, ...]:
+    if isinstance(node, ast.Import):
+        return tuple(imported.name for imported in node.names)
+
+    if node.level == 0:
+        base = node.module or ""
+    else:
+        relative_name = "." * node.level + (node.module or "")
+        try:
+            base = importlib.util.resolve_name(relative_name, _package_name(path, root))
+        except (ImportError, ValueError):
+            return ()
+
+    targets = [base] if base else []
+    if base:
+        targets.extend(
+            f"{base}.{imported.name}" for imported in node.names if imported.name != "*"
+        )
+    return tuple(targets)
+
+
+def _matching_forbidden_prefix(layer: str, module_name: str) -> str | None:
+    for prefix in LAYER_FORBIDDEN_PREFIXES[layer]:
+        if module_name == prefix or module_name.startswith(f"{prefix}."):
+            return prefix
+    return None
 
 
 def scan_file(path: Path, root: Path) -> list[Diagnostic]:
@@ -44,28 +111,53 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
         return [Diagnostic(relative_path, 1, f"unable to inspect file: {error}")]
 
     diagnostics: list[Diagnostic] = []
+    layer = _architecture_layer(relative_path)
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for imported_name in node.names:
-                if is_forbidden(imported_name.name):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            targets = _import_targets(node, path, root)
+            if layer is not None:
+                forbidden_prefix = next(
+                    (
+                        prefix
+                        for target in targets
+                        if (prefix := _matching_forbidden_prefix(layer, target))
+                        is not None
+                    ),
+                    None,
+                )
+                if forbidden_prefix is not None:
+                    layer_name = "repository" if layer == "repositories" else "provider"
                     diagnostics.append(
                         Diagnostic(
                             relative_path,
                             node.lineno,
-                            f"forbidden import '{imported_name.name}'",
+                            f"{layer_name} layer may not import '{forbidden_prefix}'",
                         )
                     )
+                    continue
+            global_target = next(
+                (target for target in targets if is_forbidden(target)), None
+            )
+            if global_target is not None:
+                diagnostics.append(
+                    Diagnostic(
+                        relative_path,
+                        node.lineno,
+                        f"forbidden import '{global_target}'",
+                    )
+                )
         elif (
-            isinstance(node, ast.ImportFrom)
-            and node.level == 0
-            and node.module is not None
-            and is_forbidden(node.module)
+            layer == "repositories"
+            and path.name != "uow.py"
+            and isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "commit"
         ):
             diagnostics.append(
                 Diagnostic(
                     relative_path,
                     node.lineno,
-                    f"forbidden import '{node.module}'",
+                    "repository commit is only allowed in uow.py",
                 )
             )
     return diagnostics

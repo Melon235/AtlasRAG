@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -30,7 +29,6 @@ from atlasrag.providers.index.schema import (
 
 pytestmark = pytest.mark.integration
 
-MILVUS_URI_ENV = "ATLASRAG_MILVUS_URI"
 EMBEDDING_DIMENSION = 3
 SDK_TIMEOUT_SECONDS = 10.0
 _TEST_COLLECTION = re.compile(r"\Aatlasrag_test_[0-9a-f]{32}\Z")
@@ -42,13 +40,6 @@ class IsolatedMilvus:
     client: Any
     provider: MilvusIndexProvider
     collection_name: str
-
-
-def _required_environment(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise RuntimeError(f"{name} is required for integration tests")
-    return value
 
 
 async def _sdk_call(
@@ -94,10 +85,10 @@ def _cleanup_test_collection(resource: IsolatedMilvus) -> None:
 
 
 @pytest_asyncio.fixture
-async def isolated_milvus() -> AsyncIterator[IsolatedMilvus]:
+async def isolated_milvus(milvus_uri: str) -> AsyncIterator[IsolatedMilvus]:
     client = await _sdk_call(
         MilvusClient,
-        uri=_required_environment(MILVUS_URI_ENV),
+        uri=milvus_uri,
         timeout=SDK_TIMEOUT_SECONDS,
     )
     collection_name = f"atlasrag_test_{uuid4().hex}"

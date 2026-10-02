@@ -9,6 +9,7 @@ import subprocess
 import sys
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
+from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit
 from uuid import uuid4
@@ -27,6 +28,7 @@ ALEMBIC_CONFIG = REPOSITORY_ROOT / "alembic.ini"
 POSTGRES_DSN_ENV = "ATLASRAG_POSTGRES_DSN"
 REDIS_URL_ENV = "ATLASRAG_REDIS_URL"
 TEST_REDIS_URL_ENV = "ATLASRAG_TEST_REDIS_URL"
+MILVUS_URI_ENV = "ATLASRAG_MILVUS_URI"
 REDIS_LEASE_KEY = "atlasrag:test:exclusive-lease"
 REDIS_LEASE_SECONDS = 600
 REDIS_SCAN_COUNT = 100
@@ -65,6 +67,22 @@ def _required_environment(name: str) -> str:
     if not value:
         raise RuntimeError(f"{name} is required for integration tests")
     return value
+
+
+def _require_loopback_host(host: str | None, service: str) -> str:
+    if host is None:
+        raise ValueError(f"integration {service} endpoint must use a loopback host")
+    if host.casefold() == "localhost":
+        return host
+    try:
+        address = ip_address(host)
+    except ValueError:
+        raise ValueError(
+            f"integration {service} endpoint must use a loopback host"
+        ) from None
+    if not address.is_loopback:
+        raise ValueError(f"integration {service} endpoint must use a loopback host")
+    return host
 
 
 def _add_cleanup_note(
@@ -162,6 +180,7 @@ def _database_dsn(dsn: str, database_name: str) -> str:
     url = make_url(dsn)
     if url.drivername not in {"postgresql", "postgresql+psycopg"}:
         raise ValueError("integration PostgreSQL DSN must use PostgreSQL")
+    _require_loopback_host(url.host, "PostgreSQL")
     return url.set(database=database_name).render_as_string(hide_password=False)
 
 
@@ -288,11 +307,24 @@ async def _managed_postgres_pool(
 def _redis_endpoint(url: SplitResult) -> tuple[str, str, int]:
     if url.scheme not in {"redis", "rediss"} or url.hostname is None:
         raise ValueError("integration Redis URL must be a TCP Redis URL")
+    host = _require_loopback_host(url.hostname, "Redis")
     try:
         port = url.port or 6379
     except ValueError:
         raise ValueError("integration Redis URL has an invalid port") from None
-    return url.scheme, url.hostname.casefold(), port
+    return url.scheme, host.casefold(), port
+
+
+def _validate_milvus_uri(uri: str) -> str:
+    url = urlsplit(uri)
+    if url.scheme not in {"http", "https"} or url.hostname is None:
+        raise ValueError("integration Milvus URI must be an HTTP(S) URI")
+    try:
+        url.port
+    except ValueError:
+        raise ValueError("integration Milvus URI has an invalid port") from None
+    _require_loopback_host(url.hostname, "Milvus")
+    return uri
 
 
 def _redis_database(url: SplitResult) -> int:
@@ -521,6 +553,11 @@ async def redis_client() -> AsyncIterator[Redis]:
     )
     async with _managed_redis_client(client, uuid4().hex) as managed_client:
         yield managed_client
+
+
+@pytest.fixture
+def milvus_uri() -> str:
+    return _validate_milvus_uri(_required_environment(MILVUS_URI_ENV))
 
 
 @pytest.fixture

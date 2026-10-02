@@ -249,6 +249,7 @@ def test_env_example_contains_only_explicit_local_placeholders() -> None:
         "infra-up",
         "infra-wait",
         "infra-status",
+        "infra-logs",
         "infra-down",
         "migrate",
         "migration-check",
@@ -266,6 +267,7 @@ def test_make_targets_preserve_data_and_make_integration_explicit() -> None:
     assert " up -d" in make_target(makefile, "infra-up")
     assert " compose " in make_target(makefile, "infra-status")
     assert " ps" in make_target(makefile, "infra-status")
+    assert "logs --no-color" in make_target(makefile, "infra-logs")
     assert " down" in make_target(makefile, "infra-down")
     assert " -v" not in make_target(makefile, "infra-down")
     assert "alembic upgrade head" in make_target(makefile, "migrate")
@@ -510,11 +512,14 @@ def test_stage2_verify_has_early_trap_and_ordered_cleanup_safe_pipeline() -> Non
     verify = source.index("make verify")
     up = source.index("make infra-up")
     wait = source.index("make infra-wait")
+    status = source.index("make infra-status")
     migrate = source.index("make migrate")
     migration_check = source.index("make migration-check")
     integration = source.index("make test-integration")
-    assert trap < verify < up < wait < migrate < migration_check < integration
-    assert "make infra-down" in source
+    assert trap < verify < up < wait < status < migrate < migration_check < integration
+    failure_logs = source.index("make infra-logs")
+    down = source.index("make infra-down")
+    assert failure_logs < down < verify
     assert "down -v" not in source
 
 
@@ -528,17 +533,30 @@ def test_stage2_verify_has_early_trap_and_ordered_cleanup_safe_pipeline() -> Non
                 "verify",
                 "infra-up",
                 "infra-wait",
+                "infra-status",
                 "migrate",
                 "migration-check",
                 "test-integration",
                 "infra-down",
             ],
         ),
-        ("verify", 23, ["verify", "infra-down"]),
+        ("verify", 23, ["verify", "infra-logs", "infra-down"]),
         (
             "infra-wait",
             23,
-            ["verify", "infra-up", "infra-wait", "infra-down"],
+            ["verify", "infra-up", "infra-wait", "infra-logs", "infra-down"],
+        ),
+        (
+            "infra-status",
+            23,
+            [
+                "verify",
+                "infra-up",
+                "infra-wait",
+                "infra-status",
+                "infra-logs",
+                "infra-down",
+            ],
         ),
         (
             "test-integration",
@@ -547,9 +565,11 @@ def test_stage2_verify_has_early_trap_and_ordered_cleanup_safe_pipeline() -> Non
                 "verify",
                 "infra-up",
                 "infra-wait",
+                "infra-status",
                 "migrate",
                 "migration-check",
                 "test-integration",
+                "infra-logs",
                 "infra-down",
             ],
         ),
