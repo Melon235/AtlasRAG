@@ -30,6 +30,12 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Go 1.23.4
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.4"
+          cache: false
+
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
@@ -44,13 +50,30 @@ jobs:
           sed -i "s/replace-with-local-minio-password/ci-minio-password-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/g" deploy/local/.env
           sed -i "s/replace-with-local-searxng-secret-at-least-32-characters/ci-searxng-secret-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-local-only/g" deploy/local/.env
 
-      - name: Preload pinned archived MinIO image
+      - name: Build pinned MinIO release from official source
         env:
-          MINIO_SOURCE: m.daocloud.io/quay.io/minio/minio@sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3
+          MINIO_COMMIT: 16f8cf1c52f0a77eeb8f7565aaf7f7df12454583
+          MINIO_RELEASE_TIMESTAMP: 2024-12-18T13-15-44Z
           MINIO_TARGET: minio/minio:RELEASE.2024-12-18T13-15-44Z
         run: |
-          docker pull "${MINIO_SOURCE}"
-          docker tag "${MINIO_SOURCE}" "${MINIO_TARGET}"
+          minio_source="${RUNNER_TEMP}/minio-source"
+          minio_image_context="${RUNNER_TEMP}/minio-image"
+          mkdir -p "${minio_source}" "${minio_image_context}"
+          git -C "${minio_source}" init --quiet
+          git -C "${minio_source}" remote add origin https://github.com/minio/minio.git
+          git -C "${minio_source}" fetch --quiet --depth=1 origin "${MINIO_COMMIT}"
+          git -C "${minio_source}" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "${minio_source}" rev-parse HEAD)" = "${MINIO_COMMIT}"
+          (
+            cd "${minio_source}"
+            minio_ldflags="$(MINIO_RELEASE=RELEASE go run buildscripts/gen-ldflags.go "${MINIO_RELEASE_TIMESTAMP}")"
+            CGO_ENABLED=0 go build -tags kqueue -trimpath --ldflags "${minio_ldflags}" -o "${minio_image_context}/minio"
+          )
+          docker build --file deploy/local/minio-ci.Dockerfile --tag "${MINIO_TARGET}" "${minio_image_context}"
+          minio_version="$(docker run --rm "${MINIO_TARGET}" --version)"
+          printf '%s\n' "${minio_version}"
+          grep -Fqx "minio version RELEASE.2024-12-18T13-15-44Z (commit-id=16f8cf1c52f0a77eeb8f7565aaf7f7df12454583)" <<<"${minio_version}"
+          grep -Fqx "Runtime: go1.23.4 linux/amd64" <<<"${minio_version}"
 
       - name: Verify Stage 2
         run: make stage2-verify

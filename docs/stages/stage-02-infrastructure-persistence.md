@@ -72,8 +72,11 @@ internal-only. The AtlasRAG Python/GPU application remains outside Compose.
 The tracked environment file contains placeholders only; the local
 `deploy/local/.env` is ignored. Ordinary `make infra-down` preserves named
 volumes. The Integration workflow uses a unique Compose project and always
-runs `down -v --remove-orphans`. It preloads the frozen archived MinIO image by
-immutable content digest before assigning the required frozen tag.
+runs `down -v --remove-orphans`. Because the archived MinIO image is no longer
+available from its original registry, CI builds the exact frozen release from
+the official repository commit, verifies the embedded release and commit
+identifiers, and assigns the required frozen tag. Its minimal runtime base is
+also pinned by immutable content digest.
 
 ## PostgreSQL schema and migration
 
@@ -265,8 +268,11 @@ performs frozen dependency sync followed by `make verify`.
 The separate `Integration` workflow creates non-secret ephemeral local
 credentials, chooses a run-unique Compose project, syncs the frozen lock, runs
 `make stage2-verify`, captures Compose logs before failure cleanup, and always
-destroys containers, networks, volumes, and orphans. Neither workflow reads
-GitHub secrets.
+destroys containers, networks, volumes, and orphans. It builds MinIO
+`RELEASE.2024-12-18T13-15-44Z` from official source commit
+`16f8cf1c52f0a77eeb8f7565aaf7f7df12454583` with Go 1.23.4 and rejects any
+binary that does not report that exact release, commit, and runtime. Neither
+workflow reads GitHub secrets.
 
 ## Verification
 
