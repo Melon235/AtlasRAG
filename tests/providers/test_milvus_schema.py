@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections import UserList
 from collections.abc import Mapping
 
 import pytest
@@ -238,6 +239,19 @@ def test_collection_normalization_ignores_only_order_and_response_noise() -> Non
     assert collection_schema_mismatches(actual, embedding_dimension=3) == ()
 
 
+def test_collection_normalization_accepts_pinned_sdk_repeated_fields_and_utc() -> None:
+    actual = realistic_collection_description()
+    functions = actual["functions"]
+    assert isinstance(functions, list)
+    function = functions[0]
+    assert isinstance(function, dict)
+    function["input_field_names"] = UserList(["sparse_text"])
+    function["output_field_names"] = UserList(["sparse_vector"])
+    actual["properties"] = {"timezone": "UTC"}
+
+    assert collection_schema_mismatches(actual, embedding_dimension=3) == ()
+
+
 def test_collection_comparison_reports_every_incompatibility() -> None:
     actual = realistic_collection_description()
     fields = actual["fields"]
@@ -297,6 +311,18 @@ def test_collection_comparison_rejects_semantic_collection_properties() -> None:
     message = "\n".join(mismatches)
     assert "properties" in message
     assert "collection.ttl.seconds" in message
+
+
+def test_collection_comparison_rejects_nondefault_timezone() -> None:
+    actual = realistic_collection_description()
+    actual["properties"] = {"timezone": "Asia/Shanghai"}
+
+    mismatches = collection_schema_mismatches(actual, embedding_dimension=3)
+
+    assert mismatches
+    message = "\n".join(mismatches)
+    assert "properties" in message
+    assert "timezone" in message
 
 
 def test_index_normalization_accepts_real_describe_shapes_and_noise() -> None:

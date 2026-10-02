@@ -204,7 +204,9 @@ def _validate_insert_response(
     raw_ids = response.get("ids")
     if type(count) is not int or count != len(expected_ids):
         raise ProviderResponseError
-    if not isinstance(raw_ids, list):
+    if isinstance(raw_ids, (str, bytes, bytearray)) or not isinstance(
+        raw_ids, Sequence
+    ):
         raise ProviderResponseError
     actual_ids = tuple(_response_identifier(value) for value in raw_ids)
     if (

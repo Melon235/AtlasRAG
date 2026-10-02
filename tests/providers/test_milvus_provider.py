@@ -7,6 +7,7 @@ import inspect
 import json
 import math
 import threading
+from collections import UserList
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -734,6 +735,23 @@ async def test_insert_response_identity_order_is_not_semantic() -> None:
     client.insert_result = {
         "insert_count": 2,
         "ids": ["chunk-2", "chunk-1"],
+    }
+
+    await provider(client).replace_revision_set(
+        [milvus_record(), milvus_record(chunk_id="chunk-2")],
+        document_id="doc-1",
+        revision_id="rev-1",
+    )
+
+    assert call_names(client) == ["delete", "flush", "insert", "flush"]
+
+
+@pytest.mark.asyncio
+async def test_insert_response_accepts_pinned_sdk_identity_sequence() -> None:
+    client = FakeMilvusClient()
+    client.insert_result = {
+        "insert_count": 2,
+        "ids": UserList(["chunk-2", "chunk-1"]),
     }
 
     await provider(client).replace_revision_set(

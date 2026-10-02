@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from enum import IntEnum
 from typing import TypeVar
 
@@ -396,9 +396,19 @@ def _normalize_field(value: object, position: int) -> tuple[str, object]:
 
 
 def _normalize_name_sequence(value: object) -> tuple[object, ...] | str:
-    if not isinstance(value, (list, tuple)):
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
         return _invalid(value)
     return tuple(item if isinstance(item, str) else _invalid(item) for item in value)
+
+
+def _normalize_collection_properties(value: object) -> object:
+    normalized = _normalize_json(value)
+    if isinstance(normalized, dict) and normalized.get("timezone") == "UTC":
+        # Milvus 2.6 reports its implicit default although it was not supplied
+        # in the collection schema. Any non-default timezone remains semantic.
+        normalized = dict(normalized)
+        del normalized["timezone"]
+    return normalized
 
 
 def _normalize_function(value: object, position: int) -> tuple[str, object]:
@@ -458,7 +468,9 @@ def normalize_collection_description(description: object) -> dict[str, object]:
         "functions": _normalize_named_values(
             description.get("functions", "<missing>"), kind="function"
         ),
-        "properties": _normalize_json(description.get("properties", {})),
+        "properties": _normalize_collection_properties(
+            description.get("properties", {})
+        ),
     }
     unexpected = sorted(
         str(key)
