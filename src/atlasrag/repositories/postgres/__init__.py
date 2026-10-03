@@ -1,0 +1,1 @@
+"""Canonical PostgreSQL persistence infrastructure."""

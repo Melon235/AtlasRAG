@@ -15,14 +15,16 @@ green remote CI result.
 
 ## Current stage
 
-- **Stage:** Stage 1 — Contracts & Shared Kernel
-- **Status:** Stage 1 COMPLETE
+- **Stage:** Stage 2 — Infrastructure & Persistence
+- **Status:** Stage 2 COMPLETE
 - **Report:**
-  [stage-01-contracts-shared-kernel.md](stage-01-contracts-shared-kernel.md)
-- **Next:** Stage 2 — Infrastructure & Persistence — NOT STARTED
+  [stage-02-infrastructure-persistence.md](stage-02-infrastructure-persistence.md)
+- **Next:** Stage 3 — Part I: Parse & Canonical Build — NOT STARTED
 
-Stage 1 is limited to typed contracts, shared validation primitives,
-declarative graph State schemas, configuration schemas, fingerprints, request
-hashing, and trace contracts. Its local gates, normal branch publication, and
-remote implementation CI are green. Stage 2 providers, infrastructure,
-persistence, and runtime graph execution have not started.
+Stage 2 is limited to local infrastructure, canonical persistence records and
+repositories, technical cache/index providers, readiness/migration tooling,
+and deterministic integration verification. Its offline and real-service
+local gates are green, the Stage branch is published, and both remote
+workflows are green. It has not been merged into `main`. No parser, chunk
+builder, embedding pipeline, business graph, RuntimeGate, benchmark, or other
+Stage 3+ behavior has started.

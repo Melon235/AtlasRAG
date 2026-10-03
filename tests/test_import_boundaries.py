@@ -31,6 +31,20 @@ def write_production_module(root: Path, source: str, name: str = "module.py") ->
     return module
 
 
+def write_layer_module(
+    root: Path,
+    layer: str,
+    source: str,
+    name: str = "module.py",
+) -> Path:
+    """Write a module inside one production architecture layer."""
+
+    module = root / "src" / "atlasrag" / layer / "nested" / name
+    module.parent.mkdir(parents=True, exist_ok=True)
+    module.write_text(source, encoding="utf-8")
+    return module
+
+
 def test_real_repository_respects_import_boundaries() -> None:
     result = run_checker(REPOSITORY_ROOT)
 
@@ -49,6 +63,8 @@ def test_real_repository_respects_import_boundaries() -> None:
         ("import benchmarks.corpus as corpus\n", "benchmarks.corpus"),
         ("from benchmarks import corpus\n", "benchmarks"),
         ("from benchmarks.corpus import example\n", "benchmarks.corpus"),
+        ("import atlasrag.tests.helpers\n", "atlasrag.tests.helpers"),
+        ("from atlasrag.benchmarks import corpus\n", "atlasrag.benchmarks"),
     ],
 )
 def test_prohibited_import_families_fail(
@@ -97,3 +113,97 @@ def test_invalid_production_syntax_fails_closed(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "src/atlasrag/nested/module.py:1: syntax error:" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("source", "prohibited_module"),
+    [
+        ("import atlasrag.graphs\n", "atlasrag.graphs"),
+        ("from atlasrag.providers import cache\n", "atlasrag.providers"),
+        ("from atlasrag import providers\n", "atlasrag.providers"),
+        ("from ...providers import index\n", "atlasrag.providers"),
+        ("import atlasrag.benchmarks\n", "atlasrag.benchmarks"),
+    ],
+)
+def test_repositories_cannot_import_orchestration_provider_or_benchmark_layers(
+    tmp_path: Path,
+    source: str,
+    prohibited_module: str,
+) -> None:
+    write_layer_module(tmp_path, "repositories", source)
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode != 0
+    assert (f"repository layer may not import '{prohibited_module}'") in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("source", "prohibited_module"),
+    [
+        ("import atlasrag.repositories\n", "atlasrag.repositories"),
+        ("from atlasrag.graphs import state\n", "atlasrag.graphs"),
+        ("from atlasrag import repositories\n", "atlasrag.repositories"),
+        ("from ...repositories import postgres\n", "atlasrag.repositories"),
+        ("import atlasrag.benchmarks\n", "atlasrag.benchmarks"),
+    ],
+)
+def test_providers_cannot_import_repository_graph_or_benchmark_layers(
+    tmp_path: Path,
+    source: str,
+    prohibited_module: str,
+) -> None:
+    write_layer_module(tmp_path, "providers", source)
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode != 0
+    assert f"provider layer may not import '{prohibited_module}'" in result.stderr
+
+
+def test_allowed_domain_and_same_layer_imports_pass(tmp_path: Path) -> None:
+    write_layer_module(
+        tmp_path,
+        "repositories",
+        "from atlasrag.domain import errors\n"
+        "from atlasrag.repositories import postgres\n",
+        "repository_module.py",
+    )
+    write_layer_module(
+        tmp_path,
+        "providers",
+        "from atlasrag.domain import errors\nfrom atlasrag.providers import cache\n",
+        "provider_module.py",
+    )
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_repository_commit_calls_are_owned_only_by_uow(tmp_path: Path) -> None:
+    write_layer_module(tmp_path, "repositories", "connection.commit()\n")
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode != 0
+    assert "repository commit is only allowed in uow.py" in result.stderr
+
+
+def test_uow_commit_and_non_call_commit_references_are_allowed(tmp_path: Path) -> None:
+    write_layer_module(
+        tmp_path,
+        "repositories",
+        "connection.commit()\n",
+        "uow.py",
+    )
+    write_layer_module(
+        tmp_path,
+        "repositories",
+        "commit_callback = connection.commit\ncommit(connection)\n",
+        "records.py",
+    )
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr

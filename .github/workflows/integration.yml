@@ -1,0 +1,87 @@
+name: Integration
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stage2-integration:
+    name: Stage 2 Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ATLASRAG_ENV_FILE: deploy/local/.env
+      COMPOSE_PROJECT_NAME: atlasrag-ci-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Set up Go 1.23.4
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.4"
+          cache: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Sync locked dependencies
+        run: uv sync --frozen
+
+      - name: Create ephemeral local configuration
+        run: |
+          cp deploy/local/.env.example deploy/local/.env
+          sed -i "s/replace-with-local-postgres-password/ci-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/g" deploy/local/.env
+          sed -i "s/replace-with-local-minio-user/ci-minio-${GITHUB_RUN_ID}/g" deploy/local/.env
+          sed -i "s/replace-with-local-minio-password/ci-minio-password-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/g" deploy/local/.env
+          sed -i "s/replace-with-local-searxng-secret-at-least-32-characters/ci-searxng-secret-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-local-only/g" deploy/local/.env
+
+      - name: Build pinned MinIO release from official source
+        env:
+          MINIO_COMMIT: 16f8cf1c52f0a77eeb8f7565aaf7f7df12454583
+          MINIO_RELEASE_TIMESTAMP: 2024-12-18T13-15-44Z
+          MINIO_TARGET: minio/minio:RELEASE.2024-12-18T13-15-44Z
+        run: |
+          minio_source="${RUNNER_TEMP}/minio-source"
+          minio_image_context="${RUNNER_TEMP}/minio-image"
+          mkdir -p "${minio_source}" "${minio_image_context}"
+          git -C "${minio_source}" init --quiet
+          git -C "${minio_source}" remote add origin https://github.com/minio/minio.git
+          git -C "${minio_source}" fetch --quiet --depth=1 origin "${MINIO_COMMIT}"
+          git -C "${minio_source}" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "${minio_source}" rev-parse HEAD)" = "${MINIO_COMMIT}"
+          (
+            cd "${minio_source}"
+            minio_ldflags="$(MINIO_RELEASE=RELEASE go run buildscripts/gen-ldflags.go "${MINIO_RELEASE_TIMESTAMP}")"
+            CGO_ENABLED=0 go build -tags kqueue -trimpath --ldflags "${minio_ldflags}" -o "${minio_image_context}/minio"
+          )
+          docker build --file deploy/local/minio-ci.Dockerfile --tag "${MINIO_TARGET}" "${minio_image_context}"
+          minio_version="$(docker run --rm "${MINIO_TARGET}" --version)"
+          printf '%s\n' "${minio_version}"
+          grep -Fqx "minio version RELEASE.2024-12-18T13-15-44Z (commit-id=16f8cf1c52f0a77eeb8f7565aaf7f7df12454583)" <<<"${minio_version}"
+          grep -Fqx "Runtime: go1.23.4 linux/amd64" <<<"${minio_version}"
+
+      - name: Verify Stage 2
+        run: make stage2-verify
+
+      - name: Print Compose logs on failure
+        if: failure()
+        run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml logs --no-color
+
+      - name: Destroy ephemeral infrastructure
+        if: always()
+        run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml down -v --remove-orphans
