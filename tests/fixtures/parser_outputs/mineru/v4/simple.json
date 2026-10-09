@@ -1,0 +1,212 @@
+{
+  "extensions": {
+    "docvortex_layout": {
+      "pages": [
+        {
+          "height_pt": 792.0,
+          "page_idx": 0,
+          "width_pt": 612.0
+        }
+      ],
+      "version": 1
+    },
+    "mineru": {
+      "parse_mode": "txt",
+      "tier": "flash"
+    }
+  },
+  "is_full_document": true,
+  "metadata": {
+    "document": {
+      "authors": [],
+      "created_at": null,
+      "creator_application": null,
+      "description": null,
+      "identifiers": [],
+      "keywords": [],
+      "languages": [],
+      "modified_at": null,
+      "page_count": 1,
+      "page_count_kind": "physical",
+      "producer_application": null,
+      "publisher": null,
+      "subject": null,
+      "title": null
+    },
+    "file_suffix": "pdf",
+    "producer": {
+      "name": "mineru",
+      "version": "4.0.11"
+    }
+  },
+  "pages": [
+    {
+      "blocks": [
+        {
+          "anchor": null,
+          "bbox": [
+            0.255,
+            0.032,
+            0.703,
+            0.071
+          ],
+          "content": [
+            {
+              "content": "AtlasRAG PDF Fixture",
+              "styles": [],
+              "type": "text"
+            }
+          ],
+          "index": 0,
+          "level": 1,
+          "type": "doc_title"
+        },
+        {
+          "anchor": null,
+          "bbox": [
+            0.118,
+            0.127,
+            0.484,
+            0.168
+          ],
+          "content": [
+            {
+              "content": "Canonical paragraph from MinerU flash. This fixture preserves stable source order.",
+              "styles": [],
+              "type": "text"
+            }
+          ],
+          "continues_prev": null,
+          "index": 1,
+          "type": "text"
+        },
+        {
+          "bbox": [
+            0.137,
+            0.208,
+            0.27,
+            0.266
+          ],
+          "content": [
+            {
+              "anchor": null,
+              "bbox": [
+                0.137,
+                0.208,
+                0.252,
+                0.226
+              ],
+              "content": [
+                {
+                  "content": "a. Alpha item",
+                  "styles": [],
+                  "type": "text"
+                }
+              ],
+              "continues_prev": null,
+              "index": 3,
+              "type": "text"
+            },
+            {
+              "anchor": null,
+              "bbox": [
+                0.137,
+                0.228,
+                0.242,
+                0.246
+              ],
+              "content": [
+                {
+                  "content": "b. Beta item",
+                  "styles": [],
+                  "type": "text"
+                }
+              ],
+              "continues_prev": null,
+              "index": 4,
+              "type": "text"
+            },
+            {
+              "anchor": null,
+              "bbox": [
+                0.137,
+                0.248,
+                0.27,
+                0.266
+              ],
+              "content": [
+                {
+                  "content": "c. Gamma item",
+                  "styles": [],
+                  "type": "text"
+                }
+              ],
+              "continues_prev": null,
+              "index": 5,
+              "type": "text"
+            }
+          ],
+          "continues_prev": null,
+          "index": 2,
+          "sub_type": "text",
+          "type": "list"
+        },
+        {
+          "bbox": [
+            0.118,
+            0.301,
+            0.706,
+            0.417
+          ],
+          "content": [
+            {
+              "bbox": [
+                0.118,
+                0.301,
+                0.706,
+                0.417
+              ],
+              "content": "def parse_pdf():\n    items = [\"alpha\", \"beta\"]\n    for item in items:\n        print(item)\n    return items",
+              "index": 6,
+              "type": "code_body"
+            }
+          ],
+          "guess_lang": "python",
+          "index": 6,
+          "sub_type": "code",
+          "type": "code"
+        },
+        {
+          "bbox": [
+            0.118,
+            0.472,
+            0.706,
+            0.564
+          ],
+          "cell_merge": null,
+          "content": [
+            {
+              "bbox": [
+                0.118,
+                0.472,
+                0.706,
+                0.564
+              ],
+              "content": "<table><tbody><tr><td>Name</td><td>Value</td></tr><tr><td>alpha</td><td>1</td></tr><tr><td>beta</td><td>2</td></tr></tbody></table>",
+              "image_path": null,
+              "image_url": null,
+              "index": 7,
+              "type": "table_body"
+            }
+          ],
+          "continues_prev": null,
+          "index": 7,
+          "type": "table"
+        }
+      ],
+      "page_idx": 0
+    }
+  ],
+  "schema": "docvortex.middle",
+  "schema_version": "2.0"
+}
