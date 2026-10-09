@@ -1,0 +1,153 @@
+name: atlasrag-local
+
+services:
+  postgres:
+    image: postgres:17.8-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-atlasrag}"
+      POSTGRES_USER: "${POSTGRES_USER:-atlasrag}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?required}"
+    ports:
+      - "${ATLASRAG_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - atlasrag_internal
+
+  redis:
+    image: redis:8.2.10-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    ports:
+      - "${ATLASRAG_BIND_HOST:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - atlasrag_internal
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.25
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command:
+      - etcd
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --data-dir=/etcd
+    volumes:
+      - etcd_data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - atlasrag_internal
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?required}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?required}"
+    command: ["server", "/minio_data", "--console-address", ":9001"]
+    volumes:
+      - minio_data:/minio_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - atlasrag_internal
+
+  milvus:
+    image: milvusdb/milvus:v2.6.20
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: "${MINIO_ROOT_USER:?required}"
+      MINIO_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD:?required}"
+      MINIO_REGION: us-east-1
+    ports:
+      - "${ATLASRAG_BIND_HOST:-127.0.0.1}:${MILVUS_PORT:-19530}:19530"
+      - "${ATLASRAG_BIND_HOST:-127.0.0.1}:${MILVUS_HEALTH_PORT:-9091}:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      start_period: 90s
+      timeout: 5s
+      retries: 20
+    networks:
+      - atlasrag_internal
+
+  searxng:
+    image: docker.io/searxng/searxng:2026.9.25-12f8b6515
+    restart: unless-stopped
+    environment:
+      SEARXNG_SECRET: "${SEARXNG_SECRET:?required}"
+      SEARXNG_BIND_ADDRESS: "0.0.0.0"
+      SEARXNG_PORT: "8080"
+      SEARXNG_BASE_URL: "http://localhost:${SEARXNG_PORT:-8080}/"
+      SEARXNG_LIMITER: "false"
+      SEARXNG_PUBLIC_INSTANCE: "false"
+    ports:
+      - "${ATLASRAG_BIND_HOST:-127.0.0.1}:${SEARXNG_PORT:-8080}:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=5).close()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - atlasrag_internal
+
+networks:
+  atlasrag_internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  etcd_data:
+  minio_data:
+  milvus_data:

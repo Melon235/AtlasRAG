@@ -1,4 +1,4 @@
-"""Regression tests that keep Stage 1 free of deferred runtime implementation."""
+"""Frozen Stage 1 contracts with explicit Stage 2 infrastructure exceptions."""
 
 from __future__ import annotations
 
@@ -60,32 +60,62 @@ FORBIDDEN_IMPORT_PREFIXES = (
     "torch",
 )
 EXPECTED_DECLARED_DISTRIBUTIONS = {
-    "project.dependencies": frozenset({"pydantic"}),
-    "dependency-groups.dev": frozenset({"mypy", "pytest", "pytest-cov", "ruff"}),
+    "project.dependencies": frozenset(
+        {"pydantic", "alembic", "psycopg", "redis", "pymilvus"}
+    ),
+    "dependency-groups.dev": frozenset(
+        {"mypy", "pytest", "pytest-cov", "pytest-asyncio", "ruff"}
+    ),
     "build-system.requires": frozenset({"setuptools"}),
 }
 EXPECTED_LOCKED_DISTRIBUTIONS = frozenset(
     {
+        "alembic",
         "annotated-types",
+        "async-timeout",
         "atlasrag",
+        "cachetools",
+        "certifi",
+        "charset-normalizer",
         "colorama",
         "coverage",
+        "grpcio",
+        "idna",
         "iniconfig",
         "librt",
+        "mako",
+        "markupsafe",
         "mypy",
         "mypy-extensions",
+        "numpy",
+        "orjson",
         "packaging",
+        "pandas",
         "pathspec",
         "pluggy",
+        "protobuf",
+        "psycopg",
+        "psycopg-binary",
+        "psycopg-pool",
         "pydantic",
         "pydantic-core",
         "pygments",
+        "pymilvus",
         "pytest",
+        "pytest-asyncio",
         "pytest-cov",
+        "python-dateutil",
+        "python-dotenv",
+        "redis",
+        "requests",
         "ruff",
+        "six",
+        "sqlalchemy",
         "tomli",
         "typing-extensions",
         "typing-inspection",
+        "tzdata",
+        "urllib3",
     }
 )
 
@@ -134,6 +164,35 @@ EXPECTED_PRODUCTION_FILES = frozenset(
         "services/__init__.py",
     }
 )
+STAGE2_PRODUCTION_FILES = frozenset(
+    {
+        "providers/cache/__init__.py",
+        "providers/cache/keys.py",
+        "providers/cache/models.py",
+        "providers/cache/redis.py",
+        "providers/index/__init__.py",
+        "providers/index/milvus.py",
+        "providers/index/models.py",
+        "providers/index/schema.py",
+        "repositories/postgres/__init__.py",
+        "repositories/postgres/chunks.py",
+        "repositories/postgres/documents.py",
+        "repositories/postgres/elements.py",
+        "repositories/postgres/errors.py",
+        "repositories/postgres/locks.py",
+        "repositories/postgres/pool.py",
+        "repositories/postgres/records.py",
+        "repositories/postgres/runtime_metadata.py",
+        "repositories/postgres/uow.py",
+    }
+)
+EXPECTED_PRODUCTION_FILES |= STAGE2_PRODUCTION_FILES
+STAGE2_DRIVER_LAYERS = {
+    "psycopg": "repositories/postgres/",
+    "psycopg_pool": "repositories/postgres/",
+    "redis": "providers/cache/",
+    "pymilvus": "providers/index/",
+}
 STUB_ONLY_PACKAGES = (
     "observability",
     "providers",
@@ -155,9 +214,17 @@ def _normalized_distribution_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.casefold())
 
 
-def _is_forbidden_import(module_name: str) -> bool:
+def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
     normalized = module_name.casefold()
     root = normalized.partition(".")[0].replace("-", "_")
+    if path is not None and root in STAGE2_DRIVER_LAYERS:
+        parts = path.parts
+        relative = (
+            Path(*parts[parts.index("atlasrag") + 1 :]).as_posix()
+            if "atlasrag" in parts
+            else path.as_posix()
+        )
+        return not relative.startswith(STAGE2_DRIVER_LAYERS[root])
     explicitly_forbidden = (
         root in FORBIDDEN_IMPORT_ROOTS
         or root.startswith(FORBIDDEN_IMPORT_PREFIXES)
@@ -260,7 +327,7 @@ def _source_import_violations(source: str, path: Path) -> tuple[str, ...]:
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             for module_name in _imported_module_names(node):
-                if _is_forbidden_import(module_name):
+                if _is_forbidden_import(module_name, path):
                     violations.append(
                         f"{path.as_posix()}:{node.lineno}: forbidden import "
                         f"{module_name!r}"
@@ -420,9 +487,14 @@ def _stub_package_violations(production_root: Path) -> tuple[str, ...]:
             path.relative_to(package_root).as_posix()
             for path in package_root.rglob("*.py")
         }
-        if actual_files != {"__init__.py"}:
+        allowed_files = {"__init__.py"} | {
+            path.removeprefix(f"{package_name}/")
+            for path in STAGE2_PRODUCTION_FILES
+            if path.startswith(f"{package_name}/")
+        }
+        if unexpected := actual_files - allowed_files:
             violations.append(
-                f"{package_name}: unexpected package files: {sorted(actual_files)}"
+                f"{package_name}: unexpected package files: {sorted(unexpected)}"
             )
 
         initializer = package_root / "__init__.py"
@@ -531,7 +603,7 @@ def test_no_backend_client_provider_or_business_modules_exist() -> None:
     violations: list[str] = []
     for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
         relative_path = path.relative_to(PRODUCTION_ROOT).as_posix()
-        if relative_path in ALLOWED_BOUNDARY_INITIALIZERS:
+        if relative_path in ALLOWED_BOUNDARY_INITIALIZERS | STAGE2_PRODUCTION_FILES:
             continue
         tokens = {
             token.casefold()
@@ -768,11 +840,11 @@ def test_dependency_manifest_rejects_missing_runtime_dependency(
     tmp_path: Path,
 ) -> None:
     source = (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    original = 'dependencies = ["pydantic>=2.12.0,<3.0.0"]'
+    original = '"pydantic>=2.12.0,<3.0.0"'
     assert original in source
     pyproject_path = tmp_path / "pyproject.toml"
     pyproject_path.write_text(
-        source.replace(original, "dependencies = []"), encoding="utf-8"
+        source.replace(original + ",", "").replace(original, ""), encoding="utf-8"
     )
 
     violations = _dependency_manifest_violations(
@@ -786,8 +858,8 @@ def test_dependency_manifest_rejects_dev_dependency_promoted_to_runtime(
     tmp_path: Path,
 ) -> None:
     source = (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    original = 'dependencies = ["pydantic>=2.12.0,<3.0.0"]'
-    replacement = 'dependencies = ["pydantic>=2.12.0,<3.0.0", "pytest>=9.0.3,<10.0.0"]'
+    original = '"pydantic>=2.12.0,<3.0.0"'
+    replacement = '"pydantic>=2.12.0,<3.0.0", "pytest>=9.0.3,<10.0.0"'
     assert original in source
     pyproject_path = tmp_path / "pyproject.toml"
     pyproject_path.write_text(source.replace(original, replacement), encoding="utf-8")

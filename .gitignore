@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+/deploy/local/.env
 
 # Python environments, caches, and build output
 .venv/
