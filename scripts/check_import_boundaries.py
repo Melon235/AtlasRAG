@@ -28,6 +28,30 @@ LAYER_FORBIDDEN_PREFIXES = {
         "atlasrag.repositories",
     ),
 }
+PARSER_SDK_PREFIXES = ("docling", "mineru")
+STAGE3_BOUNDARY_FORBIDDEN_PREFIXES = {
+    ("domain", "ingestion"): (
+        "atlasrag.graphs",
+        "atlasrag.providers",
+        "atlasrag.repositories",
+        *PARSER_SDK_PREFIXES,
+    ),
+    ("providers", "parsing"): (
+        "atlasrag.benchmarks",
+        "atlasrag.graphs",
+        "atlasrag.repositories",
+    ),
+    ("services", "ingestion"): (
+        "atlasrag.graphs",
+        "atlasrag.providers.cache",
+        "atlasrag.providers.index",
+    ),
+}
+STAGE3_BOUNDARY_NAMES = {
+    ("domain", "ingestion"): "ingestion domain",
+    ("providers", "parsing"): "parsing provider",
+    ("services", "ingestion"): "ingestion service",
+}
 
 
 @dataclass(frozen=True, order=True)
@@ -58,6 +82,14 @@ def _architecture_layer(relative_path: str) -> str | None:
         if candidate in LAYER_FORBIDDEN_PREFIXES:
             return candidate
     return None
+
+
+def _stage3_boundary(relative_path: str) -> tuple[str, str] | None:
+    parts = Path(relative_path).parts
+    if len(parts) < 4 or parts[:2] != ("src", "atlasrag"):
+        return None
+    candidate = (parts[2], parts[3])
+    return candidate if candidate in STAGE3_BOUNDARY_FORBIDDEN_PREFIXES else None
 
 
 def _package_name(path: Path, root: Path) -> str:
@@ -97,6 +129,17 @@ def _matching_forbidden_prefix(layer: str, module_name: str) -> str | None:
     return None
 
 
+def _matching_prefix(prefixes: tuple[str, ...], module_name: str) -> str | None:
+    for prefix in prefixes:
+        if module_name == prefix or module_name.startswith(f"{prefix}."):
+            return prefix
+    return None
+
+
+def _parser_sdk_prefix(module_name: str) -> str | None:
+    return _matching_prefix(PARSER_SDK_PREFIXES, module_name)
+
+
 def scan_file(path: Path, root: Path) -> list[Diagnostic]:
     """Parse one production module and return syntax/import diagnostics."""
     relative_path = path.relative_to(root).as_posix()
@@ -112,9 +155,56 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
 
     diagnostics: list[Diagnostic] = []
     layer = _architecture_layer(relative_path)
+    stage3_boundary = _stage3_boundary(relative_path)
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             targets = _import_targets(node, path, root)
+            if stage3_boundary is not None:
+                forbidden_prefix = next(
+                    (
+                        prefix
+                        for target in targets
+                        if (
+                            prefix := _matching_prefix(
+                                STAGE3_BOUNDARY_FORBIDDEN_PREFIXES[stage3_boundary],
+                                target,
+                            )
+                        )
+                        is not None
+                    ),
+                    None,
+                )
+                if forbidden_prefix is not None:
+                    diagnostics.append(
+                        Diagnostic(
+                            relative_path,
+                            node.lineno,
+                            f"{STAGE3_BOUNDARY_NAMES[stage3_boundary]} may not "
+                            f"import '{forbidden_prefix}'",
+                        )
+                    )
+                    continue
+            parser_sdk = next(
+                (
+                    sdk
+                    for target in targets
+                    if (sdk := _parser_sdk_prefix(target)) is not None
+                ),
+                None,
+            )
+            if parser_sdk is not None and stage3_boundary != (
+                "providers",
+                "parsing",
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        relative_path,
+                        node.lineno,
+                        f"parser SDK '{parser_sdk}' is only allowed in parsing "
+                        "providers",
+                    )
+                )
+                continue
             if layer is not None:
                 forbidden_prefix = next(
                     (

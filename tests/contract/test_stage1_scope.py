@@ -66,56 +66,173 @@ EXPECTED_DECLARED_DISTRIBUTIONS = {
     "dependency-groups.dev": frozenset(
         {"mypy", "pytest", "pytest-cov", "pytest-asyncio", "ruff"}
     ),
+    "dependency-groups.parsing-docling": frozenset({"docling-slim"}),
+    "dependency-groups.parsing-mineru": frozenset({"mineru"}),
     "build-system.requires": frozenset({"setuptools"}),
 }
 EXPECTED_LOCKED_DISTRIBUTIONS = frozenset(
     {
+        "accelerate",
+        "aiofiles",
+        "aiosqlite",
         "alembic",
+        "annotated-doc",
         "annotated-types",
+        "anyio",
         "async-timeout",
         "atlasrag",
+        "attrs",
+        "beautifulsoup4",
+        "brotli",
         "cachetools",
         "certifi",
+        "cffi",
         "charset-normalizer",
+        "click",
+        "cobble",
         "colorama",
         "coverage",
+        "cryptography",
+        "defusedxml",
+        "distro",
+        "doclang",
+        "docling-core",
+        "docling-slim",
+        "docvortex",
+        "et-xmlfile",
+        "fastapi",
+        "filelock",
+        "filetype",
+        "flatbuffers",
+        "fonttools",
+        "fsspec",
+        "ftfy",
+        "gradio",
+        "gradio-client",
+        "groovy",
         "grpcio",
+        "h11",
+        "hf-gradio",
+        "hf-xet",
+        "httpcore",
+        "httpx",
+        "httpx-retries",
+        "huggingface-hub",
         "idna",
         "iniconfig",
+        "jieba",
+        "jinja2",
+        "jiter",
+        "json-repair",
+        "jsonref",
+        "jsonschema",
+        "jsonschema-specifications",
+        "langcodes",
+        "latex2mathml",
         "librt",
+        "loguru",
+        "lxml",
+        "magika",
         "mako",
+        "mammoth",
+        "markdown-it-py",
         "markupsafe",
+        "mathml2omml",
+        "mdurl",
+        "metafile-render",
+        "mineru",
+        "mineru-llama-cpp",
+        "mineru-vl-utils",
+        "modelscope",
+        "modelscope-hub",
+        "mpmath",
         "mypy",
         "mypy-extensions",
+        "networkx",
+        "nh3",
         "numpy",
+        "olefile",
+        "onnxruntime",
+        "openai",
+        "openpyxl",
+        "opentelemetry-api",
         "orjson",
         "packaging",
         "pandas",
         "pathspec",
+        "pillow",
         "pluggy",
         "protobuf",
+        "psutil",
         "psycopg",
         "psycopg-binary",
         "psycopg-pool",
+        "pyclipper",
+        "pycparser",
         "pydantic",
         "pydantic-core",
+        "pydantic-settings",
+        "pydub",
         "pygments",
+        "pylatexenc",
         "pymilvus",
+        "pypdf",
+        "pypdfium2",
+        "pypptx-with-oxml",
         "pytest",
         "pytest-asyncio",
         "pytest-cov",
         "python-dateutil",
+        "python-docx",
         "python-dotenv",
+        "python-multipart",
+        "python-pptx",
+        "pytz",
+        "pyyaml",
         "redis",
+        "referencing",
+        "regex",
+        "reportlab",
         "requests",
+        "resvg-py",
+        "rich",
+        "rl-accel",
+        "rpds-py",
         "ruff",
+        "safehttpx",
+        "safetensors",
+        "semantic-version",
+        "setuptools",
+        "shapely",
+        "shellingham",
         "six",
+        "sniffio",
+        "soupsieve",
         "sqlalchemy",
+        "starlette",
+        "sympy",
+        "tabulate",
+        "tinycss2",
+        "tokenizers",
         "tomli",
+        "tomlkit",
+        "torch",
+        "torchvision",
+        "tqdm",
+        "transformers",
+        "typer",
         "typing-extensions",
         "typing-inspection",
         "tzdata",
         "urllib3",
+        "uvicorn",
+        "watchfiles",
+        "wcwidth",
+        "webencodings",
+        "win32-setctime",
+        "xlsxwriter",
+        "ziafont",
+        "ziamath",
     }
 )
 
@@ -187,11 +304,43 @@ STAGE2_PRODUCTION_FILES = frozenset(
     }
 )
 EXPECTED_PRODUCTION_FILES |= STAGE2_PRODUCTION_FILES
+STAGE3_PRODUCTION_FILES = frozenset(
+    {
+        "domain/ingestion/__init__.py",
+        "domain/ingestion/chunks.py",
+        "domain/ingestion/document.py",
+        "domain/ingestion/elements.py",
+        "domain/ingestion/enums.py",
+        "domain/ingestion/source.py",
+        "domain/ingestion/validation.py",
+        "providers/parsing/__init__.py",
+        "providers/parsing/base.py",
+        "providers/parsing/docling.py",
+        "providers/parsing/markdown.py",
+        "providers/parsing/mineru.py",
+        "providers/parsing/mineru_normalizer.py",
+        "providers/parsing/routing.py",
+        "providers/parsing/text.py",
+        "services/ingestion/__init__.py",
+        "services/ingestion/analysis.py",
+        "services/ingestion/candidate.py",
+        "services/ingestion/chunking.py",
+        "services/ingestion/identity.py",
+        "services/ingestion/mapping.py",
+        "services/ingestion/persistence.py",
+        "services/ingestion/source_guard.py",
+        "services/ingestion/validation.py",
+    }
+)
 STAGE2_DRIVER_LAYERS = {
     "psycopg": "repositories/postgres/",
     "psycopg_pool": "repositories/postgres/",
     "redis": "providers/cache/",
     "pymilvus": "providers/index/",
+}
+STAGE3_DRIVER_LAYERS = {
+    "docling": "providers/parsing/",
+    "mineru": "providers/parsing/",
 }
 STUB_ONLY_PACKAGES = (
     "observability",
@@ -217,14 +366,15 @@ def _normalized_distribution_name(name: str) -> str:
 def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
     normalized = module_name.casefold()
     root = normalized.partition(".")[0].replace("-", "_")
-    if path is not None and root in STAGE2_DRIVER_LAYERS:
+    driver_layers = STAGE2_DRIVER_LAYERS | STAGE3_DRIVER_LAYERS
+    if path is not None and root in driver_layers:
         parts = path.parts
         relative = (
             Path(*parts[parts.index("atlasrag") + 1 :]).as_posix()
             if "atlasrag" in parts
             else path.as_posix()
         )
-        return not relative.startswith(STAGE2_DRIVER_LAYERS[root])
+        return not relative.startswith(driver_layers[root])
     explicitly_forbidden = (
         root in FORBIDDEN_IMPORT_ROOTS
         or root.startswith(FORBIDDEN_IMPORT_PREFIXES)
@@ -360,7 +510,8 @@ def _production_manifest_violations(production_root: Path) -> tuple[str, ...]:
         for path in production_root.rglob("*.py")
     )
     violations: list[str] = []
-    if unexpected := sorted(actual_files - EXPECTED_PRODUCTION_FILES):
+    allowed_files = EXPECTED_PRODUCTION_FILES | STAGE3_PRODUCTION_FILES
+    if unexpected := sorted(actual_files - allowed_files):
         violations.append(f"unexpected production files: {unexpected}")
     if missing := sorted(EXPECTED_PRODUCTION_FILES - actual_files):
         violations.append(f"missing production files: {missing}")
@@ -489,7 +640,7 @@ def _stub_package_violations(production_root: Path) -> tuple[str, ...]:
         }
         allowed_files = {"__init__.py"} | {
             path.removeprefix(f"{package_name}/")
-            for path in STAGE2_PRODUCTION_FILES
+            for path in STAGE2_PRODUCTION_FILES | STAGE3_PRODUCTION_FILES
             if path.startswith(f"{package_name}/")
         }
         if unexpected := actual_files - allowed_files:
@@ -603,7 +754,11 @@ def test_no_backend_client_provider_or_business_modules_exist() -> None:
     violations: list[str] = []
     for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
         relative_path = path.relative_to(PRODUCTION_ROOT).as_posix()
-        if relative_path in ALLOWED_BOUNDARY_INITIALIZERS | STAGE2_PRODUCTION_FILES:
+        if relative_path in (
+            ALLOWED_BOUNDARY_INITIALIZERS
+            | STAGE2_PRODUCTION_FILES
+            | STAGE3_PRODUCTION_FILES
+        ):
             continue
         tokens = {
             token.casefold()

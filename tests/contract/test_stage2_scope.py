@@ -12,6 +12,8 @@ from test_stage1_scope import (
     _source_import_violations,
 )
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
 
 def _layer_violations(source: str, path: Path) -> tuple[str, ...]:
     """Resolve relative imports too, so aliases cannot bypass layer ownership."""
@@ -134,3 +136,13 @@ def test_deferred_layer_and_policy_imports_are_rejected(
 )
 def test_provider_repository_coupling_is_rejected(path: str, source: str) -> None:
     assert _layer_violations(source, Path(path))
+
+
+def test_stage2_migration_set_remains_frozen_during_stage3() -> None:
+    migrations = sorted(
+        path.name
+        for path in (REPOSITORY_ROOT / "migrations" / "versions").glob("*.py")
+        if path.name != "__init__.py"
+    )
+
+    assert migrations == ["20260928_0001_stage2_persistence.py"]
