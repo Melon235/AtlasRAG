@@ -105,6 +105,22 @@ def validate_sha256_hex(value: str, field_name: str) -> str:
     return value
 
 
+def validate_document_id(value: str) -> str:
+    """Require one canonical Stage 3 document identity."""
+    value = validate_unicode_scalar_text(value)
+    if _DOCUMENT_ID.fullmatch(value) is None:
+        raise ValueError("document_id must be a canonical document identity")
+    return value
+
+
+def validate_revision_id(value: str) -> str:
+    """Require one canonical Stage 3 revision identity."""
+    value = validate_unicode_scalar_text(value)
+    if _REVISION_ID.fullmatch(value) is None:
+        raise ValueError("revision_id must be a canonical revision identity")
+    return value
+
+
 def derive_document_id(relative_source_path: str) -> str:
     """Derive the stable v1 source-path document identity."""
     canonical = canonical_relative_source_path(relative_source_path)
@@ -117,8 +133,7 @@ def derive_revision_id(
     pipeline_fingerprint: str,
 ) -> str:
     """Derive a revision identity with canonical, unambiguous serialization."""
-    if _DOCUMENT_ID.fullmatch(document_id) is None:
-        raise ValueError("document_id must be a canonical document identity")
+    validate_document_id(document_id)
     validate_sha256_hex(content_hash, "content hash")
     validate_sha256_hex(pipeline_fingerprint, "pipeline fingerprint")
     return "rev_" + canonical_sha256(
@@ -240,9 +255,7 @@ class CandidateBuildContext(FrozenModel):
     @field_validator("document_id")
     @classmethod
     def _canonical_document_id(cls, value: str) -> str:
-        if _DOCUMENT_ID.fullmatch(value) is None:
-            raise ValueError("document_id must be a canonical document identity")
-        return value
+        return validate_document_id(value)
 
     @field_validator("content_hash")
     @classmethod
@@ -257,9 +270,7 @@ class CandidateBuildContext(FrozenModel):
     @field_validator("revision_id")
     @classmethod
     def _canonical_revision_id(cls, value: str) -> str:
-        if _REVISION_ID.fullmatch(value) is None:
-            raise ValueError("revision_id must be a canonical revision identity")
-        return value
+        return validate_revision_id(value)
 
     @model_validator(mode="after")
     def _identities_match_source_and_inputs(self) -> Self:
