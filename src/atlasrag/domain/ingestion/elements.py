@@ -169,6 +169,29 @@ class TableData(FrozenModel):
         return self
 
 
+def render_table_data(table: TableData) -> str:
+    """Render a full logical table deterministically without losing structure."""
+    table = TableData.model_validate(table)
+
+    def escaped(cell: str) -> str:
+        return (
+            cell.replace("\\", "\\\\")
+            .replace("|", "\\|")
+            .replace("\t", "\\t")
+            .replace("\n", "\\n")
+        )
+
+    lines: list[str] = []
+    if table.caption is not None:
+        lines.append(table.caption)
+    lines.append("| " + " | ".join(escaped(cell) for cell in table.headers) + " |")
+    lines.append("| " + " | ".join("---" for _ in table.headers) + " |")
+    lines.extend(
+        "| " + " | ".join(escaped(cell) for cell in row) + " |" for row in table.rows
+    )
+    return "\n".join(lines)
+
+
 class CanonicalElementMetadata(FrozenModel):
     """Stable AtlasRAG element facts, excluding provider-native payloads."""
 
@@ -328,3 +351,48 @@ class CanonicalElement(FrozenModel):
         if self.element_id != expected_id:
             raise ValueError("element_id does not match canonical element data")
         return self
+
+
+def build_canonical_element(
+    *,
+    document_id: str,
+    revision_id: str,
+    element_type: ElementType,
+    order: int,
+    content: str,
+    section_path: tuple[str, ...] = (),
+    source_anchor: SourceAnchor | None = None,
+    metadata: CanonicalElementMetadata | None = None,
+    table_data: TableData | None = None,
+) -> CanonicalElement:
+    """Normalize element inputs before deriving and validating their identity."""
+    normalized_content = normalize_canonical_text(content)
+    normalized_section = normalize_section_path(section_path)
+    validated_anchor = normalize_source_anchor(source_anchor)
+    validated_metadata = CanonicalElementMetadata.model_validate(
+        metadata if metadata is not None else CanonicalElementMetadata()
+    )
+    validated_table = (
+        None if table_data is None else TableData.model_validate(table_data)
+    )
+    candidate_element_id = derive_element_id(
+        revision_id=revision_id,
+        order=order,
+        element_type=element_type,
+        content=normalized_content,
+        section_path=normalized_section,
+        source_anchor=validated_anchor,
+        table_data=validated_table,
+    )
+    return CanonicalElement(
+        element_id=candidate_element_id,
+        document_id=document_id,
+        revision_id=revision_id,
+        element_type=element_type,
+        order=order,
+        content=normalized_content,
+        section_path=normalized_section,
+        source_anchor=validated_anchor,
+        metadata=validated_metadata,
+        table_data=validated_table,
+    )

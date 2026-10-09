@@ -231,6 +231,12 @@ def test_uow_commit_and_non_call_commit_references_are_allowed(tmp_path: Path) -
             "parsing provider",
         ),
         (
+            "providers/parsing",
+            "from atlasrag.services.ingestion import identity\n",
+            "atlasrag.services",
+            "parsing provider",
+        ),
+        (
             "services/ingestion",
             "from atlasrag.providers.index import milvus\n",
             "atlasrag.providers.index",

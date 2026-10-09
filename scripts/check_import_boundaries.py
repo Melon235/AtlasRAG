@@ -40,6 +40,7 @@ STAGE3_BOUNDARY_FORBIDDEN_PREFIXES = {
         "atlasrag.benchmarks",
         "atlasrag.graphs",
         "atlasrag.repositories",
+        "atlasrag.services",
     ),
     ("services", "ingestion"): (
         "atlasrag.graphs",
