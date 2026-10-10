@@ -3,3 +3,5 @@ docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md -whitesp
 
 # Generated parser inputs are binary fixtures, not reviewable text.
 tests/fixtures/stage3/*.pdf binary
+tests/fixtures/stage3/*.docx binary
+tests/fixtures/stage3/*.xlsx binary
