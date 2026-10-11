@@ -5,6 +5,17 @@ from __future__ import annotations
 import hashlib
 
 from atlasrag.domain.evidence import SourceAnchor
+from atlasrag.domain.ingestion.chunks import (
+    ChunkingStrategy,
+    ChunkProvenance,
+    ChunkRecord,
+    ChunkType,
+    RetrievalRole,
+    TableSlice,
+    build_canonical_chunk,
+    derive_chunk_content_hash,
+    derive_chunk_id,
+)
 from atlasrag.domain.ingestion.elements import (
     CanonicalElement,
     CanonicalElementMetadata,
@@ -109,4 +120,59 @@ def build_element(
         source_anchor=source_anchor,
         metadata=metadata,
         table_data=table_data,
+    )
+
+
+def chunk_content_hash(raw_content: str) -> str:
+    """Return the canonical content digest for one chunk rendering."""
+    return derive_chunk_content_hash(raw_content)
+
+
+def chunk_id(
+    *,
+    document_id: str,
+    revision_id: str,
+    chunk_type: ChunkType,
+    chunking_strategy: ChunkingStrategy,
+    provenance: ChunkProvenance,
+    content_hash: str,
+) -> str:
+    """Return a deterministic chunk identity for typed structural lineage."""
+    return derive_chunk_id(
+        document_id=document_id,
+        revision_id=revision_id,
+        chunk_type=chunk_type,
+        chunking_strategy=chunking_strategy,
+        provenance=provenance,
+        content_hash=content_hash,
+    )
+
+
+def build_chunk(
+    *,
+    document_id: str,
+    revision_id: str,
+    chunk_type: ChunkType,
+    retrieval_role: RetrievalRole,
+    chunking_strategy: ChunkingStrategy,
+    raw_content: str,
+    parent_id: str | None,
+    order: int,
+    section_path: tuple[str, ...],
+    provenance: ChunkProvenance,
+    table_slice: TableSlice | None = None,
+) -> ChunkRecord:
+    """Normalize one chunk and attach its deterministic content and chunk IDs."""
+    return build_canonical_chunk(
+        document_id=document_id,
+        revision_id=revision_id,
+        chunk_type=chunk_type,
+        retrieval_role=retrieval_role,
+        chunking_strategy=chunking_strategy,
+        raw_content=raw_content,
+        parent_id=parent_id,
+        order=order,
+        section_path=section_path,
+        provenance=provenance,
+        table_slice=table_slice,
     )
