@@ -8,6 +8,7 @@ from typing import Any, TypeVar, cast
 import pytest
 from pydantic import BaseModel, ValidationError
 
+import atlasrag.services.ingestion.mapping as persistence_mapping
 from atlasrag.domain.enums import SourceType
 from atlasrag.domain.errors import CanonicalDataError
 from atlasrag.domain.evidence import SourceAnchor
@@ -57,19 +58,24 @@ from atlasrag.services.ingestion.identity import build_element
 from atlasrag.services.ingestion.mapping import (
     ChunkPersistenceMetadataV1,
     ChunkStrategyMetadataV1,
-    DocumentParseMetadataV1,
+    DocumentParseMetadataEnvelopeV1,
+    DocumentParseMetadataSlotV1,
     ElementPersistenceMetadataV1,
     ElementStructuredContentV1,
+    build_document_parse_metadata_slot,
+    empty_document_parse_metadata_envelope,
+    load_document_parse_metadata_envelope,
     map_chunk_from_stored,
     map_chunk_to_stored,
     map_chunks_from_stored,
     map_chunks_to_stored,
     map_document_from_stored,
-    map_document_parse_metadata,
     map_element_from_stored,
     map_element_to_stored,
     map_elements_from_stored,
     map_elements_to_stored,
+    replace_document_parse_metadata_slot,
+    serialize_document_parse_metadata_envelope,
 )
 
 NOW = datetime(2026, 10, 9, 8, 30, tzinfo=UTC)
@@ -77,6 +83,13 @@ DOCUMENT_ID = derive_document_id("guides/reference.xlsx")
 CONTENT_HASH = "b" * 64
 PIPELINE_FINGERPRINT = "c" * 64
 REVISION_ID = derive_revision_id(DOCUMENT_ID, CONTENT_HASH, PIPELINE_FINGERPRINT)
+CURRENT_CONTENT_HASH = "d" * 64
+CURRENT_PIPELINE_FINGERPRINT = "e" * 64
+CURRENT_REVISION_ID = derive_revision_id(
+    DOCUMENT_ID,
+    CURRENT_CONTENT_HASH,
+    CURRENT_PIPELINE_FINGERPRINT,
+)
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 
@@ -172,6 +185,81 @@ def _document() -> DocumentContainer:
     )
 
 
+def _current_document() -> DocumentContainer:
+    return DocumentContainer(
+        document_id=DOCUMENT_ID,
+        revision_id=CURRENT_REVISION_ID,
+        source=CanonicalSource(
+            relative_source_path="guides/reference.xlsx",
+            file_name="reference.xlsx",
+            source_type=SourceType.XLSX,
+        ),
+        metadata=DocumentMetadata(
+            title="Published Reference",
+            authors=("Published Team",),
+            language="fr",
+            sheet_names=("Published",),
+        ),
+        parse_info=ParseInfo(
+            outcome=ParseOutcome.SUCCESS,
+            reliability=ParseReliability.RELIABLE,
+            parser_name="published-parser",
+            parser_version="1.0.0",
+        ),
+        elements=(
+            build_element(
+                document_id=DOCUMENT_ID,
+                revision_id=CURRENT_REVISION_ID,
+                element_type=ElementType.PARAGRAPH,
+                order=0,
+                content="Published canonical content.",
+                section_path=("Published",),
+            ),
+        ),
+    )
+
+
+def _failed_document(*, revision_id: str = REVISION_ID) -> DocumentContainer:
+    return DocumentContainer(
+        document_id=DOCUMENT_ID,
+        revision_id=revision_id,
+        source=CanonicalSource(
+            relative_source_path="guides/reference.xlsx",
+            file_name="reference.xlsx",
+            source_type=SourceType.XLSX,
+        ),
+        metadata=DocumentMetadata(title="Failed Reference"),
+        parse_info=ParseInfo(
+            outcome=ParseOutcome.FAILED,
+            reliability=ParseReliability.UNAVAILABLE,
+            parser_name="failed-parser",
+            parser_version="1.0.0",
+            failure_code="CORRUPT_DOCUMENT",
+        ),
+        elements=(),
+    )
+
+
+def _slot_payload(document: DocumentContainer) -> dict[str, object]:
+    return {
+        "revision_id": document.revision_id,
+        "parse_info": document.parse_info.model_dump(mode="json"),
+        "document_metadata": document.metadata.model_dump(mode="json"),
+    }
+
+
+def _envelope_payload(
+    *,
+    current: DocumentContainer | None = None,
+    building: DocumentContainer | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "current": None if current is None else _slot_payload(current),
+        "building": None if building is None else _slot_payload(building),
+    }
+
+
 def _stored_document(document: DocumentContainer | None = None) -> StoredDocument:
     canonical = document or _document()
     return StoredDocument(
@@ -184,9 +272,23 @@ def _stored_document(document: DocumentContainer | None = None) -> StoredDocumen
         building_content_hash=CONTENT_HASH,
         building_pipeline_fingerprint=PIPELINE_FINGERPRINT,
         ingestion_status=IngestionStatus.PARSED,
-        parse_metadata=cast(JsonObject, map_document_parse_metadata(canonical)),
+        parse_metadata=cast(JsonObject, _envelope_payload(building=canonical)),
         created_at=NOW,
         updated_at=NOW,
+    )
+
+
+def _coexisting_stored_document(
+    building_document: DocumentContainer | None = None,
+) -> StoredDocument:
+    building = building_document or _document()
+    current = _current_document()
+    return _replace(
+        _stored_document(building),
+        current_revision_id=current.revision_id,
+        current_content_hash=CURRENT_CONTENT_HASH,
+        current_pipeline_fingerprint=CURRENT_PIPELINE_FINGERPRINT,
+        parse_metadata=_envelope_payload(current=current, building=building),
     )
 
 
@@ -243,14 +345,6 @@ def _replace_json_field(
     "model,payload",
     [
         (
-            DocumentParseMetadataV1,
-            {
-                "schema_version": 1,
-                "parse_info": _document().parse_info,
-                "document_metadata": _document().metadata,
-            },
-        ),
-        (
             ElementStructuredContentV1,
             {"schema_version": 1, "table_data": _table_data()},
         ),
@@ -304,18 +398,133 @@ def test_persistence_payloads_are_required_versioned_extra_forbid_and_immutable(
         model.model_validate({**payload, "provider_payload": {}})
 
 
-def test_document_metadata_json_is_typed_serialized_and_round_trips() -> None:
+def test_document_parse_metadata_contracts_are_typed_strict_and_immutable() -> None:
+    slot_model = DocumentParseMetadataSlotV1
+    envelope_model = DocumentParseMetadataEnvelopeV1
+    slot_payload = _slot_payload(_document())
+    slot = slot_model.model_validate(slot_payload)
+    envelope_payload = {
+        "schema_version": 1,
+        "current": None,
+        "building": slot,
+    }
+    envelope = envelope_model.model_validate(envelope_payload)
+
+    assert envelope.model_dump(mode="json") == _envelope_payload(building=_document())
+    with pytest.raises(ValidationError, match="frozen"):
+        setattr(slot, "revision_id", CURRENT_REVISION_ID)
+    with pytest.raises(ValidationError, match="frozen"):
+        setattr(envelope, "building", None)
+
+    for required_field in slot_payload:
+        with pytest.raises(ValidationError, match="Field required"):
+            slot_model.model_validate(
+                {
+                    key: item
+                    for key, item in slot_payload.items()
+                    if key != required_field
+                }
+            )
+    with pytest.raises(ValidationError):
+        slot_model.model_validate({**slot_payload, "revision_id": "revision-1"})
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        slot_model.model_validate({**slot_payload, "provider_payload": {}})
+
+    for required_field in envelope_payload:
+        with pytest.raises(ValidationError, match="Field required"):
+            envelope_model.model_validate(
+                {
+                    key: item
+                    for key, item in envelope_payload.items()
+                    if key != required_field
+                }
+            )
+    for invalid_version in (2, True, "1"):
+        with pytest.raises(ValidationError):
+            envelope_model.model_validate(
+                {**envelope_payload, "schema_version": invalid_version}
+            )
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        envelope_model.model_validate({**envelope_payload, "unexpected": None})
+
+
+def test_document_parse_metadata_slot_rejects_failed_unavailable_parse_facts() -> None:
+    failed_document = _failed_document()
+
+    with pytest.raises(ValidationError, match="usable parse"):
+        DocumentParseMetadataSlotV1.model_validate(_slot_payload(failed_document))
+    with pytest.raises(ValidationError, match="usable parse"):
+        build_document_parse_metadata_slot(failed_document)
+
+
+def test_document_parse_metadata_slot_accepts_degraded_partial_parse_facts() -> None:
+    slot = build_document_parse_metadata_slot(_document())
+
+    assert slot.parse_info.outcome is ParseOutcome.DEGRADED
+    assert slot.parse_info.reliability is ParseReliability.PARTIAL
+
+
+def test_document_parse_metadata_helpers_replace_only_the_selected_slot() -> None:
+    current_document = _current_document()
+    building_document = _document()
+
+    envelope = empty_document_parse_metadata_envelope()
+    current_slot = build_document_parse_metadata_slot(current_document)
+    building_slot = build_document_parse_metadata_slot(building_document)
+    envelope = replace_document_parse_metadata_slot(
+        envelope,
+        slot_name="current",
+        slot=current_slot,
+    )
+    envelope = replace_document_parse_metadata_slot(
+        envelope,
+        slot_name="building",
+        slot=building_slot,
+    )
+
+    assert serialize_document_parse_metadata_envelope(envelope) == _envelope_payload(
+        current=current_document,
+        building=building_document,
+    )
+    cleared = replace_document_parse_metadata_slot(
+        envelope,
+        slot_name="building",
+        slot=None,
+    )
+    assert cleared.current == current_slot
+    assert cleared.building is None
+    with pytest.raises(ValueError, match="slot_name"):
+        replace_document_parse_metadata_slot(
+            envelope,
+            slot_name=cast(Any, "candidate"),
+            slot=None,
+        )
+
+    stored = _replace(
+        _stored_document(building_document),
+        current_revision_id=current_document.revision_id,
+        current_content_hash=CURRENT_CONTENT_HASH,
+        current_pipeline_fingerprint=CURRENT_PIPELINE_FINGERPRINT,
+        parse_metadata=serialize_document_parse_metadata_envelope(envelope),
+    )
+    assert load_document_parse_metadata_envelope(stored) == envelope
+
+
+def test_document_metadata_json_is_built_from_an_explicit_existing_envelope() -> None:
     document = _document()
 
-    payload = map_document_parse_metadata(document)
+    envelope = replace_document_parse_metadata_slot(
+        empty_document_parse_metadata_envelope(),
+        slot_name="building",
+        slot=build_document_parse_metadata_slot(document),
+    )
+    payload = serialize_document_parse_metadata_envelope(envelope)
 
-    assert payload == DocumentParseMetadataV1(
-        schema_version=1,
-        parse_info=document.parse_info,
-        document_metadata=document.metadata,
-    ).model_dump(mode="json")
+    assert payload == _envelope_payload(building=document)
     assert isinstance(payload, dict)
-    assert payload["parse_info"]["outcome"] == "DEGRADED"  # type: ignore[index]
+    building_payload = payload["building"]
+    assert isinstance(building_payload, dict)
+    assert building_payload["parse_info"]["outcome"] == "DEGRADED"
 
     stored_elements = map_elements_to_stored(document.elements, created_at=NOW)
     restored = map_document_from_stored(
@@ -327,6 +536,10 @@ def test_document_metadata_json_is_typed_serialized_and_round_trips() -> None:
     assert tuple(element.order for element in restored.elements) == tuple(
         range(len(document.elements))
     )
+
+
+def test_mapping_exposes_no_fresh_envelope_document_convenience() -> None:
+    assert not hasattr(persistence_mapping, "map_document_parse_metadata")
 
 
 @pytest.mark.parametrize(
@@ -490,29 +703,53 @@ def test_write_mapping_requires_an_aware_utc_timestamp(timestamp: datetime) -> N
 
 
 @pytest.mark.parametrize(
-    "field,mutation",
+    "mutation",
     [
-        ("parse_metadata", lambda value: value.__setitem__("schema_version", 2)),
-        ("parse_metadata", lambda value: value.pop("schema_version")),
-        ("parse_metadata", lambda value: value.__setitem__("extra", True)),
-        ("parse_metadata", lambda value: value.pop("parse_info")),
-        (
-            "parse_metadata",
-            lambda value: value["parse_info"].__setitem__("outcome", "UNKNOWN"),
-        ),
+        lambda value: value.__setitem__("schema_version", 2),
+        lambda value: value.pop("schema_version"),
+        lambda value: value.__setitem__("extra", True),
+        lambda value: value.pop("current"),
+        lambda value: value.pop("building"),
+        lambda value: value["building"].pop("parse_info"),
+        lambda value: value["building"]["parse_info"].__setitem__("outcome", "UNKNOWN"),
+        lambda value: value["building"].__setitem__("extra", True),
     ],
 )
 def test_document_read_fails_closed_for_malformed_typed_payloads(
-    field: str, mutation: object
+    mutation: object,
 ) -> None:
     document = _document()
-    stored_document = _replace_json_field(_stored_document(document), field, mutation)
+    valid_envelope = _replace(
+        _stored_document(document),
+        parse_metadata=_envelope_payload(building=document),
+    )
+    stored_document = _replace_json_field(valid_envelope, "parse_metadata", mutation)
     elements = map_elements_to_stored(document.elements, created_at=NOW)
 
     with pytest.raises(CanonicalDataError) as captured:
         map_document_from_stored(
             stored_document,
             elements,
+            revision_id=document.revision_id,
+        )
+    assert captured.value.args == ()
+
+
+def test_document_read_rejects_the_old_single_payload_shape() -> None:
+    document = _document()
+    stored_document = _replace(
+        _stored_document(document),
+        parse_metadata={
+            "schema_version": 1,
+            "parse_info": document.parse_info.model_dump(mode="json"),
+            "document_metadata": document.metadata.model_dump(mode="json"),
+        },
+    )
+
+    with pytest.raises(CanonicalDataError) as captured:
+        map_document_from_stored(
+            stored_document,
+            map_elements_to_stored(document.elements, created_at=NOW),
             revision_id=document.revision_id,
         )
     assert captured.value.args == ()
@@ -567,61 +804,372 @@ def test_document_read_requires_requested_revision_to_match_a_stored_triple() ->
         )
 
 
-def test_document_metadata_belongs_only_to_building_when_current_and_building_coexist() -> (
-    None
-):
+@pytest.mark.parametrize("slot_name", ["current", "building"])
+def test_document_read_rejects_any_slot_triple_revision_mismatch(
+    slot_name: str,
+) -> None:
     document = _document()
-    current_hash = "d" * 64
-    current_pipeline = "e" * 64
-    current_revision = derive_revision_id(
-        document.document_id,
-        current_hash,
-        current_pipeline,
-    )
-    stored_document = _replace(
-        _stored_document(document),
-        current_revision_id=current_revision,
-        current_content_hash=current_hash,
-        current_pipeline_fingerprint=current_pipeline,
-    )
-    elements = map_elements_to_stored(document.elements, created_at=NOW)
+    stored_document = _coexisting_stored_document(document)
 
-    assert (
+    def mismatch(payload: dict[str, object]) -> None:
+        slot = payload[slot_name]
+        assert isinstance(slot, dict)
+        slot["revision_id"] = (
+            document.revision_id if slot_name == "current" else CURRENT_REVISION_ID
+        )
+
+    malformed = _replace_json_field(
+        stored_document,
+        "parse_metadata",
+        mismatch,
+    )
+    with pytest.raises(CanonicalDataError) as captured:
         map_document_from_stored(
-            stored_document,
-            elements,
+            malformed,
+            map_elements_to_stored(document.elements, created_at=NOW),
             revision_id=document.revision_id,
         )
-        == document
+    assert captured.value.args == ()
+
+
+@pytest.mark.parametrize("slot_name", ["current", "building"])
+def test_document_read_rejects_a_slot_without_its_revision_triple(
+    slot_name: str,
+) -> None:
+    document = _document()
+    current_document = _current_document()
+    if slot_name == "building":
+        stored_document = _replace(
+            _stored_document(document),
+            building_revision_id=None,
+            building_content_hash=None,
+            building_pipeline_fingerprint=None,
+        )
+        revision_id = document.revision_id
+        elements = document.elements
+    else:
+        stored_document = _replace(
+            _stored_document(document),
+            current_revision_id=current_document.revision_id,
+            current_content_hash=CURRENT_CONTENT_HASH,
+            current_pipeline_fingerprint=CURRENT_PIPELINE_FINGERPRINT,
+            building_revision_id=None,
+            building_content_hash=None,
+            building_pipeline_fingerprint=None,
+            ingestion_status=IngestionStatus.READY,
+            parse_metadata=_envelope_payload(current=current_document),
+        )
+        stored_document = _replace(
+            stored_document,
+            current_revision_id=None,
+            current_content_hash=None,
+            current_pipeline_fingerprint=None,
+        )
+        revision_id = current_document.revision_id
+        elements = current_document.elements
+
+    with pytest.raises(CanonicalDataError) as captured:
+        map_document_from_stored(
+            stored_document,
+            map_elements_to_stored(elements, created_at=NOW),
+            revision_id=revision_id,
+        )
+    assert captured.value.args == ()
+
+
+def test_load_rejects_a_current_triple_without_its_metadata_slot() -> None:
+    document = _document()
+    stored_document = _replace(
+        _coexisting_stored_document(document),
+        parse_metadata=_envelope_payload(building=document),
+    )
+
+    with pytest.raises(CanonicalDataError) as captured:
+        load_document_parse_metadata_envelope(stored_document)
+    assert captured.value.args == ()
+    assert captured.value.__cause__ is None
+
+
+@pytest.mark.parametrize("slot_name", ["current", "building"])
+def test_load_rejects_failed_unavailable_parse_metadata_slots(
+    slot_name: str,
+) -> None:
+    if slot_name == "building":
+        failed_document = _failed_document()
+        stored_document = _replace(
+            _stored_document(),
+            parse_metadata=_envelope_payload(building=failed_document),
+        )
+    else:
+        failed_document = _failed_document(revision_id=CURRENT_REVISION_ID)
+        stored_document = _replace(
+            _coexisting_stored_document(),
+            building_revision_id=None,
+            building_content_hash=None,
+            building_pipeline_fingerprint=None,
+            ingestion_status=IngestionStatus.READY,
+            parse_metadata=_envelope_payload(current=failed_document),
+        )
+
+    with pytest.raises(CanonicalDataError) as captured:
+        load_document_parse_metadata_envelope(stored_document)
+    assert captured.value.args == ()
+    assert captured.value.__cause__ is None
+
+
+@pytest.mark.parametrize("owner", ["current", "building"])
+def test_document_read_rejects_a_missing_selected_metadata_slot(owner: str) -> None:
+    document = _document()
+    if owner == "building":
+        stored_document = _replace(
+            _stored_document(document),
+            parse_metadata=_envelope_payload(),
+        )
+        revision_id = document.revision_id
+        elements = document.elements
+    else:
+        stored_document = _replace(
+            _stored_document(document),
+            current_revision_id=document.revision_id,
+            current_content_hash=CONTENT_HASH,
+            current_pipeline_fingerprint=PIPELINE_FINGERPRINT,
+            building_revision_id=None,
+            building_content_hash=None,
+            building_pipeline_fingerprint=None,
+            ingestion_status=IngestionStatus.READY,
+            parse_metadata=_envelope_payload(),
+        )
+        revision_id = document.revision_id
+        elements = document.elements
+
+    with pytest.raises(CanonicalDataError) as captured:
+        map_document_from_stored(
+            stored_document,
+            map_elements_to_stored(elements, created_at=NOW),
+            revision_id=revision_id,
+        )
+    assert captured.value.args == ()
+
+
+@pytest.mark.parametrize(
+    ("status", "failed_stage"),
+    [
+        (IngestionStatus.RECEIVED, None),
+        (IngestionStatus.PARSING, None),
+        (IngestionStatus.FAILED, FailedStage.PARSE),
+    ],
+)
+def test_building_triple_may_precede_its_parse_metadata_slot(
+    status: IngestionStatus,
+    failed_stage: FailedStage | None,
+) -> None:
+    document = _document()
+    stored_document = _replace(
+        _stored_document(document),
+        ingestion_status=status,
+        failed_stage=failed_stage,
+        parse_metadata=_envelope_payload(),
+    )
+
+    assert (
+        load_document_parse_metadata_envelope(stored_document).model_dump(mode="json")
+        == _envelope_payload()
     )
     with pytest.raises(CanonicalDataError):
         map_document_from_stored(
             stored_document,
-            (),
-            revision_id=current_revision,
+            map_elements_to_stored(document.elements, created_at=NOW),
+            revision_id=document.revision_id,
         )
 
 
-def test_document_metadata_belongs_to_current_after_building_is_cleared() -> None:
+@pytest.mark.parametrize(
+    ("status", "failed_stage"),
+    [
+        (IngestionStatus.PARSED, None),
+        (IngestionStatus.CHUNKING, None),
+        (IngestionStatus.CHUNKED, None),
+        (IngestionStatus.INDEXING, None),
+        (IngestionStatus.FAILED, FailedStage.CHUNK),
+        (IngestionStatus.FAILED, FailedStage.REPRESENTATION),
+        (IngestionStatus.FAILED, FailedStage.EMBEDDING),
+        (IngestionStatus.FAILED, FailedStage.INDEX_WRITE),
+        (IngestionStatus.FAILED, FailedStage.INDEX_VERIFY),
+    ],
+)
+def test_load_rejects_a_missing_building_slot_after_parse_persistence(
+    status: IngestionStatus,
+    failed_stage: FailedStage | None,
+) -> None:
+    stored_document = _replace(
+        _stored_document(),
+        ingestion_status=status,
+        failed_stage=failed_stage,
+        parse_metadata=_envelope_payload(),
+    )
+
+    with pytest.raises(CanonicalDataError) as captured:
+        load_document_parse_metadata_envelope(stored_document)
+    assert captured.value.args == ()
+    assert captured.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("status", "failed_stage"),
+    [
+        (IngestionStatus.RECEIVED, None),
+        (IngestionStatus.PARSING, None),
+        (IngestionStatus.FAILED, FailedStage.PARSE),
+    ],
+)
+def test_load_rejects_stale_building_metadata_before_parse_persistence(
+    status: IngestionStatus,
+    failed_stage: FailedStage | None,
+) -> None:
+    stored_document = _replace(
+        _stored_document(),
+        ingestion_status=status,
+        failed_stage=failed_stage,
+    )
+
+    with pytest.raises(CanonicalDataError) as captured:
+        load_document_parse_metadata_envelope(stored_document)
+    assert captured.value.args == ()
+    assert captured.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("has_building_triple", "has_building_slot"),
+    [
+        (True, False),
+        (True, True),
+        (False, True),
+    ],
+)
+def test_load_rejects_ready_with_any_building_revision_state(
+    has_building_triple: bool,
+    has_building_slot: bool,
+) -> None:
+    current_document = _current_document()
+    building_document = _document()
+    changes: dict[str, object] = {
+        "ingestion_status": IngestionStatus.READY,
+        "parse_metadata": _envelope_payload(
+            current=current_document,
+            building=building_document if has_building_slot else None,
+        ),
+    }
+    if not has_building_triple:
+        changes.update(
+            building_revision_id=None,
+            building_content_hash=None,
+            building_pipeline_fingerprint=None,
+        )
+    stored_document = _replace(
+        _coexisting_stored_document(building_document),
+        **changes,
+    )
+
+    with pytest.raises(CanonicalDataError) as captured:
+        load_document_parse_metadata_envelope(stored_document)
+    assert captured.value.args == ()
+    assert captured.value.__cause__ is None
+
+
+def test_load_rejects_ready_without_a_published_current_revision() -> None:
+    stored_document = _replace(
+        _stored_document(),
+        building_revision_id=None,
+        building_content_hash=None,
+        building_pipeline_fingerprint=None,
+        ingestion_status=IngestionStatus.READY,
+        parse_metadata=_envelope_payload(),
+    )
+
+    with pytest.raises(CanonicalDataError) as captured:
+        load_document_parse_metadata_envelope(stored_document)
+    assert captured.value.args == ()
+    assert captured.value.__cause__ is None
+
+
+def test_document_read_rejects_current_and_building_revision_aliasing() -> None:
     document = _document()
     stored_document = _replace(
         _stored_document(document),
         current_revision_id=document.revision_id,
         current_content_hash=CONTENT_HASH,
         current_pipeline_fingerprint=PIPELINE_FINGERPRINT,
-        building_revision_id=None,
-        building_content_hash=None,
-        building_pipeline_fingerprint=None,
-        ingestion_status=IngestionStatus.READY,
+        parse_metadata=_envelope_payload(current=document, building=document),
     )
 
-    assert (
+    with pytest.raises(CanonicalDataError) as captured:
         map_document_from_stored(
             stored_document,
             map_elements_to_stored(document.elements, created_at=NOW),
             revision_id=document.revision_id,
         )
-        == document
+    assert captured.value.args == ()
+
+
+def test_current_and_building_metadata_coexist_without_loss() -> None:
+    current_document = _current_document()
+    building_document = _document()
+    stored_document = _coexisting_stored_document(building_document)
+
+    assert stored_document.model_dump(mode="json")["parse_metadata"] == (
+        _envelope_payload(
+            current=current_document,
+            building=building_document,
+        )
+    )
+    assert (
+        map_document_from_stored(
+            stored_document,
+            map_elements_to_stored(building_document.elements, created_at=NOW),
+            revision_id=building_document.revision_id,
+        )
+        == building_document
+    )
+
+
+def test_document_read_selects_only_the_exact_lifecycle_owned_slot() -> None:
+    current_document = _current_document()
+    building_document = _document()
+    coexisting = _coexisting_stored_document(building_document)
+
+    with pytest.raises(CanonicalDataError):
+        map_document_from_stored(
+            coexisting,
+            map_elements_to_stored(current_document.elements, created_at=NOW),
+            revision_id=current_document.revision_id,
+        )
+    with pytest.raises(CanonicalDataError):
+        map_document_from_stored(
+            coexisting,
+            map_elements_to_stored(current_document.elements, created_at=NOW),
+            revision_id=building_document.revision_id,
+        )
+
+    published = _replace(
+        coexisting,
+        observed_content_hash="f" * 64,
+        current_revision_id=current_document.revision_id,
+        current_content_hash=CURRENT_CONTENT_HASH,
+        current_pipeline_fingerprint=CURRENT_PIPELINE_FINGERPRINT,
+        building_revision_id=None,
+        building_content_hash=None,
+        building_pipeline_fingerprint=None,
+        ingestion_status=IngestionStatus.READY,
+        parse_metadata=_envelope_payload(current=current_document),
+    )
+
+    assert (
+        map_document_from_stored(
+            published,
+            map_elements_to_stored(current_document.elements, created_at=NOW),
+            revision_id=current_document.revision_id,
+        )
+        == current_document
     )
 
 
@@ -637,6 +1185,7 @@ def test_current_metadata_remains_readable_when_observed_source_has_drifted() ->
         building_content_hash=None,
         building_pipeline_fingerprint=None,
         ingestion_status=IngestionStatus.READY,
+        parse_metadata=_envelope_payload(current=document),
     )
 
     assert (
@@ -663,28 +1212,19 @@ def test_document_read_fails_closed_when_building_metadata_ownership_is_unproven
     failed_stage: FailedStage | None,
 ) -> None:
     document = _document()
-    current_hash = "d" * 64
-    current_pipeline = "e" * 64
-    current_revision = derive_revision_id(
-        document.document_id,
-        current_hash,
-        current_pipeline,
-    )
+    current_document = _current_document()
     stored_document = _replace(
-        _stored_document(document),
-        current_revision_id=current_revision,
-        current_content_hash=current_hash,
-        current_pipeline_fingerprint=current_pipeline,
+        _coexisting_stored_document(document),
         ingestion_status=status,
         failed_stage=failed_stage,
     )
 
-    for selected_revision in (current_revision, document.revision_id):
+    for selected_document in (current_document, document):
         with pytest.raises(CanonicalDataError):
             map_document_from_stored(
                 stored_document,
-                map_elements_to_stored(document.elements, created_at=NOW),
-                revision_id=selected_revision,
+                map_elements_to_stored(selected_document.elements, created_at=NOW),
+                revision_id=selected_document.revision_id,
             )
 
 

@@ -41,7 +41,12 @@ from atlasrag.domain.ingestion.elements import (
     TableData,
     normalize_single_line,
 )
-from atlasrag.domain.ingestion.source import derive_revision_id, validate_sha256_hex
+from atlasrag.domain.ingestion.enums import ParseOutcome
+from atlasrag.domain.ingestion.source import (
+    derive_revision_id,
+    validate_revision_id,
+    validate_sha256_hex,
+)
 from atlasrag.repositories.postgres.records import (
     FailedStage,
     IngestionStatus,
@@ -69,12 +74,31 @@ _ChunkingStrategy = Annotated[
 ]
 
 
-class DocumentParseMetadataV1(FrozenModel):
-    """Versioned stable parse facts stored on one document row."""
+class DocumentParseMetadataSlotV1(FrozenModel):
+    """Stable parse facts bound to one canonical document revision."""
 
-    schema_version: _SchemaVersion
+    revision_id: StrictStr
     parse_info: ParseInfo
     document_metadata: DocumentMetadata
+
+    @field_validator("revision_id")
+    @classmethod
+    def _canonical_revision_id(cls, value: str) -> str:
+        return validate_revision_id(value)
+
+    @model_validator(mode="after")
+    def _requires_usable_parse_facts(self) -> Self:
+        if self.parse_info.outcome is ParseOutcome.FAILED:
+            raise ValueError("parse metadata slot requires usable parse facts")
+        return self
+
+
+class DocumentParseMetadataEnvelopeV1(FrozenModel):
+    """Versioned current/building parse facts stored on one document row."""
+
+    schema_version: _SchemaVersion
+    current: DocumentParseMetadataSlotV1 | None
+    building: DocumentParseMetadataSlotV1 | None
 
 
 class ElementStructuredContentV1(FrozenModel):
@@ -174,15 +198,121 @@ def _canonical_data_error() -> CanonicalDataError:
     return CanonicalDataError()
 
 
-def map_document_parse_metadata(document: DocumentContainer) -> dict[str, object]:
-    """Serialize typed document parse facts for ``StoredDocument.parse_metadata``."""
-    canonical = DocumentContainer.model_validate(document)
-    payload = DocumentParseMetadataV1(
+def empty_document_parse_metadata_envelope() -> DocumentParseMetadataEnvelopeV1:
+    """Build the explicit empty parse-metadata envelope."""
+    return DocumentParseMetadataEnvelopeV1(
         schema_version=1,
+        current=None,
+        building=None,
+    )
+
+
+def build_document_parse_metadata_slot(
+    document: DocumentContainer,
+) -> DocumentParseMetadataSlotV1:
+    """Bind revalidated canonical parse facts to their revision."""
+    canonical = DocumentContainer.model_validate(document)
+    return DocumentParseMetadataSlotV1(
+        revision_id=canonical.revision_id,
         parse_info=canonical.parse_info,
         document_metadata=canonical.metadata,
     )
-    return payload.model_dump(mode="json")
+
+
+def replace_document_parse_metadata_slot(
+    envelope: DocumentParseMetadataEnvelopeV1,
+    *,
+    slot_name: Literal["current", "building"],
+    slot: DocumentParseMetadataSlotV1 | None,
+) -> DocumentParseMetadataEnvelopeV1:
+    """Return a new envelope after replacing exactly one named typed slot."""
+    canonical_envelope = DocumentParseMetadataEnvelopeV1.model_validate(envelope)
+    canonical_slot = (
+        None if slot is None else DocumentParseMetadataSlotV1.model_validate(slot)
+    )
+    if slot_name == "current":
+        return DocumentParseMetadataEnvelopeV1(
+            schema_version=1,
+            current=canonical_slot,
+            building=canonical_envelope.building,
+        )
+    if slot_name == "building":
+        return DocumentParseMetadataEnvelopeV1(
+            schema_version=1,
+            current=canonical_envelope.current,
+            building=canonical_slot,
+        )
+    raise ValueError("slot_name must be 'current' or 'building'")
+
+
+def serialize_document_parse_metadata_envelope(
+    envelope: DocumentParseMetadataEnvelopeV1,
+) -> dict[str, object]:
+    """Serialize only the revalidated typed envelope to JSON values."""
+    canonical = DocumentParseMetadataEnvelopeV1.model_validate(envelope)
+    return canonical.model_dump(mode="json")
+
+
+def _validate_document_parse_metadata_ownership(
+    document: StoredDocument,
+    envelope: DocumentParseMetadataEnvelopeV1,
+) -> None:
+    current_revision = document.current_revision_id
+    building_revision = document.building_revision_id
+    if (
+        current_revision is not None
+        and building_revision is not None
+        and current_revision == building_revision
+    ):
+        raise _canonical_data_error()
+    for slot, revision_id in (
+        (envelope.current, current_revision),
+        (envelope.building, building_revision),
+    ):
+        if slot is not None and (
+            revision_id is None or slot.revision_id != revision_id
+        ):
+            raise _canonical_data_error()
+    if current_revision is not None and envelope.current is None:
+        raise _canonical_data_error()
+    if document.ingestion_status is IngestionStatus.READY and (
+        current_revision is None
+        or building_revision is not None
+        or envelope.building is not None
+    ):
+        raise _canonical_data_error()
+
+    building_is_pre_parse = document.ingestion_status in {
+        IngestionStatus.RECEIVED,
+        IngestionStatus.PARSING,
+    } or (
+        document.ingestion_status is IngestionStatus.FAILED
+        and document.failed_stage is FailedStage.PARSE
+    )
+    building_is_post_parse = (
+        document.ingestion_status in _BUILDING_PARSE_METADATA_STATUSES
+        or (
+            document.ingestion_status is IngestionStatus.FAILED
+            and document.failed_stage in _POST_PARSE_FAILED_STAGES
+        )
+    )
+    if building_is_pre_parse and envelope.building is not None:
+        raise _canonical_data_error()
+    if building_is_post_parse and envelope.building is None:
+        raise _canonical_data_error()
+
+
+def load_document_parse_metadata_envelope(
+    document: StoredDocument,
+) -> DocumentParseMetadataEnvelopeV1:
+    """Revalidate one stored envelope and its revision-slot ownership."""
+    try:
+        stored = StoredDocument.model_validate(document)
+        envelope = DocumentParseMetadataEnvelopeV1.model_validate(stored.parse_metadata)
+    except (RecursionError, ValidationError):
+        raise _canonical_data_error() from None
+    _validate_document_parse_metadata_ownership(stored, envelope)
+    return envelope
 
 
 def map_element_to_stored(
@@ -290,9 +420,9 @@ _POST_PARSE_FAILED_STAGES = frozenset(
 )
 
 
-def _parse_metadata_revision(
+def _parse_metadata_owner(
     document: StoredDocument,
-) -> tuple[str, str, str] | None:
+) -> tuple[Literal["current", "building"], str, str, str] | None:
     """Resolve the only lifecycle state that proves parse_metadata ownership."""
     building_is_owner = document.ingestion_status in _BUILDING_PARSE_METADATA_STATUSES
     if (
@@ -309,6 +439,7 @@ def _parse_metadata_revision(
         ):
             return None
         return (
+            "building",
             document.building_revision_id,
             document.building_content_hash,
             document.building_pipeline_fingerprint,
@@ -323,6 +454,7 @@ def _parse_metadata_revision(
     ):
         return None
     return (
+        "current",
         document.current_revision_id,
         document.current_content_hash,
         document.current_pipeline_fingerprint,
@@ -338,18 +470,20 @@ def map_document_from_stored(
     """Reconstruct the explicitly selected, provably-owned canonical revision."""
     try:
         stored = StoredDocument.model_validate(document)
-        parse_metadata = DocumentParseMetadataV1.model_validate(stored.parse_metadata)
     except (RecursionError, ValidationError):
         raise _canonical_data_error() from None
+    parse_metadata = load_document_parse_metadata_envelope(stored)
 
-    owner = _parse_metadata_revision(stored)
-    if owner is None or owner[0] != revision_id:
+    owner = _parse_metadata_owner(stored)
+    if owner is None or owner[1] != revision_id:
         raise _canonical_data_error()
-    owner_revision, owner_content_hash, owner_pipeline_fingerprint = owner
-    if (
-        owner_revision == stored.building_revision_id
-        and owner_content_hash != stored.observed_content_hash
-    ):
+    owner_name, owner_revision, owner_content_hash, owner_pipeline_fingerprint = owner
+    selected_metadata = (
+        parse_metadata.current if owner_name == "current" else parse_metadata.building
+    )
+    if selected_metadata is None or selected_metadata.revision_id != owner_revision:
+        raise _canonical_data_error()
+    if owner_name == "building" and owner_content_hash != stored.observed_content_hash:
         raise _canonical_data_error()
     try:
         expected_revision = derive_revision_id(
@@ -374,8 +508,8 @@ def map_document_from_stored(
                     "file_name": stored.file_name,
                     "source_type": stored.source_type.value,
                 },
-                "metadata": parse_metadata.document_metadata,
-                "parse_info": parse_metadata.parse_info,
+                "metadata": selected_metadata.document_metadata,
+                "parse_info": selected_metadata.parse_info,
                 "elements": canonical_elements,
             }
         )
