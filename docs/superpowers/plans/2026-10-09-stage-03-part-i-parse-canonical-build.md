@@ -547,6 +547,59 @@ git commit -m "feat(stage-03): map canonical records to frozen storage"
 
 ---
 
+## Task 9A: Apply the approved parse-metadata ownership amendment
+
+**Files:**
+
+- Modify: `src/atlasrag/services/ingestion/mapping.py`
+- Modify: `tests/stage3/test_persistence_mapping.py`
+
+### Step 1: Write failing envelope and ownership tests
+
+Replace the single-revision document payload expectation with immutable,
+extra-forbid `DocumentParseMetadataSlotV1` and
+`DocumentParseMetadataEnvelopeV1` contracts. Require explicit nullable
+`current` and `building` fields, strict schema version 1, and a canonical
+revision ID on every present slot.
+
+Add RED cases proving that current and building can coexist without metadata
+loss; reads select only the requested lifecycle-owned slot; missing/extra
+fields, unknown versions, a slot/triple revision mismatch, a slot without its
+triple, and `current_revision_id == building_revision_id` raise the frozen safe
+`CanonicalDataError`. Preserve all existing element/chunk mapper tests.
+
+### Step 2: Confirm RED
+
+```bash
+uv run --frozen pytest tests/stage3/test_persistence_mapping.py -q
+```
+
+Expected: failures against the old single-payload document mapping.
+
+### Step 3: Implement the typed envelope without a migration
+
+Map only `DocumentParseMetadataEnvelopeV1` into
+`StoredDocument.parse_metadata`, always through `model_dump(mode="json")`.
+Provide typed helpers to create an empty envelope, parse/revalidate a stored
+envelope, bind a canonical document to a revision slot, and serialize a new
+envelope after replacing exactly one slot. `map_document_from_stored` selects
+the slot proven by the requested current/building triple and rejects every
+ownership contradiction. Do not modify Stage 2 records, repositories, UoW,
+migrations, or database columns.
+
+### Step 4: Run mapper regressions and commit
+
+```bash
+uv run --frozen pytest tests/stage3/test_persistence_mapping.py \
+  tests/stage3/test_production_validation.py \
+  tests/persistence/test_records.py tests/contract/test_stage2_scope.py -q
+git add src/atlasrag/services/ingestion/mapping.py \
+  tests/stage3/test_persistence_mapping.py
+git commit -m "feat(stage-03): bind parse metadata to revision slots"
+```
+
+---
+
 ## Task 10: Implement small candidate persistence capabilities
 
 **Files:**
@@ -563,16 +616,22 @@ Build narrow async repository/UoW protocols and in-memory fakes. Cover:
 
 - new and current-R1 candidate preparation;
 - rejection of a different existing building revision;
+- rejection of a candidate revision equal to the current revision;
 - exact legal PARSING/PARSED/CHUNKING/CHUNKED transitions;
 - parsed/chunked exact-set retry replacing stale rows;
+- current/building parse-metadata slot isolation;
+- chunk validation against the reconstructed persisted PARSED exact-set;
 - validation before writes;
 - explicit commit exactly once and rollback/no commit on failure;
 - preservation of all current revision fields;
 - explicit PARSE/CHUNK business failure recording;
 - unexpected exception/cancellation propagation without `FAILED` conversion;
 - candidate discard deleting candidate rows and clearing building/failure;
+- discard clearing only building metadata while preserving current metadata;
 - discard restoring READY with current and RECEIVED without current; and
-- no query-cache invalidation or publication mutation.
+- no query-cache invalidation or publication mutation;
+- transaction-aware fakes that preserve interleaved commits for different
+  documents.
 
 ### Step 2: Write failing controlled mutation-flow tests
 
@@ -592,7 +651,12 @@ uv run --frozen pytest tests/stage3/test_candidate_services.py \
 Implement separate preparation, transition, parsed persistence, chunk
 persistence, failure, and discard services. Each operation creates one short
 UoW and explicitly commits. Keep parser/hash/analyze/chunk work outside UoWs.
-Do not add a production graph or one God ingestion service.
+Before `persist_chunked` writes anything, read and reconstruct the persisted
+PARSED exact-set, require complete equality with the caller document, and use
+that persisted document as the authority for chunk validation. Preparation
+must reject current/building revision aliasing. Candidate parse writes replace
+only the envelope's building slot; discard removes only that slot. Do not add a
+production graph or one God ingestion service.
 
 ### Step 5: Run GREEN and commit
 

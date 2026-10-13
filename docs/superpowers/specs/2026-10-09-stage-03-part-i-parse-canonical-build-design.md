@@ -537,13 +537,28 @@ on read.
 ### 14.1 Document parse metadata
 
 ```text
-DocumentParseMetadataV1
-  schema_version: 1
+DocumentParseMetadataSlotV1
+  revision_id
   parse_info: ParseInfo
   document_metadata: DocumentMetadata
+
+DocumentParseMetadataEnvelopeV1
+  schema_version: 1
+  current: DocumentParseMetadataSlotV1?
+  building: DocumentParseMetadataSlotV1?
 ```
 
-It maps to `StoredDocument.parse_metadata`.
+The envelope maps to `StoredDocument.parse_metadata` without a migration. A
+present slot is bound to exactly one revision: its `revision_id` must match the
+corresponding current or building revision triple on the document row. A slot
+is absent when that revision has no persisted parse result yet. Unknown fields,
+unknown versions, a slot without its corresponding triple, a revision mismatch,
+or using one revision as both current and building fail closed.
+
+Candidate work only writes the `building` slot and never overwrites `current`.
+Discard removes only `building`. A future publish operation atomically promotes
+`building` to `current` while updating the document triples; it does not copy
+metadata between unrelated revisions.
 
 ### 14.2 Element payloads
 
@@ -615,25 +630,31 @@ Parser, hashing, analysis, chunking, and validation run outside transactions.
 the deterministic document ID, preserves the current triple, installs the
 building triple, updates the observed hash, sets `RECEIVED`, and clears stale
 failure state. A different existing building revision fails closed. Stage 3
-does not adopt or reconcile it.
+does not adopt or reconcile it. The building revision must differ from the
+current revision. Preparation preserves the `current` parse-metadata slot and
+clears the `building` slot for the new attempt.
 
 `mark_parsing` verifies the candidate and transitions `RECEIVED -> PARSING`.
 
 `persist_parsed` accepts only validated usable canonical output. In one
 transaction it verifies the building triple, exact-set replaces candidate
-elements, writes `DocumentParseMetadataV1`, clears failure state, and sets
-`PARSED`. A retry for the same `PARSED` candidate performs the same exact-set
-replacement. Any failure rolls back elements and status together.
+elements, writes the revision-bound `building` slot in
+`DocumentParseMetadataEnvelopeV1` without changing `current`, clears failure
+state, and sets `PARSED`. A retry for the same `PARSED` candidate performs the
+same exact-set replacement. Any failure rolls back elements, metadata, and
+status together.
 
 ### 15.2 Chunking
 
 `mark_chunking` verifies the candidate and transitions `PARSED -> CHUNKING`.
 
-`persist_chunked` accepts only a validated complete chunk set. In one
-transaction it verifies the building triple, exact-set replaces candidate
-chunks, clears failure state, and sets `CHUNKED`. A retry for the same
-`CHUNKED` candidate replaces the exact set. Any failure rolls back chunks and
-status together.
+`persist_chunked` does not trust a caller-only `DocumentContainer`. Before any
+chunk write, it reads and reconstructs the persisted `PARSED` exact-set,
+requires complete semantic equality with the caller document, and validates
+the chunks against that persisted canonical source. In one transaction it then
+exact-set replaces candidate chunks, clears failure state, and sets `CHUNKED`.
+A retry for the same `CHUNKED` candidate replaces the exact set. A mismatch or
+any write failure rolls back and fails closed.
 
 ### 15.3 Failure and discard
 
@@ -644,7 +665,8 @@ it for unexpected exceptions, cancellation, or process interruption.
 
 `discard_candidate` verifies the candidate and atomically deletes its elements
 and chunks, clears the building triple and failure state, and preserves the
-current triple. The approved restored status is:
+current triple. It removes only the envelope's `building` slot; `current` is
+preserved unchanged. The approved restored status is:
 
 ```text
 current revision exists -> READY
