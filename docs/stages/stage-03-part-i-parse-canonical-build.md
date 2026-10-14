@@ -6,18 +6,19 @@ Stage 3 — Part I: Parse & Canonical Build.
 
 ## Status
 
-**LOCAL CLOSEOUT GATES AND FINAL REVIEWS PASS — commit and publication are
-PENDING.**
+**COMPLETE — branch published normally, remote gates green, and pull request #4
+open and unmerged.**
 
 The offline, complete Stage 2 service-backed, Stage 3 PostgreSQL/Docling, and
 mandatory real MinerU gates have passed locally. Implementation through the
-Stage 3 command/CI separation is committed; review-driven Stage 2 selector and
-immutable CI-action fixes plus this documentation are still uncommitted. The
-final architecture review is `ARCHITECTURE READY`, and the final security
-review is `SECURITY RELEASE READY` after the CI pinning and parser exception
-boundary corrections. This report deliberately does not declare Stage 3
-COMPLETE: the closeout commit, normal GitHub push, and applicable remote checks
-remain PENDING.
+Stage 3 command/CI separation and the review-driven Stage 2 selector, immutable
+CI-action, and parser exception-boundary corrections are committed at
+`064f1636f678be54d4a504b730d485c39d26d560` and published without force. The
+final architecture review is `ARCHITECTURE READY`, the final security review is
+`SECURITY RELEASE READY`, and the final report review is `REPORT READY`. Both
+push-triggered and pull-request-triggered CI and Integration workflows are
+green. Pull request #4 remains open, cleanly mergeable, and deliberately
+unmerged; merging into `main` remains a manual action outside Stage completion.
 
 ## Authority, base, and scope
 
@@ -656,13 +657,13 @@ intentionally remain open.
 | final `make stage3-parser-smoke` | [x] | One real MinerU smoke test passed. |
 | Stage report complete | [x] | Independent final completeness review is `REPORT READY`. |
 | Architecture deviations = NONE | [x] | Independent final architecture review is READY. |
-| branch committed | [ ] | Selector/CI-pin fixes and final report/update are not yet committed. |
-| branch pushed normally | [ ] | PENDING; no force push permitted. |
-| remote CI green | [ ] | PENDING after push. |
-| applicable Stage 3 Integration CI green | [ ] | PENDING after push. |
+| branch committed | [x] | Review-driven closeout commit `064f1636f678be54d4a504b730d485c39d26d560`; this report is finalized by a documentation-only successor. |
+| branch pushed normally | [x] | Closeout commit published to `origin/stage/03-part-i-parse-canonical-build`; no force push used. |
+| remote CI green | [x] | Push run `38570379050` and PR run `38570722289` passed. |
+| applicable Stage 3 Integration CI green | [x] | Push run `38570379382` and PR run `38570722267` passed both Stage 2 and Stage 3 jobs. |
 
-Stage 3 must not be changed to COMPLETE until every unchecked item is closed
-with fresh evidence.
+Every Stage 3 completion item is closed with fresh evidence. Stage 4 remains
+not started, and pull request #4 remains intentionally unmerged.
 
 ## Final architecture review questions
 
@@ -745,24 +746,41 @@ f0c8d81 feat(stage-03): bind parse metadata to revision slots
 f54b2bd feat(stage-03): persist candidate parse and chunks
 42c4635 test(stage-03): verify PostgreSQL candidate transactions
 60e36e3 ci(stage-03): add parser and integration gates
+064f163 fix(stage-03): harden final verification boundaries
 ```
 
 The review-driven exact Stage 2 selector fix, immutable ordinary-CI action
 pins, parser exception-boundary correction, and final documentation are present
-in the verified working tree but remain uncommitted pending the final closeout
-commit.
+in the verified and published closeout commit. This section is finalized by a
+documentation-only publication-evidence successor.
 
-Publication placeholders:
+Publication evidence:
 
-- Final documentation commit: **PENDING**
-- Final current HEAD: **PENDING**
+- Verified closeout commit:
+  `064f1636f678be54d4a504b730d485c39d26d560`
+- Publication-evidence commit: **the documentation-only commit containing this
+  section; resolve through pull request #4 head**
 - Normal push to `origin/stage/03-part-i-parse-canonical-build`:
-  **PENDING**
+  **PASS**
 - Force push: **NOT USED; PROHIBITED**
-- Remote CI: **PENDING**
-- Remote Integration CI: **PENDING**
-- Pull request number/status: **PENDING**
+- Remote CI: **PASS** — push run
+  [38570379050](https://github.com/Melon235/AtlasRAG/actions/runs/38570379050)
+  and PR run
+  [38570722289](https://github.com/Melon235/AtlasRAG/actions/runs/38570722289)
+- Remote Integration CI: **PASS** — push run
+  [38570379382](https://github.com/Melon235/AtlasRAG/actions/runs/38570379382)
+  and PR run
+  [38570722267](https://github.com/Melon235/AtlasRAG/actions/runs/38570722267)
+  passed both Stage 2 and Stage 3 jobs
+- Pull request number/status:
+  [#4](https://github.com/Melon235/AtlasRAG/pull/4) — **OPEN, CLEAN,
+  UNMERGED**
 - Merge into `main`: **NOT PERFORMED; MUST REMAIN MANUAL**
+
+The publication-evidence successor changes documentation only. Its own
+push/PR checks are intentionally verified at final handoff through pull request
+#4 rather than creating an impossible self-referential commit hash in this
+report.
 
 ## Next
 

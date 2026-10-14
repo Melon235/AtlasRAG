@@ -16,7 +16,7 @@ green remote CI result.
 ## Current stage
 
 - **Stage:** Stage 3 — Part I: Parse & Canonical Build
-- **Status:** local closeout gates and final reviews PASS; publication PENDING
+- **Status:** Stage 3 COMPLETE — pull request #4 open and unmerged
 - **Report:**
   [stage-03-part-i-parse-canonical-build.md](stage-03-part-i-parse-canonical-build.md)
 - **Next:** Stage 4 — Part I: Index & Publish — NOT STARTED
@@ -25,7 +25,7 @@ Stage 3 implements secure source identity, deterministic parser normalization,
 canonical elements and Parent/Child/Table chunks, typed persistence mapping,
 and atomic candidate boundaries through `CHUNKED`. Its final local offline,
 Stage 2 service, Stage 3 PostgreSQL/Docling, and real MinerU gates are green.
-It remains incomplete until the final closeout commit, normal branch
-publication, and applicable remote checks succeed. No embedding, Milvus write,
-publication, build graph, directory sync, Part II, or benchmark behavior has
-started.
+The branch is published normally, all push- and PR-triggered remote gates are
+green, and pull request #4 remains deliberately unmerged. No embedding, Milvus
+write, publication, build graph, directory sync, Part II, or benchmark behavior
+has started.

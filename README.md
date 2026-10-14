@@ -8,7 +8,7 @@ The authoritative design is
 
 **Current implementation stage: Stage 3 — Part I: Parse & Canonical Build**
 
-**Status: local closeout gates and final reviews PASS; publication PENDING**
+**Status: Stage 3 COMPLETE — pull request #4 open and unmerged**
 
 Stage 3 adds secure source identity, deterministic PDF/DOCX/XLSX/Markdown/text
 routing and normalization, immutable canonical documents/elements/tables,
@@ -22,9 +22,10 @@ The evidence-bearing report is
 [`docs/stages/stage-03-part-i-parse-canonical-build.md`](docs/stages/stage-03-part-i-parse-canonical-build.md).
 Fresh local offline, Stage 2 service-backed, Stage 3 PostgreSQL/Docling, and
 real MinerU gates pass. Final architecture, security, and report reviews are
-ready, including approval of the review-driven security hardening. Stage 3 is
-not COMPLETE until the report is committed, the branch is pushed normally,
-and all applicable remote checks have passed.
+ready, including approval of the review-driven security hardening. The branch
+is published normally, push- and PR-triggered CI/Integration checks are green,
+and [pull request #4](https://github.com/Melon235/AtlasRAG/pull/4) remains open
+and deliberately unmerged.
 
 ## Setup
 
