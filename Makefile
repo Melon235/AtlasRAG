@@ -3,7 +3,8 @@ COMPOSE_FILE := deploy/local/compose.yaml
 
 .PHONY: setup format format-check lint typecheck test architecture-check verify \
 	infra-up infra-wait infra-status infra-logs infra-down migrate migration-check \
-	test-integration stage2-verify
+	test-integration stage2-verify test-stage3 test-stage3-integration \
+	stage3-parser-smoke stage3-verify
 
 setup:
 	uv sync
@@ -60,3 +61,15 @@ test-integration:
 
 stage2-verify:
 	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage2_verify.sh
+
+test-stage3:
+	uv run --frozen pytest tests/stage3 -q
+
+test-stage3-integration:
+	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage3_verify.sh --integration-only
+
+stage3-parser-smoke:
+	ATLASRAG_RUN_INTEGRATION=1 uv run --frozen --group parsing-mineru pytest tests/integration/test_stage3_mineru_smoke.py -m integration -q -s
+
+stage3-verify:
+	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage3_verify.sh

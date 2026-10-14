@@ -21,17 +21,17 @@ jobs:
       COMPOSE_PROJECT_NAME: atlasrag-ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
 
       - name: Set up Go 1.23.4
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version: "1.23.4"
           cache: false
@@ -83,5 +83,48 @@ jobs:
         run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml logs --no-color
 
       - name: Destroy ephemeral infrastructure
+        if: always()
+        run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml down -v --remove-orphans
+
+  stage3-integration:
+    name: Stage 3 PostgreSQL and Docling Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ATLASRAG_ENV_FILE: deploy/local/.env
+      COMPOSE_PROJECT_NAME: atlasrag-stage3-ci-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Sync locked Docling dependencies
+        run: uv sync --frozen --group parsing-docling
+
+      - name: Create ephemeral local configuration
+        run: |
+          cp deploy/local/.env.example deploy/local/.env
+          sed -i "s/replace-with-local-postgres-password/ci-stage3-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/g" deploy/local/.env
+          sed -i "s/replace-with-local-minio-user/ci-stage3-unused-minio-${GITHUB_RUN_ID}/g" deploy/local/.env
+          sed -i "s/replace-with-local-minio-password/ci-stage3-unused-minio-password-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/g" deploy/local/.env
+          sed -i "s/replace-with-local-searxng-secret-at-least-32-characters/ci-stage3-unused-searxng-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-local-only/g" deploy/local/.env
+
+      - name: Verify Stage 3 PostgreSQL and Docling integration
+        run: make test-stage3-integration
+
+      - name: Print PostgreSQL logs on failure
+        if: failure()
+        run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml logs --no-color postgres
+
+      - name: Destroy ephemeral PostgreSQL volume
         if: always()
         run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml down -v --remove-orphans
