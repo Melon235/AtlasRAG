@@ -206,28 +206,109 @@ async def test_documented_mineru_unavailability_is_normalized(
 
 
 @pytest.mark.asyncio
-async def test_unknown_provider_and_unexpected_errors_propagate(
+async def test_unknown_provider_errors_are_safe_and_cancellation_propagates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source, context = prepared_source(tmp_path)
 
-    def corrupt_source(*_args: object, **_kwargs: object) -> object:
-        raise FakeMineruError("file_corrupted")
+    for provider_error in (
+        FakeMineruError("file_corrupted"),
+        RuntimeError(f"unexpected provider defect at {source.absolute_path}"),
+    ):
 
-    monkeypatch.setattr(
-        mineru_adapter, "_load_mineru_sdk", lambda: fake_sdk(corrupt_source)
-    )
-    with pytest.raises(FakeMineruError):
+        def unexpected(*_args: object, **_kwargs: object) -> object:
+            raise provider_error
+
+        monkeypatch.setattr(
+            mineru_adapter, "_load_mineru_sdk", lambda: fake_sdk(unexpected)
+        )
+        with pytest.raises(ProviderResponseError) as raised:
+            await mineru_adapter.MinerUParser().parse(source, context)
+        assert str(raised.value) == "A provider returned an invalid response."
+        assert raised.value.args == ()
+        assert raised.value.__cause__ is None
+        assert raised.value.__context__ is None
+        assert str(source.absolute_path) not in str(raised.value)
+
+    def broken_loader() -> object:
+        raise RuntimeError(f"SDK setup exposed {source.absolute_path}")
+
+    monkeypatch.setattr(mineru_adapter, "_load_mineru_sdk", broken_loader)
+    with pytest.raises(ProviderResponseError) as raised:
+        await mineru_adapter.MinerUParser().parse(source, context)
+    assert raised.value.__context__ is None
+
+    class BuildCancellation(BaseException):
+        pass
+
+    def cancelled(*_args: object, **_kwargs: object) -> object:
+        raise BuildCancellation
+
+    monkeypatch.setattr(mineru_adapter, "_load_mineru_sdk", lambda: fake_sdk(cancelled))
+    with pytest.raises(BuildCancellation):
         await mineru_adapter.MinerUParser().parse(source, context)
 
-    def unexpected(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("unexpected provider defect")
+    result = FakeResult(output_payload())
+    monkeypatch.setattr(
+        mineru_adapter,
+        "_load_mineru_sdk",
+        lambda: fake_sdk(lambda *_args, **_kwargs: result),
+    )
+
+    def invalid_canonical_output(*_args: object, **_kwargs: object) -> object:
+        raise InvariantViolationError
 
     monkeypatch.setattr(
-        mineru_adapter, "_load_mineru_sdk", lambda: fake_sdk(unexpected)
+        mineru_adapter,
+        "normalize_mineru_output",
+        invalid_canonical_output,
     )
-    with pytest.raises(RuntimeError, match="unexpected provider defect"):
+    with pytest.raises(InvariantViolationError) as raised_invariant:
         await mineru_adapter.MinerUParser().parse(source, context)
+    assert str(raised_invariant.value) == "An internal invariant was violated."
+    assert raised_invariant.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_malformed_provider_error_codes_are_safely_normalized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, context = prepared_source(tmp_path)
+
+    class ExplodingCodeError(Exception):
+        @property
+        def code(self) -> object:
+            raise RuntimeError(f"provider code exposed {source.absolute_path}")
+
+    class ExplodingHash:
+        def __hash__(self) -> int:
+            raise RuntimeError(f"provider hash exposed {source.absolute_path}")
+
+    class InvalidCodeError(Exception):
+        code = ExplodingHash()
+
+    for provider_error in (ExplodingCodeError(), InvalidCodeError()):
+
+        def unexpected(
+            *_args: object,
+            provider_error: Exception = provider_error,
+            **_kwargs: object,
+        ) -> object:
+            raise provider_error
+
+        error_type = type(provider_error)
+        monkeypatch.setattr(
+            mineru_adapter,
+            "_load_mineru_sdk",
+            lambda: SimpleNamespace(parse=unexpected, error_type=error_type),
+        )
+        with pytest.raises(ProviderResponseError) as raised:
+            await mineru_adapter.MinerUParser().parse(source, context)
+        assert str(raised.value) == "A provider returned an invalid response."
+        assert raised.value.args == ()
+        assert raised.value.__cause__ is None
+        assert raised.value.__context__ is None
+        assert str(source.absolute_path) not in str(raised.value)
 
 
 @pytest.mark.asyncio
@@ -289,7 +370,7 @@ async def test_missing_or_non_callable_to_dict_is_provider_response_error(
 
 
 @pytest.mark.asyncio
-async def test_malformed_to_dict_call_is_normalized_but_unknown_error_propagates(
+async def test_to_dict_failures_are_safely_normalized(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source, context = prepared_source(tmp_path)
@@ -319,8 +400,10 @@ async def test_malformed_to_dict_call_is_normalized_but_unknown_error_propagates
             lambda *_args, **_kwargs: SimpleNamespace(to_dict=broken_to_dict)
         ),
     )
-    with pytest.raises(RuntimeError, match="unexpected serialization defect"):
+    with pytest.raises(ProviderResponseError) as raised:
         await mineru_adapter.MinerUParser().parse(source, context)
+    assert str(raised.value) == "A provider returned an invalid response."
+    assert raised.value.__context__ is None
 
 
 @pytest.mark.asyncio

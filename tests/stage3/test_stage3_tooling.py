@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -75,6 +76,96 @@ def test_make_exposes_isolated_stage3_gates() -> None:
     assert "--group" not in ordinary
     assert "docker" not in ordinary
     assert "stage3-parser-smoke" not in ordinary
+
+
+def test_stage2_integration_target_keeps_its_exact_original_suite() -> None:
+    makefile = MAKEFILE.read_text(encoding="utf-8")
+    integration = _make_target(makefile, "test-integration")
+    expected_files = (
+        "tests/integration/test_compose.py",
+        "tests/integration/test_milvus.py",
+        "tests/integration/test_postgres.py",
+        "tests/integration/test_redis.py",
+    )
+
+    assert "ATLASRAG_RUN_INTEGRATION=1" in integration
+    assert "uv run" in integration
+    assert '--env-file "$(ATLASRAG_ENV_FILE)"' in integration
+    assert "--frozen" in integration
+    assert "--group" not in integration
+    assert "-m integration" in integration
+    assert all(path in integration for path in expected_files)
+    assert integration.count("tests/integration/test_") == len(expected_files)
+    assert "test_stage3_" not in integration
+
+
+def test_stage2_integration_make_invokes_one_exact_locked_pytest_command(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "fake bin"
+    fake_bin.mkdir()
+    invocation_log = tmp_path / "uv invocations.jsonl"
+    environment_file = tmp_path / "configuration with spaces.env"
+    environment_file.write_text("", encoding="utf-8")
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "record = {\n"
+        '    "opt_in": os.environ.get("ATLASRAG_RUN_INTEGRATION"),\n'
+        '    "argv": sys.argv[1:],\n'
+        "}\n"
+        'with open(os.environ["STAGE3_UV_INVOCATION_LOG"], "a", encoding="utf-8") '
+        "as destination:\n"
+        '    destination.write(json.dumps(record, separators=(",", ":")))\n'
+        '    destination.write("\\n")\n',
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "PATH": f"{fake_bin}:{environment['PATH']}",
+            "ATLASRAG_ENV_FILE": str(environment_file),
+            "STAGE3_UV_INVOCATION_LOG": str(invocation_log),
+        }
+    )
+
+    completed = subprocess.run(
+        ("make", "test-integration"),
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    records = [
+        json.loads(line)
+        for line in invocation_log.read_text(encoding="utf-8").splitlines()
+    ]
+    assert records == [
+        {
+            "opt_in": "1",
+            "argv": [
+                "run",
+                "--env-file",
+                str(environment_file),
+                "--frozen",
+                "pytest",
+                "tests/integration/test_compose.py",
+                "tests/integration/test_milvus.py",
+                "tests/integration/test_postgres.py",
+                "tests/integration/test_redis.py",
+                "-m",
+                "integration",
+            ],
+        }
+    ]
 
 
 def test_stage3_verify_has_fail_safe_postgres_only_cleanup() -> None:

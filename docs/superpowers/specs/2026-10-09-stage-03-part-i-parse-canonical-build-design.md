@@ -693,8 +693,16 @@ source hash changed        -> SourceMutationError / discard route
 ```
 
 Corrupt user documents are represented by a failed parse business result when
-the provider can classify them. Unexpected exceptions propagate. Providers do
-not catch `Exception` and return empty successful output.
+the provider can classify them. Unclassified provider `Exception` instances
+propagate as the fixed, caller-safe `ProviderResponseError`; vendor exception
+types, messages, paths, payloads, and exception chains do not cross the adapter
+boundary. AtlasRAG canonical validation failures retain the frozen
+`InvariantViolationError` type. Cancellation and other non-`Exception`
+`BaseException` control signals are not caught, including when exposed as an
+input-rejection cause. Provider exception classification metadata is itself
+untrusted: MinerU error codes are accepted only as exact strings and malformed
+access fails closed to `ProviderResponseError`. No exception is converted into
+empty successful output, `None`, or an automatic business `FAILED` state.
 
 ## 17. Test and CI design
 

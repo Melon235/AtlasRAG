@@ -10,6 +10,7 @@ from atlasrag.domain.enums import SourceType
 from atlasrag.domain.errors import (
     DependencyTimeoutError,
     DependencyUnavailableError,
+    InvariantViolationError,
     ProviderResponseError,
 )
 from atlasrag.domain.ingestion.document import DocumentContainer
@@ -78,16 +79,36 @@ def _load_mineru_sdk() -> _MinerUSDK:
 
 
 def _provider_payload(result: object) -> object:
+    failure: ProviderResponseError | None = None
     try:
         to_dict = getattr(result, "to_dict")
-    except AttributeError:
-        raise ProviderResponseError from None
-    if not callable(to_dict):
-        raise ProviderResponseError
-    try:
+        if not callable(to_dict):
+            raise TypeError
         return to_dict(skip_defaults=False)
-    except (AttributeError, TypeError, ValueError):
-        raise ProviderResponseError from None
+    except Exception:
+        failure = ProviderResponseError()
+    raise failure
+
+
+def _translate_mineru_failure(
+    error: Exception,
+    provider_error_type: type[Exception],
+) -> DependencyTimeoutError | DependencyUnavailableError | ProviderResponseError:
+    if isinstance(error, TimeoutError):
+        return DependencyTimeoutError()
+    if isinstance(error, (ImportError, ModuleNotFoundError)):
+        return DependencyUnavailableError()
+    try:
+        is_provider_error = isinstance(error, provider_error_type)
+        code = getattr(error, "code", None) if is_provider_error else None
+    except Exception:
+        return ProviderResponseError()
+    if type(code) is str:
+        if code in _TIMEOUT_CODES:
+            return DependencyTimeoutError()
+        if code in _UNAVAILABLE_CODES:
+            return DependencyUnavailableError()
+    return ProviderResponseError()
 
 
 class MinerUParser:
@@ -104,11 +125,22 @@ class MinerUParser:
             allowed_source_types=(SourceType.PDF,),
         )
         path = resolve_source_target(source)
+        load_failure: DependencyUnavailableError | ProviderResponseError | None = None
         try:
             sdk = _load_mineru_sdk()
         except (ImportError, ModuleNotFoundError):
-            raise DependencyUnavailableError from None
+            load_failure = DependencyUnavailableError()
+        except Exception:
+            load_failure = ProviderResponseError()
+        if load_failure is not None:
+            raise load_failure
 
+        parse_failure: (
+            DependencyTimeoutError
+            | DependencyUnavailableError
+            | ProviderResponseError
+            | None
+        ) = None
         try:
             # MinerU 4.0.11 flash starts its own PDF render processes. Running
             # that process lifecycle inside a Python worker thread leaves its
@@ -120,19 +152,21 @@ class MinerUParser:
                 tier="flash",
                 page_range="",
             )
-        except TimeoutError:
-            raise DependencyTimeoutError from None
-        except (ImportError, ModuleNotFoundError):
-            raise DependencyUnavailableError from None
-        except sdk.error_type as error:
-            code = getattr(error, "code", None)
-            if code in _TIMEOUT_CODES:
-                raise DependencyTimeoutError from None
-            if code in _UNAVAILABLE_CODES:
-                raise DependencyUnavailableError from None
-            raise
+        except Exception as error:
+            parse_failure = _translate_mineru_failure(error, sdk.error_type)
+        if parse_failure is not None:
+            raise parse_failure
 
         payload = _provider_payload(result)
         if not isinstance(payload, dict):
             raise ProviderResponseError
-        return normalize_mineru_output(payload, source, context)
+        normalization_failure: (
+            InvariantViolationError | ProviderResponseError | None
+        ) = None
+        try:
+            return normalize_mineru_output(payload, source, context)
+        except InvariantViolationError:
+            normalization_failure = InvariantViolationError()
+        except Exception:
+            normalization_failure = ProviderResponseError()
+        raise normalization_failure

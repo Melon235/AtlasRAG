@@ -37,6 +37,20 @@ def test_setup_uv_uses_resolvable_immutable_release() -> None:
     assert "astral-sh/setup-uv@v10" not in workflow
 
 
+def test_regular_ci_pins_every_action_to_an_immutable_release() -> None:
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    assert workflow.count(CHECKOUT_REFERENCE) == 1
+    assert workflow.count(SETUP_PYTHON_REFERENCE) == 1
+    assert workflow.count(SETUP_UV_REFERENCE) == 1
+    for floating_reference in (
+        "actions/checkout@v",
+        "actions/setup-python@v",
+        "astral-sh/setup-uv@v",
+    ):
+        assert floating_reference not in workflow
+
+
 def test_regular_ci_remains_secret_free_cpu_only_and_service_free() -> None:
     workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 

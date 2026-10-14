@@ -57,7 +57,12 @@ migration-check:
 	uv run --env-file "$(ATLASRAG_ENV_FILE)" --frozen python scripts/check_migration.py
 
 test-integration:
-	ATLASRAG_RUN_INTEGRATION=1 uv run --env-file "$(ATLASRAG_ENV_FILE)" --frozen pytest -m integration
+	ATLASRAG_RUN_INTEGRATION=1 uv run --env-file "$(ATLASRAG_ENV_FILE)" --frozen pytest \
+		tests/integration/test_compose.py \
+		tests/integration/test_milvus.py \
+		tests/integration/test_postgres.py \
+		tests/integration/test_redis.py \
+		-m integration
 
 stage2-verify:
 	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage2_verify.sh

@@ -9,6 +9,7 @@ import re
 import stat
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn, Protocol
 from xml.etree import ElementTree
@@ -20,6 +21,7 @@ from atlasrag.domain.enums import SourceType
 from atlasrag.domain.errors import (
     DependencyTimeoutError,
     DependencyUnavailableError,
+    InvariantViolationError,
     ProviderResponseError,
 )
 from atlasrag.domain.evidence import SourceAnchor
@@ -108,6 +110,22 @@ class _DoclingSourceFailure(Exception):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+class _DoclingExecutionFailure(StrEnum):
+    """Safe internal outcomes for provider exceptions raised in the worker."""
+
+    TIMEOUT = "TIMEOUT"
+    UNAVAILABLE = "UNAVAILABLE"
+    INVARIANT_VIOLATION = "INVARIANT_VIOLATION"
+    INVALID_RESPONSE = "INVALID_RESPONSE"
+
+
+@dataclass(frozen=True, slots=True)
+class _DoclingSourceFailureResult:
+    """Carry only one stable business code out of the provider worker."""
+
+    code: str
 
 
 def _invalid() -> NoReturn:
@@ -227,7 +245,9 @@ def _raise_input_rejection(
         raise _DoclingSourceFailure("INVALID_OFFICE_SOURCE")
     if isinstance(cause, security_error_type):
         raise _DoclingSourceFailure("UNSAFE_OFFICE_SOURCE")
-    raise cause
+    if not isinstance(cause, Exception):
+        raise cause
+    raise ProviderResponseError
 
 
 def _unsafe_archive_member(name: str) -> bool:
@@ -1217,32 +1237,56 @@ class DoclingParser:
             allowed_source_types=(SourceType.DOCX, SourceType.XLSX),
         )
         path = resolve_source_target(source)
+        load_failure: DependencyUnavailableError | ProviderResponseError | None = None
         try:
             sdk = _load_docling_sdk()
         except ImportError:
-            raise DependencyUnavailableError from None
+            load_failure = DependencyUnavailableError()
+        except Exception:
+            load_failure = ProviderResponseError()
+        if load_failure is not None:
+            raise load_failure
 
-        def convert_and_normalize() -> DocumentContainer:
-            document = sdk.convert(path, source.source_type)
-            return _normalize_docling_document(
-                document,
-                source,
-                context,
-                parser_version=sdk.version,
-                included_content_layers=sdk.content_layers,
-            )
+        def convert_and_normalize() -> (
+            DocumentContainer | _DoclingExecutionFailure | _DoclingSourceFailureResult
+        ):
+            try:
+                document = sdk.convert(path, source.source_type)
+                return _normalize_docling_document(
+                    document,
+                    source,
+                    context,
+                    parser_version=sdk.version,
+                    included_content_layers=sdk.content_layers,
+                )
+            except TimeoutError:
+                return _DoclingExecutionFailure.TIMEOUT
+            except ImportError:
+                return _DoclingExecutionFailure.UNAVAILABLE
+            except _DoclingSourceFailure as failure:
+                return _DoclingSourceFailureResult(failure.code)
+            except InvariantViolationError:
+                return _DoclingExecutionFailure.INVARIANT_VIOLATION
+            except Exception:
+                return _DoclingExecutionFailure.INVALID_RESPONSE
 
-        try:
-            return await asyncio.to_thread(convert_and_normalize)
-        except TimeoutError:
-            raise DependencyTimeoutError from None
-        except ImportError:
-            raise DependencyUnavailableError from None
-        except _DoclingSourceFailure as failure:
-            return failed_document(
-                source,
-                context,
-                parser_name="docling",
-                parser_version=sdk.version,
-                failure_code=failure.code,
-            )
+        outcome = await asyncio.to_thread(convert_and_normalize)
+        if isinstance(outcome, DocumentContainer):
+            return outcome
+        if outcome is _DoclingExecutionFailure.TIMEOUT:
+            raise DependencyTimeoutError
+        if outcome is _DoclingExecutionFailure.UNAVAILABLE:
+            raise DependencyUnavailableError
+        if outcome is _DoclingExecutionFailure.INVARIANT_VIOLATION:
+            raise InvariantViolationError
+        if outcome is _DoclingExecutionFailure.INVALID_RESPONSE:
+            raise ProviderResponseError
+        if not isinstance(outcome, _DoclingSourceFailureResult):
+            raise ProviderResponseError
+        return failed_document(
+            source,
+            context,
+            parser_name="docling",
+            parser_version=sdk.version,
+            failure_code=outcome.code,
+        )

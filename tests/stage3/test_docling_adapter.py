@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import importlib
 import sys
@@ -687,21 +688,36 @@ async def test_document_resource_limits_fail_closed(
         await docling_adapter.DoclingParser().parse(source, context)
 
 
-def test_input_rejection_preserves_unknown_backend_failure() -> None:
+def test_input_rejection_safely_normalizes_unknown_backend_failure() -> None:
     class KnownLoadError(Exception):
         pass
 
     class KnownSecurityError(Exception):
         pass
 
-    defect = RuntimeError("unexpected InputDocument defect")
+    defect = RuntimeError("unexpected InputDocument defect at /private/source.docx")
 
-    with pytest.raises(RuntimeError, match="unexpected InputDocument defect"):
+    with pytest.raises(ProviderResponseError) as raised:
         docling_adapter._raise_input_rejection(
             defect,
             document_load_error_type=KnownLoadError,
             security_error_type=KnownSecurityError,
         )
+    assert str(raised.value) == "A provider returned an invalid response."
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+    class BuildCancellation(BaseException):
+        pass
+
+    cancellation = BuildCancellation()
+    with pytest.raises(BuildCancellation) as raised_cancellation:
+        docling_adapter._raise_input_rejection(
+            cancellation,
+            document_load_error_type=KnownLoadError,
+            security_error_type=KnownSecurityError,
+        )
+    assert raised_cancellation.value is cancellation
 
 
 @pytest.mark.parametrize(
@@ -1095,13 +1111,21 @@ async def test_malformed_or_unsupported_docling_shape_fails_closed(
 
 
 @pytest.mark.asyncio
-async def test_unexpected_provider_error_propagates(
+async def test_unexpected_provider_error_is_safe_and_cancellation_propagates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source, context = prepared_source(tmp_path, "simple.docx")
 
+    def broken_loader() -> object:
+        raise RuntimeError(f"SDK setup exposed {source.absolute_path}")
+
+    monkeypatch.setattr(docling_adapter, "_load_docling_sdk", broken_loader)
+    with pytest.raises(ProviderResponseError) as raised:
+        await docling_adapter.DoclingParser().parse(source, context)
+    assert raised.value.__context__ is None
+
     def convert(*_args: object) -> object:
-        raise RuntimeError("unexpected Docling defect")
+        raise RuntimeError(f"unexpected Docling defect at {source.absolute_path}")
 
     monkeypatch.setattr(
         docling_adapter,
@@ -1109,12 +1133,32 @@ async def test_unexpected_provider_error_propagates(
         lambda: fake_sdk(convert),
     )
 
-    with pytest.raises(RuntimeError, match="unexpected Docling defect"):
+    with pytest.raises(ProviderResponseError) as raised:
+        await docling_adapter.DoclingParser().parse(source, context)
+    assert str(raised.value) == "A provider returned an invalid response."
+    assert raised.value.args == ()
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert str(source.absolute_path) not in str(raised.value)
+
+    class BuildCancellation(BaseException):
+        pass
+
+    async def cancelled_to_thread(*_args: object, **_kwargs: object) -> object:
+        raise BuildCancellation
+
+    monkeypatch.setattr(
+        docling_adapter,
+        "_load_docling_sdk",
+        lambda: fake_sdk(lambda *_args: fake_docx_document()),
+    )
+    monkeypatch.setattr(asyncio, "to_thread", cancelled_to_thread)
+    with pytest.raises(BuildCancellation):
         await docling_adapter.DoclingParser().parse(source, context)
 
 
 @pytest.mark.asyncio
-async def test_unexpected_iteration_value_error_propagates(
+async def test_unexpected_iteration_value_error_is_safely_normalized(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source, context = prepared_source(tmp_path, "simple.docx")
@@ -1129,8 +1173,28 @@ async def test_unexpected_iteration_value_error_propagates(
         lambda: fake_sdk(lambda *_args: DefectiveDocument()),
     )
 
-    with pytest.raises(ValueError, match="unexpected iterator defect"):
+    with pytest.raises(ProviderResponseError) as raised:
         await docling_adapter.DoclingParser().parse(source, context)
+    assert str(raised.value) == "A provider returned an invalid response."
+    assert raised.value.__context__ is None
+
+    def invalid_canonical_output(*_args: object, **_kwargs: object) -> object:
+        raise InvariantViolationError
+
+    monkeypatch.setattr(
+        docling_adapter,
+        "_normalize_docling_document",
+        invalid_canonical_output,
+    )
+    monkeypatch.setattr(
+        docling_adapter,
+        "_load_docling_sdk",
+        lambda: fake_sdk(lambda *_args: fake_docx_document()),
+    )
+    with pytest.raises(InvariantViolationError) as raised_invariant:
+        await docling_adapter.DoclingParser().parse(source, context)
+    assert str(raised_invariant.value) == "An internal invariant was violated."
+    assert raised_invariant.value.__context__ is None
 
 
 @pytest.mark.asyncio
