@@ -15,16 +15,17 @@ green remote CI result.
 
 ## Current stage
 
-- **Stage:** Stage 2 — Infrastructure & Persistence
-- **Status:** Stage 2 COMPLETE
+- **Stage:** Stage 3 — Part I: Parse & Canonical Build
+- **Status:** Stage 3 COMPLETE — pull request #4 open and unmerged
 - **Report:**
-  [stage-02-infrastructure-persistence.md](stage-02-infrastructure-persistence.md)
-- **Next:** Stage 3 — Part I: Parse & Canonical Build — NOT STARTED
+  [stage-03-part-i-parse-canonical-build.md](stage-03-part-i-parse-canonical-build.md)
+- **Next:** Stage 4 — Part I: Index & Publish — NOT STARTED
 
-Stage 2 is limited to local infrastructure, canonical persistence records and
-repositories, technical cache/index providers, readiness/migration tooling,
-and deterministic integration verification. Its offline and real-service
-local gates are green, the Stage branch is published, and both remote
-workflows are green. It has not been merged into `main`. No parser, chunk
-builder, embedding pipeline, business graph, RuntimeGate, benchmark, or other
-Stage 3+ behavior has started.
+Stage 3 implements secure source identity, deterministic parser normalization,
+canonical elements and Parent/Child/Table chunks, typed persistence mapping,
+and atomic candidate boundaries through `CHUNKED`. Its final local offline,
+Stage 2 service, Stage 3 PostgreSQL/Docling, and real MinerU gates are green.
+The branch is published normally, all push- and PR-triggered remote gates are
+green, and pull request #4 remains deliberately unmerged. No embedding, Milvus
+write, publication, build graph, directory sync, Part II, or benchmark behavior
+has started.

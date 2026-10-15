@@ -207,3 +207,92 @@ def test_uow_commit_and_non_call_commit_references_are_allowed(tmp_path: Path) -
     result = run_checker(tmp_path)
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("layer", "source", "prohibited_module", "boundary_name"),
+    [
+        (
+            "domain/ingestion",
+            "import docling\n",
+            "docling",
+            "ingestion domain",
+        ),
+        (
+            "domain/ingestion",
+            "from mineru import parse\n",
+            "mineru",
+            "ingestion domain",
+        ),
+        (
+            "providers/parsing",
+            "from atlasrag.repositories import postgres\n",
+            "atlasrag.repositories",
+            "parsing provider",
+        ),
+        (
+            "providers/parsing",
+            "from atlasrag.services.ingestion import identity\n",
+            "atlasrag.services",
+            "parsing provider",
+        ),
+        (
+            "services/ingestion",
+            "from atlasrag.providers.index import milvus\n",
+            "atlasrag.providers.index",
+            "ingestion service",
+        ),
+        (
+            "services/ingestion",
+            "from atlasrag.providers.cache import redis\n",
+            "atlasrag.providers.cache",
+            "ingestion service",
+        ),
+        (
+            "services/ingestion",
+            "from atlasrag.graphs import state\n",
+            "atlasrag.graphs",
+            "ingestion service",
+        ),
+    ],
+)
+def test_stage3_layers_reject_forbidden_dependencies(
+    tmp_path: Path,
+    layer: str,
+    source: str,
+    prohibited_module: str,
+    boundary_name: str,
+) -> None:
+    write_layer_module(tmp_path, layer, source)
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode != 0
+    assert f"{boundary_name} may not import '{prohibited_module}'" in result.stderr
+
+
+@pytest.mark.parametrize("layer", ["providers/cache", "services/ingestion"])
+@pytest.mark.parametrize("sdk", ["docling", "mineru"])
+def test_parser_sdks_are_confined_to_parsing_providers(
+    tmp_path: Path, layer: str, sdk: str
+) -> None:
+    write_layer_module(tmp_path, layer, f"import {sdk}\n")
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode != 0
+    assert f"parser SDK '{sdk}' is only allowed in parsing providers" in result.stderr
+
+
+def test_lazy_parser_sdk_import_is_allowed_in_parsing_provider(
+    tmp_path: Path,
+) -> None:
+    write_layer_module(
+        tmp_path,
+        "providers/parsing",
+        "def load_sdk():\n    import docling\n    return docling\n",
+    )
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr

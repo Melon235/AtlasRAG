@@ -1,0 +1,4 @@
+AtlasRAG keeps canonical text.
+第二行保留 Unicode。
+
+Second paragraph keeps punctuation: Yes!

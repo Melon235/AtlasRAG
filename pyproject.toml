@@ -21,6 +21,12 @@ dev = [
     "pytest-asyncio>=1.4.0,<2.0.0",
     "ruff>=0.16.4,<0.17.0",
 ]
+parsing-docling = [
+    "docling-slim[format-office]>=2.135.0,<2.136.0",
+]
+parsing-mineru = [
+    "mineru>=4.0.11,<4.1.0",
+]
 
 [build-system]
 requires = ["setuptools>=83.0.0,<84.0.0"]

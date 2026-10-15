@@ -34,3 +34,18 @@ def test_example_environment_uses_dedicated_redis_test_database() -> None:
 
     assert assignments["ATLASRAG_REDIS_URL"].endswith("/0")
     assert assignments["ATLASRAG_TEST_REDIS_URL"].endswith("/15")
+
+
+def test_real_mineru_gate_is_integration_only_and_default_verification_is_not() -> None:
+    mineru_gate = (
+        REPOSITORY_ROOT / "tests" / "integration" / "test_stage3_mineru_smoke.py"
+    ).read_text(encoding="utf-8")
+    makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "pytest.mark.integration" in mineru_gate
+    assert (
+        "parsing-mineru"
+        not in makefile.split("verify:", maxsplit=1)[1].split("infra-up:", maxsplit=1)[
+            0
+        ]
+    )

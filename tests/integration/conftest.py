@@ -7,7 +7,7 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from ipaddress import ip_address
 from pathlib import Path
@@ -17,11 +17,13 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from psycopg import AsyncConnection, sql
+from psycopg import Error as PsycopgError
 from redis.asyncio import Redis
 from sqlalchemy.engine import make_url
 
 from atlasrag.providers.cache.redis import RedisCacheProvider
 from atlasrag.repositories.postgres.pool import PostgresPool
+from atlasrag.repositories.postgres.uow import PostgresUnitOfWork
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_CONFIG = REPOSITORY_ROOT / "alembic.ini"
@@ -197,14 +199,25 @@ async def _execute_admin_statement(
         )
         await connection.execute(statement)
     except BaseException as error:
-        primary = error
+        primary = _credential_free_admin_error(error)
 
     cleanup_failures: list[tuple[str, BaseException]] = []
     if connection is not None:
         close_error = await _capture_cleanup(connection.close())
         if close_error is not None:
-            cleanup_failures.append(("administrator connection close", close_error))
+            cleanup_failures.append(
+                (
+                    "administrator connection close",
+                    _credential_free_admin_error(close_error),
+                )
+            )
     _raise_resource_outcome(primary, cleanup_failures)
+
+
+def _credential_free_admin_error(error: BaseException) -> BaseException:
+    if isinstance(error, PsycopgError):
+        return RuntimeError("PostgreSQL integration administrator operation failed")
+    return error
 
 
 async def _create_database(dsn: str, database_name: str) -> None:
@@ -536,6 +549,14 @@ async def postgres_pool(postgres_dsn: str) -> AsyncIterator[PostgresPool]:
     )
     async with _managed_postgres_pool(pool) as managed_pool:
         yield managed_pool
+
+
+@pytest.fixture
+def postgres_uow_factory(
+    postgres_pool: PostgresPool,
+) -> Callable[[], PostgresUnitOfWork]:
+    """Construct one fresh caller-owned PostgreSQL UoW per service call."""
+    return lambda: PostgresUnitOfWork(postgres_pool)
 
 
 @pytest_asyncio.fixture
