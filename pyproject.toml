@@ -11,6 +11,7 @@ dependencies = [
     "psycopg[binary,pool]>=3.3.6,<4.0.0",
     "redis>=8.1.0,<9.0.0",
     "pymilvus>=2.6.16,<2.7.0",
+    "langgraph==1.2.15",
 ]
 
 [dependency-groups]
@@ -26,6 +27,21 @@ parsing-docling = [
 ]
 parsing-mineru = [
     "mineru>=4.0.11,<4.1.0",
+]
+indexing-embedding = [
+    "torch==2.13.0; sys_platform == 'linux' or sys_platform == 'win32'",
+    "torch==2.14.1; sys_platform == 'darwin'",
+    "transformers==5.19.0",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [build-system]

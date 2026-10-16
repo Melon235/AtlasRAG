@@ -61,13 +61,14 @@ FORBIDDEN_IMPORT_PREFIXES = (
 )
 EXPECTED_DECLARED_DISTRIBUTIONS = {
     "project.dependencies": frozenset(
-        {"pydantic", "alembic", "psycopg", "redis", "pymilvus"}
+        {"pydantic", "alembic", "psycopg", "redis", "pymilvus", "langgraph"}
     ),
     "dependency-groups.dev": frozenset(
         {"mypy", "pytest", "pytest-cov", "pytest-asyncio", "ruff"}
     ),
     "dependency-groups.parsing-docling": frozenset({"docling-slim"}),
     "dependency-groups.parsing-mineru": frozenset({"mineru"}),
+    "dependency-groups.indexing-embedding": frozenset({"torch", "transformers"}),
     "build-system.requires": frozenset({"setuptools"}),
 }
 EXPECTED_LOCKED_DISTRIBUTIONS = frozenset(
@@ -233,6 +234,50 @@ EXPECTED_LOCKED_DISTRIBUTIONS = frozenset(
         "xlsxwriter",
         "ziafont",
         "ziamath",
+    }
+)
+# Approved Stage 4 LangGraph transitives and optional CUDA 12.6 runtime.
+# Keep this explicit: unrelated locked distributions must still fail closed.
+EXPECTED_LOCKED_DISTRIBUTIONS |= frozenset(
+    {
+        "cuda-bindings",
+        "cuda-pathfinder",
+        "cuda-toolkit",
+        "httpcore2",
+        "httpx2",
+        "jsonpatch",
+        "jsonpointer",
+        "langchain-core",
+        "langchain-protocol",
+        "langgraph",
+        "langgraph-checkpoint",
+        "langgraph-prebuilt",
+        "langgraph-sdk",
+        "langsmith",
+        "nvidia-cublas-cu12",
+        "nvidia-cuda-cupti-cu12",
+        "nvidia-cuda-nvrtc-cu12",
+        "nvidia-cuda-runtime-cu12",
+        "nvidia-cudnn-cu12",
+        "nvidia-cufft-cu12",
+        "nvidia-cufile-cu12",
+        "nvidia-curand-cu12",
+        "nvidia-cusolver-cu12",
+        "nvidia-cusparse-cu12",
+        "nvidia-cusparselt-cu12",
+        "nvidia-nccl-cu12",
+        "nvidia-nvjitlink-cu12",
+        "nvidia-nvshmem-cu12",
+        "nvidia-nvtx-cu12",
+        "ormsgpack",
+        "requests-toolbelt",
+        "tenacity",
+        "triton",
+        "truststore",
+        "uuid-utils",
+        "websockets",
+        "xxhash",
+        "zstandard",
     }
 )
 
@@ -1043,3 +1088,36 @@ def test_dependency_manifest_rejects_missing_locked_distribution(
     )
 
     assert violations == {"uv.lock": ["missing colorama"]}
+
+
+def test_dependency_manifest_rejects_unknown_locked_distribution(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "uv.lock"
+    lock_path.write_text(
+        (REPOSITORY_ROOT / "uv.lock").read_text(encoding="utf-8")
+        + '\n[[package]]\nname = "unapproved-runtime"\nversion = "1.0.0"\n',
+        encoding="utf-8",
+    )
+    violations = _dependency_manifest_violations(
+        REPOSITORY_ROOT / "pyproject.toml", lock_path
+    )
+    assert violations == {"uv.lock": ["unexpected unapproved-runtime"]}
+
+
+@pytest.mark.parametrize("dependency", ["langsmith", "unapproved-runtime"])
+def test_dependency_manifest_rejects_unapproved_direct_runtime(
+    tmp_path: Path, dependency: str
+) -> None:
+    source = (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    pyproject_path = tmp_path / "pyproject.toml"
+    pyproject_path.write_text(
+        source.replace("dependencies = [", f'dependencies = ["{dependency}",', 1),
+        encoding="utf-8",
+    )
+    violations = _dependency_manifest_violations(
+        pyproject_path, REPOSITORY_ROOT / "uv.lock"
+    )
+    assert violations == {
+        "pyproject.toml": [f"project.dependencies: unexpected {dependency}"]
+    }
