@@ -45,6 +45,37 @@ def write_layer_module(
     return module
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "domain/indexing/models.py",
+        "services/indexing/representation.py",
+    ],
+)
+@pytest.mark.parametrize(
+    "module",
+    [
+        "atlasrag.providers",
+        "atlasrag.repositories",
+        "atlasrag.graphs",
+        "torch",
+        "transformers",
+        "pymilvus",
+        "httpx",
+        "socket",
+    ],
+)
+def test_stage4_pure_indexing_boundaries_reject_clients_and_orchestration(
+    tmp_path: Path, relative_path: str, module: str
+) -> None:
+    path = tmp_path / "src" / "atlasrag" / relative_path
+    path.parent.mkdir(parents=True)
+    path.write_text(f"import {module}\n", encoding="utf-8")
+    result = run_checker(tmp_path)
+    assert result.returncode != 0
+    assert f"may not import '{module}'" in result.stderr
+
+
 def test_real_repository_respects_import_boundaries() -> None:
     result = run_checker(REPOSITORY_ROOT)
 

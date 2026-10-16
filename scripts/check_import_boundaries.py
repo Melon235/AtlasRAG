@@ -29,6 +29,22 @@ LAYER_FORBIDDEN_PREFIXES = {
     ),
 }
 PARSER_SDK_PREFIXES = ("docling", "mineru")
+INDEXING_PURE_FORBIDDEN_PREFIXES = (
+    "atlasrag.graphs",
+    "atlasrag.providers",
+    "atlasrag.repositories",
+    "torch",
+    "transformers",
+    "pymilvus",
+    "psycopg",
+    "redis",
+    "httpx",
+    "requests",
+    "aiohttp",
+    "socket",
+    "urllib.request",
+    "http.client",
+)
 STAGE3_BOUNDARY_FORBIDDEN_PREFIXES = {
     ("domain", "ingestion"): (
         "atlasrag.graphs",
@@ -160,6 +176,33 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             targets = _import_targets(node, path, root)
+            pure_indexing = (
+                relative_path.startswith("src/atlasrag/domain/indexing/")
+                or relative_path == "src/atlasrag/services/indexing/representation.py"
+            )
+            if pure_indexing:
+                forbidden_prefix = next(
+                    (
+                        prefix
+                        for target in targets
+                        if (
+                            prefix := _matching_prefix(
+                                INDEXING_PURE_FORBIDDEN_PREFIXES, target
+                            )
+                        )
+                        is not None
+                    ),
+                    None,
+                )
+                if forbidden_prefix is not None:
+                    diagnostics.append(
+                        Diagnostic(
+                            relative_path,
+                            node.lineno,
+                            f"pure indexing boundary may not import '{forbidden_prefix}'",
+                        )
+                    )
+                    continue
             if stage3_boundary is not None:
                 forbidden_prefix = next(
                     (

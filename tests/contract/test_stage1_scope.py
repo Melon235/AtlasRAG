@@ -377,6 +377,15 @@ STAGE3_PRODUCTION_FILES = frozenset(
         "services/ingestion/validation.py",
     }
 )
+STAGE4_PRODUCTION_FILES = frozenset(
+    {
+        "domain/indexing/__init__.py",
+        "domain/indexing/failures.py",
+        "domain/indexing/models.py",
+        "services/indexing/__init__.py",
+        "services/indexing/representation.py",
+    }
+)
 STAGE2_DRIVER_LAYERS = {
     "psycopg": "repositories/postgres/",
     "psycopg_pool": "repositories/postgres/",
@@ -555,7 +564,9 @@ def _production_manifest_violations(production_root: Path) -> tuple[str, ...]:
         for path in production_root.rglob("*.py")
     )
     violations: list[str] = []
-    allowed_files = EXPECTED_PRODUCTION_FILES | STAGE3_PRODUCTION_FILES
+    allowed_files = (
+        EXPECTED_PRODUCTION_FILES | STAGE3_PRODUCTION_FILES | STAGE4_PRODUCTION_FILES
+    )
     if unexpected := sorted(actual_files - allowed_files):
         violations.append(f"unexpected production files: {unexpected}")
     if missing := sorted(EXPECTED_PRODUCTION_FILES - actual_files):
@@ -685,7 +696,9 @@ def _stub_package_violations(production_root: Path) -> tuple[str, ...]:
         }
         allowed_files = {"__init__.py"} | {
             path.removeprefix(f"{package_name}/")
-            for path in STAGE2_PRODUCTION_FILES | STAGE3_PRODUCTION_FILES
+            for path in STAGE2_PRODUCTION_FILES
+            | STAGE3_PRODUCTION_FILES
+            | STAGE4_PRODUCTION_FILES
             if path.startswith(f"{package_name}/")
         }
         if unexpected := actual_files - allowed_files:
@@ -963,6 +976,29 @@ def test_production_python_manifest_rejects_new_adapter_module(tmp_path: Path) -
     violations = _production_manifest_violations(production_root)
 
     assert violations == ("unexpected production files: ['adapters/search.py']",)
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "domain/indexing/unapproved.py",
+        "services/indexing/unapproved.py",
+    ],
+)
+def test_stage4_manifest_admits_only_explicit_files(
+    tmp_path: Path, relative_path: str
+) -> None:
+    production_root = tmp_path / "atlasrag"
+    for allowed_path in EXPECTED_PRODUCTION_FILES:
+        path = production_root / allowed_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('"""Test module."""\n', encoding="utf-8")
+    unexpected_path = production_root / relative_path
+    unexpected_path.parent.mkdir(parents=True, exist_ok=True)
+    unexpected_path.write_text('"""Unapproved indexing module."""\n', encoding="utf-8")
+    assert _production_manifest_violations(production_root) == (
+        f"unexpected production files: ['{relative_path}']",
+    )
 
 
 def _write_stub_initializers(production_root: Path) -> None:

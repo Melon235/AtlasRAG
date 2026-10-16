@@ -2,10 +2,11 @@
 
 ## Status
 
-**IN PROGRESS — T0 complete; T1 next. Stage 4 is not complete.**
+**IN PROGRESS — T0 committed; T1 implementation and review gates passed.
+Stage 4 is not complete.**
 
-T1–T11 have not started. No Stage 4 business implementation, real Qwen smoke,
-publish verification, final commit/push, or remote Stage 4 CI success is claimed.
+T2–T11 have not started. No real Qwen smoke, publish verification, final
+commit/push, or remote Stage 4 CI success is claimed.
 
 ## Authority and approved decisions
 
@@ -138,14 +139,118 @@ tests passed (0.23s). No production code or direct LangSmith import was added.
 The quality reviewer checked the correction and approved T0 with no
 outstanding findings. The primary agent's final full gate after that change
 passed: **2280 passed, 47 deselected in 77.27s**, mypy 142 files, all format,
-lint, and architecture gates passed. T1 has not begun.
+lint, and architecture gates passed. T0 was committed as `d9d6703`
+(`chore(stage4): establish approved scope and locked dependencies`).
+
+## T1 implementation and verification
+
+The internal immutable contracts and pure `RepresentationBuilder` are
+implemented. The closed baseline profile uses strict integer `schema_version=1`,
+`strategy_name="raw-child-table-slice"`, and
+`representation_version="representation-v1"`. The builder checks the configured
+representation version without changing the frozen pipeline fingerprint.
+
+Child dense/sparse text is exactly canonical raw content. Table text uses the
+unchanged Stage 3 renderer; sheet, row range, and source-element facts remain
+typed at `structured_metadata.provenance`, with canonical table source anchors
+preserved separately. No sheet label is invented in rendered text. Parent
+chunks are rejected. Text limits count UTF-8 bytes, admit the exact 65,535-byte
+boundary, and never truncate. The builder's explicit capacity failure uses
+`RepresentationInputLimitError`; ordinary validation/programming errors are
+not converted into business failures.
+
+Implementer-observed RED evidence: two missing-package collection errors;
+16 pure-layer import guard failures; two strict schema failures; four direct
+DTO byte-capacity failures; and one excessive configured-capacity failure.
+These were followed by implementation and passing focused tests. The new
+production manifest permits exactly five files and has negative tests for
+unapproved files in both new packages. The import checker adds prohibitions,
+not directory-wide exemptions.
+
+The primary agent independently ran `UV_OFFLINE=1 make verify` on the complete
+T1 working tree: **2372 passed, 47 deselected in 77.54s**. Ruff format checked
+169 files, lint passed, mypy checked 151 files, and import/artifact gates passed.
+`git diff --check` also passed. No model, tokenizer, database, or network service
+is used by T1. Independent spec review initially passed with 74 focused
+contract/representation tests and 111 guard tests; the subsequent quality
+review found the integration conflict below. The passing existing suite does
+not establish complete canonical-input coverage or Stage 4 completion.
+
+## T1 blocking review finding — source-backed whitespace Child
+
+On 2026-10-16 the quality reviewer found, and the primary agent independently
+reproduced, a conflict across frozen Stage 2/3 contracts:
+
+- The existing Stage 3 test
+  `test_long_source_whitespace_is_losslessly_covered_by_default_sized_children`
+  uses `"A" + " " * 4000 + "B"` with parent/child limits 8000/1500. The actual
+  chunker emits Child lengths **1500, 1500, 1002**; the middle Child is
+  nonempty, whitespace-only, and has valid typed source lineage. Concatenation
+  preserves the original source exactly. This is deliberate frozen behavior.
+- The new T1 `_index_text` validator calls `_nonblank`, so the representation
+  rejects that canonical Child for both `dense_text` and `sparse_text`.
+- The frozen Stage 2 `MilvusChunkRecord._content` also calls `_nonblank` and
+  rejects the same Child for `content` and `sparse_text`. Its existing contract
+  test explicitly rejects whitespace-only `sparse_text`.
+
+Changing only T1 cannot resolve the downstream contradiction. Dropping the
+Child, trimming/prefixing its text, or changing Stage 3 chunking would violate
+the approved lossless representation and exact-set requirements. Broadly
+catching the validation error as a business failure is not an approved fix.
+
+Implementation stopped under AGENTS rule 17 rather than changing the frozen
+contracts silently. The user subsequently explicitly approved the Stage 4
+amendment: index text changes from **nonblank** to **nonempty and
+whitespace-preserving**. Whitespace-only canonical text is allowed; empty
+strings, trimming, dropping whitespace Children, rechunking, and
+sentinel/substitution are prohibited. Stage 3 output, schema, chunk IDs and
+content hashes remain unchanged; there is no migration.
+
+The approved narrow change affects Stage 2 index `content`/`sparse_text` and
+matching Stage 4 text contracts only. Identifiers/file names remain nonblank;
+Unicode, NUL and byte-capacity protections remain in place. Required gates:
+cross-stage regression, real Qwen whitespace embedding, and real Milvus
+whitespace record plus exact-set verification. If real Milvus cannot represent
+the text, STOP / REPORT; neither DTO tests nor a fake provider substitutes for
+that evidence. Implementation has resumed. The T1 evidence below completes
+the cross-stage and early real Milvus admission gates, not the later Qwen or
+production-verifier gates.
+
+### Amended T1 evidence
+
+The implementer observed **14 failed, 120 passed** before the narrow validator
+changes, then **134 passed**. Cross-stage tests use the actual frozen Stage 3
+chunker and preserve all three Children through representation, transient
+record, and Milvus record construction, including the middle 1500 spaces.
+IDs, content hashes, source lineage, byte content, and concatenated source
+remain identical. The only pre-existing production modification is index
+`_content` admission; identifier/file-name and Unicode/NUL/size checks remain.
+The former whitespace-only rejection test explicitly evolves under the
+approved amendment and still rejects the empty string.
+
+The primary agent started a unique isolated local Milvus/etcd/MinIO project
+using the pinned images, without reusing existing service volumes. Real tests
+passed independently: **2 passed in 31.27s**. Both ASCII and mixed-Unicode
+canonical sources retain the whitespace-only Child. Strong reads match the
+entire expected projection, including IDs, count, duplicate absence, content,
+sparse text, parent/source metadata, and typed structural metadata. Fixtures
+clean up only their own UUID-named test collections. These tests use explicit
+test vectors and the existing write provider; they do not claim Qwen inference
+or the future production verification service has run.
+
+Independent spec and quality re-reviews both passed; each reran the 134 focused
+tests and found the previous conflict resolved without further issues. The
+primary agent's final full offline gate passed: **2392 passed, 49 deselected
+in 75.56s**, Ruff format 170 files, lint clean, mypy 152 files, and both
+architecture gates clean. No Stage 3 production files or migrations changed.
+T1 is ready for its planned commit; nothing has been pushed or merged.
 
 ## Task ledger
 
 | Task | Status |
 | --- | --- |
 | T0 approvals, isolated baseline, dependency/CUDA preflight | COMPLETE |
-| T1 contracts and representation | NOT STARTED |
+| T1 contracts and representation | VERIFIED — ready for commit |
 | T2 embedding protocol and Qwen | NOT STARTED |
 | T3 Milvus batch/projection capabilities | NOT STARTED |
 | T4 persisted candidate indexing | NOT STARTED |

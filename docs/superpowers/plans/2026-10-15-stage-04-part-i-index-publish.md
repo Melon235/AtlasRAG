@@ -12,7 +12,7 @@
 
 ## 1. 审阅结论与当前证据
 
-状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0 已验证并通过独立审阅，T1 下一步；尚未完成 Stage 4。**
+状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0 已提交；T1 已落实 whitespace amendment，通过离线全量、真实 Milvus 与两轮复审，准备提交；尚未完成 Stage 4。**
 
 批准限制：exact file/import/AST whitelist only，无 graph 目录通配豁免；Stage 1–3 frozen contracts 不变。LangSmith 仅允许锁定的传递 distribution，禁止直接集成/tracing/key/network requirement。ChunkInputLimitError 只用于确定性输入容量失败，不扩展 public ErrorCode，不改变 canonical chunk output/IDs。
 
@@ -53,6 +53,12 @@ A 已按上述限制批准；只能精确演进 guards。
 现有 `services/ingestion/chunking.py` 对“表格单行/单元格无法无损容纳”和内部算法错误都使用普通 `ValueError`。Stage 4 不能把所有 `ValueError` 都记为业务 FAILED，也不能依赖 exception message 字符串分类。
 
 建议新增 internal `ChunkInputLimitError(ValueError)`，仅替换已确定的用户输入容量失败 raise sites，保留原消息和 ValueError 兼容性；内部 source-map/contiguity/算法错误保持传播。不改 chunk 输出、ID、profile、路由、持久化 contract 或算法版本。新增回归证明错误精确分类且既有 canonical fixtures 完全不变。若不批准该补充，不能声称 oversized 输入的 CHUNK 业务路由已完整接通。
+
+### D. 用户已批准：whitespace-preserving index text amendment
+
+T1 质量审查发现 Stage 3 合法的 source-backed 纯空白 Child 被 Stage 2 index text 非空白约束拒绝。停止并报告后，用户明确批准将 index text 从 `nonblank` 改为 `nonempty + whitespace-preserving`：只修改 `MilvusChunkRecord` 的 content/sparse_text 和 Stage 4 对应文本字段；空字符串仍拒绝，identifier/file_name 等仍 nonblank，其余 Unicode/NUL/字节上限检查不变。Stage 3 output、chunk IDs/content hashes、schema 全不变，无 migration。禁止 trim/drop/rechunk/sentinel/substitution。
+
+追加硬门：T1 跨阶段回归及早期真实 Milvus record/strong-read exact-set；T2 真实 Qwen whitespace embedding；T5/T9 使用正式 verifier 的真实 Milvus whitespace exact-set 回归。若真实 Milvus 不能表达，STOP / REPORT，不做替代。
 
 ## 3. 建议采用的实现决策
 
@@ -168,7 +174,7 @@ PARSE/CHUNK 复用既有失败记录服务；四种 index failure 新增独立 r
 
 修改：`providers/index/milvus.py` 只加 technical capabilities；`services/ingestion/chunking.py` 只做 C 中批准的异常类型补充；`pyproject.toml` / `uv.lock`、`Makefile`、`.github/workflows/integration.yml`、`scripts/check_import_boundaries.py` 及对应测试只做 Stage 4 增量。A 中两个旧 scope test 文件须获批准后精确更新。
 
-不修改：migration、Stage 1 public DTO/State/fingerprint、Stage 2 Repository/UoW/schema、Stage 3 mapper/envelope/chunk output。任何必要变更超出上述清单先报告。
+不修改：migration、Stage 1 public DTO/State/fingerprint、Stage 2 Repository/UoW/schema、Stage 3 mapper/envelope/chunk output。Stage 2 index content/sparse_text admission 仅按已批准 D 做 nonempty 修订；其他必要变更超出上述清单先报告。
 
 ## 5. 按依赖顺序的 TDD 实施任务
 
@@ -188,10 +194,10 @@ PARSE/CHUNK 复用既有失败记录服务；四种 index failure 新增独立 r
 
 文件：domain/indexing、services/indexing/representation.py；测试 `tests/stage4/test_contracts.py`、`test_representation.py`。
 
-- [ ] 参数化测试 CHILD 原文完全相等、TABLE renderer/header/row/sheet 完整、Parent 拒绝、immutable nested metadata、未知字段/坏 revision/缺失 parent fail closed。
-- [ ] `uv run --frozen pytest tests/stage4/test_contracts.py tests/stage4/test_representation.py -q`，确认新增测试先 RED。
-- [ ] 实现明确 schema/version validators 与纯 builder；不 import tokenizer/model/provider SDK。
-- [ ] 同命令 GREEN；补容量边界按 UTF-8 bytes 而非字符计数、version 漂移被拒绝。提交 `feat(stage4): add typed retrieval representations`。
+- [x] 参数化测试 CHILD 原文完全相等、TABLE renderer/header/row/sheet 完整、Parent 拒绝、immutable nested metadata、未知字段/坏 revision/缺失 parent fail closed。
+- [x] `uv run --frozen pytest tests/stage4/test_contracts.py tests/stage4/test_representation.py -q`，新增测试先因包缺失 RED；schema/byte limit/import guard 后续边界均另有 RED。
+- [x] 实现明确 schema/version validators 与纯 builder；不 import tokenizer/model/provider SDK。主代理全量离线验证 2372 passed / 47 deselected（77.54s）；质量审查随后发现既有测试未覆盖的跨阶段 whitespace admission 冲突，不能据此标记 T1 完成。
+- [x] 同命令 GREEN；容量边界按 UTF-8 bytes、version 漂移拒绝；已批准 whitespace amendment 的跨阶段回归和真实 Milvus Strong projection 两例通过。最终主代理 full verify 2392 passed / 49 deselected（75.56s），规格/质量复审通过。提交信息 `feat(stage4): add typed retrieval representations`。
 
 ### T2 — Embedding protocol 与 Qwen provider
 
