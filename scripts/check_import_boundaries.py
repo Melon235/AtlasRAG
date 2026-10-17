@@ -29,12 +29,14 @@ LAYER_FORBIDDEN_PREFIXES = {
     ),
 }
 PARSER_SDK_PREFIXES = ("docling", "mineru")
+EMBEDDING_SDK_PREFIXES = ("torch", "transformers", "huggingface_hub")
 INDEXING_PURE_FORBIDDEN_PREFIXES = (
     "atlasrag.graphs",
     "atlasrag.providers",
     "atlasrag.repositories",
     "torch",
     "transformers",
+    "huggingface_hub",
     "pymilvus",
     "psycopg",
     "redis",
@@ -176,6 +178,27 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             targets = _import_targets(node, path, root)
+            embedding_sdk = next(
+                (
+                    sdk
+                    for target in targets
+                    if (sdk := _matching_prefix(EMBEDDING_SDK_PREFIXES, target))
+                    is not None
+                ),
+                None,
+            )
+            if (
+                embedding_sdk is not None
+                and relative_path != "src/atlasrag/providers/embedding/qwen.py"
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        relative_path,
+                        node.lineno,
+                        f"embedding SDK '{embedding_sdk}' is only allowed in the Qwen adapter",
+                    )
+                )
+                # Retain the pure-boundary diagnostic below for existing callers.
             pure_indexing = (
                 relative_path.startswith("src/atlasrag/domain/indexing/")
                 or relative_path == "src/atlasrag/services/indexing/representation.py"

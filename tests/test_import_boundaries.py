@@ -82,6 +82,38 @@ def test_real_repository_respects_import_boundaries() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("sdk", ["torch", "transformers", "huggingface_hub"])
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "providers/embedding/base.py",
+        "providers/embedding/profile.py",
+        "providers/embedding/unapproved.py",
+        "services/indexing/unknown.py",
+        "graphs/nodes/unknown.py",
+    ],
+)
+def test_embedding_sdks_cannot_escape_exact_adapter(
+    tmp_path: Path, sdk: str, relative_path: str
+) -> None:
+    path = tmp_path / "src/atlasrag" / relative_path
+    path.parent.mkdir(parents=True)
+    path.write_text(f"import {sdk}\n", encoding="utf-8")
+    result = run_checker(tmp_path)
+    assert result.returncode != 0
+    assert "embedding SDK" in result.stderr
+
+
+def test_embedding_adapter_allows_only_its_sdk_location(tmp_path: Path) -> None:
+    path = tmp_path / "src/atlasrag/providers/embedding/qwen.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "import torch\nimport transformers\nimport huggingface_hub\n", encoding="utf-8"
+    )
+    result = run_checker(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize(
     ("source", "prohibited_module"),
     [

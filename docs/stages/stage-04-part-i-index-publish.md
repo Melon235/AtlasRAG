@@ -2,11 +2,11 @@
 
 ## Status
 
-**IN PROGRESS — T0 committed; T1 implementation and review gates passed.
+**IN PROGRESS — T0 and T1 committed; T2 verified and ready to commit.
 Stage 4 is not complete.**
 
-T2–T11 have not started. No real Qwen smoke, publish verification, final
-commit/push, or remote Stage 4 CI success is claimed.
+T3–T11 have not started. The real Qwen smoke has passed; no publish
+verification, final commit/push, or remote Stage 4 CI success is claimed.
 
 ## Authority and approved decisions
 
@@ -243,15 +243,92 @@ tests and found the previous conflict resolved without further issues. The
 primary agent's final full offline gate passed: **2392 passed, 49 deselected
 in 75.56s**, Ruff format 170 files, lint clean, mypy 152 files, and both
 architecture gates clean. No Stage 3 production files or migrations changed.
-T1 is ready for its planned commit; nothing has been pushed or merged.
+T1 was committed as `11eeaf0` (`feat(stage4): add typed retrieval
+representations`). Nothing has been pushed or merged. The isolated test
+containers were stopped after the gate; volumes were preserved for later
+Stage 4 verification and existing user containers/volumes were untouched.
+
+## T2 progress and model preflight
+
+T2 implements the pinned Qwen provider, including whitespace-preserving token
+admission and cancellation-safe bounded inference. Its formal provider smoke
+has now passed, along with independent spec/quality reviews and the final offline gate.
+
+The primary agent downloaded the official model/tokenizer snapshot at commit
+`97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3` outside the repository. An initial
+seven-file runtime-only cache was rejected by Hugging Face Hub 1.33.0 when a
+later offline lookup requested the full snapshot: five small documentation/
+metadata files were absent. Inspection of the installed completeness check
+confirmed the cause. Completing the same revision yielded 12 files totaling
+1,207,489,041 bytes; subsequent offline snapshot lookup passed. No revision
+or dependency version was changed to bypass the check.
+
+A raw SDK/hardware preflight then passed offline using AutoModel/AutoTokenizer,
+explicit CUDA float16/SDPA, last-token pooling and L2 normalization. Actual
+device was `cuda:0`; both a short text and a 1500-space input produced finite
+1024-dimensional vectors, with tokenizer lengths 7 and 14 respectively.
+`truncation=False` and the original whitespace text were used. This is real
+Qwen inference, but it does **not** substitute for the production provider's
+mandatory model smoke or the later production exact-set verification gate.
+
+### T2 provider implementation and verification
+
+`QwenEmbeddingProvider` exposes explicit asynchronous `initialize` and bounded
+`embed`; construction/import does not load optional SDKs or initialize CUDA.
+Initialization is cache-only by default, with explicit download opt-in. Both
+loaders use the same resolved pinned snapshot, local-only, without trusting
+remote code. Identity checks use the loaded dimension/context and every model
+parameter's device/dtype; no obsolete Transformers `_commit_hash` attribute
+is assumed.
+
+The immutable execution profile defaults to one input per batch and 8192
+tokens including special tokens, with the model's 32768-position ceiling.
+Input remains unchanged, including nonempty whitespace; empty strings and
+oversized batches are rejected. Token overflow and malformed successful
+vector output have distinct internal errors. Unknown errors, OOM, timeout,
+dependency failures, and cancellation are not business failures. The worker
+bridge preserves original exceptions; cancellation waits for Python work and
+explicit CUDA synchronization before releasing the shared semaphore. CUDA
+weights/forward are float16 with SDPA; L2 normalization uses float32.
+
+Direct `huggingface-hub==1.33.0` is added only to the optional embedding group
+for its public pinned-snapshot API. The primary agent compared lockfiles:
+all **200 package name/version pairs are unchanged**. SDK imports are allowed
+only in the exact Qwen adapter file, with negative tests for other locations.
+
+Implementer RED evidence included 55 initial missing-provider failures,
+4 scope/dependency failures, 15 checker failures, and 11 additional CUDA
+settlement/configuration/malformed-output failures. The focused suite then
+passed (138 tests). A full run exposed one remaining legacy scope union
+omission, independently reproduced by the primary agent: **1 failed, 2483
+passed, 50 deselected in 91.67s**. The precise Stage 4 file set was added to
+that guard and an accidental duplicate union removed; no directory exemption
+or production behavior changed. Focused scope/embedding tests passed (131),
+and independent spec review passed (153 focused tests).
+
+The primary agent independently ran the formal real-provider model smoke
+against the offline pinned cache: **1 passed in 21.48s**. Evidence: model and
+tokenizer revision `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`, actual `cuda:0`,
+float16 forward/float32 normalization, SDPA, dimension 1024, batch size 3,
+finite normalized outputs, batched/individual positional correspondence,
+and the actual Stage 3 1500-space Child through the representation builder.
+No CPU fallback, text trimming, substitution, or model-version drift occurred.
+This closes the real Qwen whitespace gate; the later production Milvus
+verification-service gate remains required.
+
+The primary agent's corrected full offline gate completed successfully:
+**2484 passed, 50 deselected in 81.24s**, with formatting (176 files), lint,
+type checking (158 source files), and architecture checks passing. Independent
+quality review found no actionable issues. This verifies T2, not Stage 4 as a
+whole; publication and production exact-set gates remain outstanding.
 
 ## Task ledger
 
 | Task | Status |
 | --- | --- |
 | T0 approvals, isolated baseline, dependency/CUDA preflight | COMPLETE |
-| T1 contracts and representation | VERIFIED — ready for commit |
-| T2 embedding protocol and Qwen | NOT STARTED |
+| T1 contracts and representation | COMPLETE — 11eeaf0 |
+| T2 embedding protocol and Qwen | VERIFIED — ready to commit |
 | T3 Milvus batch/projection capabilities | NOT STARTED |
 | T4 persisted candidate indexing | NOT STARTED |
 | T5 independent verification | NOT STARTED |

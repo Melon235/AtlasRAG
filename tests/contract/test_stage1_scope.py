@@ -68,7 +68,9 @@ EXPECTED_DECLARED_DISTRIBUTIONS = {
     ),
     "dependency-groups.parsing-docling": frozenset({"docling-slim"}),
     "dependency-groups.parsing-mineru": frozenset({"mineru"}),
-    "dependency-groups.indexing-embedding": frozenset({"torch", "transformers"}),
+    "dependency-groups.indexing-embedding": frozenset(
+        {"torch", "transformers", "huggingface-hub"}
+    ),
     "build-system.requires": frozenset({"setuptools"}),
 }
 EXPECTED_LOCKED_DISTRIBUTIONS = frozenset(
@@ -379,6 +381,10 @@ STAGE3_PRODUCTION_FILES = frozenset(
 )
 STAGE4_PRODUCTION_FILES = frozenset(
     {
+        "providers/embedding/__init__.py",
+        "providers/embedding/base.py",
+        "providers/embedding/profile.py",
+        "providers/embedding/qwen.py",
         "domain/indexing/__init__.py",
         "domain/indexing/failures.py",
         "domain/indexing/models.py",
@@ -417,9 +423,54 @@ def _normalized_distribution_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.casefold())
 
 
+@pytest.mark.parametrize("sdk", ["torch", "transformers", "huggingface_hub"])
+def test_embedding_sdk_allowed_only_in_exact_qwen_module(sdk: str) -> None:
+    assert not _source_import_violations(
+        f"import {sdk}", Path("src/atlasrag/providers/embedding/qwen.py")
+    )
+    for name in (
+        "providers/embedding/base.py",
+        "providers/embedding/profile.py",
+        "providers/embedding/unknown.py",
+        "providers/parsing/unknown.py",
+        "services/indexing/representation.py",
+        "domain/indexing/models.py",
+    ):
+        assert _source_import_violations(f"import {sdk}", Path("src/atlasrag") / name)
+
+
+@pytest.mark.parametrize(
+    "sdk", ["httpx", "requests", "openai", "langgraph", "tests", "unapproved_sdk"]
+)
+def test_qwen_module_is_not_a_general_import_exemption(sdk: str) -> None:
+    assert _source_import_violations(
+        f"import {sdk}", Path("src/atlasrag/providers/embedding/qwen.py")
+    )
+
+
+def test_embedding_files_are_an_exact_manifest(tmp_path: Path) -> None:
+    path = tmp_path / "providers/embedding/unapproved.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("", encoding="utf-8")
+    assert any(
+        "providers/embedding/unapproved.py" in item
+        for item in _production_manifest_violations(tmp_path)
+    )
+
+
 def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
     normalized = module_name.casefold()
     root = normalized.partition(".")[0].replace("-", "_")
+    if root in {"torch", "transformers", "huggingface_hub"}:
+        if path is None:
+            return True
+        parts = path.parts
+        relative = (
+            Path(*parts[parts.index("atlasrag") + 1 :]).as_posix()
+            if "atlasrag" in parts
+            else path.as_posix()
+        )
+        return relative != "providers/embedding/qwen.py"
     driver_layers = STAGE2_DRIVER_LAYERS | STAGE3_DRIVER_LAYERS
     if path is not None and root in driver_layers:
         parts = path.parts
@@ -816,6 +867,7 @@ def test_no_backend_client_provider_or_business_modules_exist() -> None:
             ALLOWED_BOUNDARY_INITIALIZERS
             | STAGE2_PRODUCTION_FILES
             | STAGE3_PRODUCTION_FILES
+            | STAGE4_PRODUCTION_FILES
         ):
             continue
         tokens = {

@@ -20,6 +20,7 @@ def test_embedding_dependencies_are_explicit_nondefault_group() -> None:
         "torch==2.13.0; sys_platform == 'linux' or sys_platform == 'win32'",
         "torch==2.14.1; sys_platform == 'darwin'",
         "transformers==5.19.0",
+        "huggingface-hub==1.33.0",
     ]
     assert document["tool"]["uv"].get("default-groups", ["dev"]) == ["dev"]
 

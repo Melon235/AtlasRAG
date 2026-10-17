@@ -12,7 +12,7 @@
 
 ## 1. 审阅结论与当前证据
 
-状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0 已提交；T1 已落实 whitespace amendment，通过离线全量、真实 Milvus 与两轮复审，准备提交；尚未完成 Stage 4。**
+状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0/T1 已提交，T1 为 11eeaf0；T2 已验证待提交；尚未完成 Stage 4。**
 
 批准限制：exact file/import/AST whitelist only，无 graph 目录通配豁免；Stage 1–3 frozen contracts 不变。LangSmith 仅允许锁定的传递 distribution，禁止直接集成/tracing/key/network requirement。ChunkInputLimitError 只用于确定性输入容量失败，不扩展 public ErrorCode，不改变 canonical chunk output/IDs。
 
@@ -203,11 +203,11 @@ PARSE/CHUNK 复用既有失败记录服务；四种 index failure 新增独立 r
 
 文件：providers/embedding；测试 `tests/stage4/test_embedding.py`、`tests/integration/test_stage4_model_smoke.py`。
 
-- [ ] 离线 tests 使用测试目录内受控 tokenizer/model adapter，覆盖 lazy import、显式 init、fixed revision、device 无 fallback、输入长度等于/大于限制、无截断调用、padding/pooling 保序。
-- [ ] `uv run --frozen pytest tests/stage4/test_embedding.py -q` 确认 RED。
-- [ ] 实现 Protocol、identity checks、full-input token validation、共享 semaphore 与 count/dimension/NaN/Inf 验证；所有 SDK 实现仅在 provider。
-- [ ] 验证 fake successful malformed output 是受控 EMBEDDING failure，而 dependency/CUDA/timeout/OOM 与未知异常传播；测试 cancel 时 worker 先 settle 后释放 semaphore。
-- [ ] 同命令 GREEN，真实 smoke 接到 T0 已锁环境；模型 smoke 必须输出模型/分词器 commit、实际 device、dtype、维度、batch 结果且不打印本机 cache path。提交 `feat(stage4): add pinned local Qwen embedding provider`。
+- [x] 离线 tests 使用测试目录内受控 tokenizer/model adapter，覆盖 lazy import、显式 init、fixed revision、device 无 fallback、输入长度等于/大于限制、无截断调用、padding/pooling 保序。
+- [x] `uv run --frozen pytest tests/stage4/test_embedding.py -q` 确认 RED。
+- [x] 实现 Protocol、identity checks、full-input token validation、共享 semaphore 与 count/dimension/NaN/Inf 验证；所有 SDK 实现仅在 provider。
+- [x] 验证 fake successful malformed output 是受控 EMBEDDING failure，而 dependency/CUDA/timeout/OOM 与未知异常传播；测试 cancel 时 worker 先 settle 后释放 semaphore。
+- [x] 同命令 GREEN；主代理正式真实 Qwen smoke 1 passed（21.48s），全量离线 gate 2484 passed / 50 deselected（81.24s），规格与质量审查通过。记录 pin/device/dtype/dimension/batch，不输出 cache path。提交 `feat(stage4): add pinned local Qwen embedding provider`。
 
 ### T3 — Milvus batch 与 projection 能力
 
