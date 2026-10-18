@@ -381,6 +381,7 @@ STAGE3_PRODUCTION_FILES = frozenset(
 )
 STAGE4_PRODUCTION_FILES = frozenset(
     {
+        "providers/index/projection.py",
         "providers/embedding/__init__.py",
         "providers/embedding/base.py",
         "providers/embedding/profile.py",

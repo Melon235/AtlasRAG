@@ -4,6 +4,7 @@ import asyncio
 import json
 
 import pytest
+from providers.test_milvus_provider import milvus_record
 from stage4.indexing_fixtures import canonical_whitespace_chunks, retrieval_record
 
 from atlasrag.domain.ingestion.chunks import ChunkType, derive_chunk_content_hash
@@ -80,3 +81,38 @@ async def test_whitespace_children_have_exact_strong_milvus_projection(
         assert row["sparse_text"].encode("utf-8") == child.raw_content.encode("utf-8")
         assert derive_chunk_content_hash(row["content"]) == child.content_hash
     assert "".join(actual[child.chunk_id]["content"] for child in children) == content
+
+
+@pytest.mark.asyncio
+async def test_candidate_batches_append_without_replacing_last_good(
+    isolated_milvus: IsolatedMilvus,
+) -> None:
+    index = isolated_milvus.provider
+    await index.initialize()
+    original = milvus_record(chunk_id="r1-child", revision_id="r1")
+    await index.replace_revision_set([original], document_id="doc-1", revision_id="r1")
+    await index.delete_revision("doc-1", "r2")
+    records = [
+        milvus_record(chunk_id="r2-a", revision_id="r2", content=" " * 1500),
+        milvus_record(chunk_id="r2-b", revision_id="r2"),
+    ]
+    for record in records:
+        await index.insert_revision_batch(
+            [record], document_id="doc-1", revision_id="r2"
+        )
+    await index.wait_revision_visible("doc-1", "r2")
+    for revision, expected_records in (("r1", [original]), ("r2", records)):
+        actual = [
+            row.model_dump(mode="json")
+            async for row in index.iter_revision_projection(
+                "doc-1", revision, batch_size=1
+            )
+        ]
+        expected = []
+        for record in expected_records:
+            row = record.model_dump(mode="json")
+            row.pop("dense_vector")
+            expected.append(row)
+        assert sorted(actual, key=lambda row: row["chunk_id"]) == sorted(
+            expected, key=lambda row: row["chunk_id"]
+        )

@@ -2,10 +2,10 @@
 
 ## Status
 
-**IN PROGRESS — T0 and T1 committed; T2 verified and ready to commit.
+**IN PROGRESS — T0–T2 committed; T3 verified and ready to commit.
 Stage 4 is not complete.**
 
-T3–T11 have not started. The real Qwen smoke has passed; no publish
+T4–T11 have not started. The real Qwen smoke has passed; no publish
 verification, final commit/push, or remote Stage 4 CI success is claimed.
 
 ## Authority and approved decisions
@@ -321,6 +321,50 @@ The primary agent's corrected full offline gate completed successfully:
 type checking (158 source files), and architecture checks passing. Independent
 quality review found no actionable issues. This verifies T2, not Stage 4 as a
 whole; publication and production exact-set gates remain outstanding.
+T2 was committed as `3f294c2` (`feat(stage4): add pinned local Qwen embedding
+provider`). No push or merge has occurred.
+
+## T3 progress and real storage regression
+
+The provider adds bounded append-only batches, an explicit visibility barrier,
+and Strong paginated scalar/JSON projections without vectors. Projection rows
+retain duplicates, unexpected types/identities and semantically incorrect
+metadata for independent verification. No collection schema or migration is
+changed; the existing Stage 2 replacement path and generic SDK runner remain
+unchanged. Early-exiting projection consumers must explicitly close their
+iterator.
+
+Only typed PyMilvus data/type mismatch exceptions become the new safe internal
+write-rejection error. Other SDK failures remain technical. Additional RED
+tests reproduced five paths where a late worker error could displace pending
+cancellation, plus cancellation during cleanup of an already failed read.
+The new capabilities use a separate settling helper so cancellation remains
+cancellation after all owned work settles; old Stage 2 behavior is preserved.
+
+Initial T3 RED had 34 missing-capability failures. The implementer's focused
+new/old provider, record and scope suite reached **220 passed in 38.92s**.
+The primary agent's first full gate stopped at mypy: cross-test fixture imports
+were assigned two module names. An explicit test-package marker resolves that
+ambiguity; precise typing fixes in the new tests passed full mypy (161 files),
+Ruff and formatting (179 files). The implementer reran the focused suite:
+**220 passed in 34.41s**. Production code was unchanged by this repair.
+No broad mypy exemption or production behavior change is used to bypass it.
+
+The primary agent independently ran the frozen production code against the
+isolated real Milvus project: **8 passed in 206.84s**. This includes all five
+old Milvus integration tests, the two canonical whitespace regressions, and
+new R1-preserving R2 batch append with Strong projection pages of size one.
+An earlier pre-final run had **7 passed in 170.44s** before the new integration
+case was collected; it is not substituted for the eight-test result.
+Independent spec review passed with **47 focused tests in 0.62s**. AST comparison
+against `3f294c2` confirmed all pre-existing Milvus functions/methods unchanged.
+Independent quality review found no actionable correctness, race or security
+issues. The primary agent's final full offline gate passed after stopping the
+owned Milvus/MinIO/etcd containers: **2531 passed, 51 deselected in 80.64s**,
+with formatting (179 files), lint, mypy (161 files), and architecture checks
+passing. Test volumes were preserved; no user containers or volumes were
+removed. T3 is verified; independent business verification/publish remain later
+tasks, not claims made by this provider-only milestone.
 
 ## Task ledger
 
@@ -328,8 +372,8 @@ whole; publication and production exact-set gates remain outstanding.
 | --- | --- |
 | T0 approvals, isolated baseline, dependency/CUDA preflight | COMPLETE |
 | T1 contracts and representation | COMPLETE — 11eeaf0 |
-| T2 embedding protocol and Qwen | VERIFIED — ready to commit |
-| T3 Milvus batch/projection capabilities | NOT STARTED |
+| T2 embedding protocol and Qwen | COMPLETE — 3f294c2 |
+| T3 Milvus batch/projection capabilities | VERIFIED — ready to commit |
 | T4 persisted candidate indexing | NOT STARTED |
 | T5 independent verification | NOT STARTED |
 | T6 controlled failure recording | NOT STARTED |

@@ -6,10 +6,14 @@ import asyncio
 import json
 import math
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from typing import Protocol, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
+from pymilvus.exceptions import (  # type: ignore[import-untyped]
+    DataNotMatchException,
+    DataTypeNotMatchException,
+)
 
 from atlasrag.domain.errors import (
     ConfigurationError,
@@ -23,6 +27,11 @@ from atlasrag.providers.index.models import (
     MilvusChunkRecord,
     validate_milvus_record_set,
 )
+from atlasrag.providers.index.projection import (
+    PROJECTION_FIELDS,
+    IndexWriteRejectedError,
+    MilvusRevisionProjection,
+)
 from atlasrag.providers.index.schema import (
     COLLECTION_NAME,
     build_collection_schema,
@@ -35,6 +44,8 @@ _ResultT = TypeVar("_ResultT")
 _CANONICAL_ID = TypeAdapter(CanonicalId)
 _COLLECTION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,254}\Z")
 _MAX_QUERY_BATCH_SIZE = 16_384
+# Bound transient payload materialization independently of query pagination.
+_MAX_INSERT_BATCH_SIZE = 16_384
 
 
 class _MilvusClient(Protocol):
@@ -116,6 +127,30 @@ async def _run_sync(
         # PyMilvus may expose MilvusException, grpc failures, built-in socket
         # errors, or wrapped runtime errors depending on the failing operation.
         raise DependencyUnavailableError from None
+
+
+async def _settle_index_task(task: asyncio.Task[_ResultT]) -> _ResultT:
+    """Settle new index operations with cancellation taking precedence.
+
+    A worker's late rejection must not turn an already cancelled build into a
+    business failure. Stage 2's runner and replacement semantics stay unchanged.
+    """
+
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        try:
+            task.result()
+        except (Exception, asyncio.CancelledError):
+            pass
+        raise
 
 
 def _validate_collection_name(value: object) -> str:
@@ -430,6 +465,130 @@ class MilvusIndexProvider:
             consistency_level="Strong",
         )
         return _validate_count_response(response)
+
+    async def insert_revision_batch(
+        self,
+        records: Sequence[MilvusChunkRecord],
+        *,
+        document_id: str,
+        revision_id: str,
+    ) -> None:
+        """Append one bounded, completely validated batch; never delete rows."""
+
+        if not isinstance(records, Sequence) or len(records) > _MAX_INSERT_BATCH_SIZE:
+            raise InvariantViolationError
+        validated = validate_milvus_record_set(
+            records,
+            document_id=document_id,
+            revision_id=revision_id,
+            embedding_dimension=self._embedding_dimension,
+        )
+        payloads = [_record_payload(record) for record in validated]
+        if not payloads:
+            return
+        # This boundary intentionally differs from the Stage 2 generic runner:
+        # only typed deterministic data errors become candidate rejection.
+        try:
+            worker = asyncio.create_task(
+                asyncio.to_thread(
+                    self._client.insert,
+                    collection_name=self._collection_name,
+                    data=payloads,
+                    timeout=self._timeout_seconds,
+                )
+            )
+            response = await _settle_index_task(worker)
+        except (DataNotMatchException, DataTypeNotMatchException):
+            raise IndexWriteRejectedError from None
+        except Exception as error:
+            if _is_timeout_failure(error):
+                raise DependencyTimeoutError from None
+            raise DependencyUnavailableError from None
+        _validate_insert_response(response, tuple(row.chunk_id for row in validated))
+
+    async def wait_revision_visible(self, document_id: str, revision_id: str) -> None:
+        """Flush prior writes before a Strong projection verifies this revision."""
+
+        _local_identifier(document_id)
+        _local_identifier(revision_id)
+        await _settle_index_task(asyncio.create_task(self._visibility_barrier()))
+
+    async def iter_revision_projection(
+        self,
+        document_id: str,
+        revision_id: str,
+        *,
+        batch_size: int = 1_000,
+    ) -> AsyncGenerator[MilvusRevisionProjection, None]:
+        """Yield every observed scalar row using bounded Strong pages.
+
+        Consumers must call ``aclose`` on early exit (for example using
+        ``contextlib.aclosing``). Full traversal closes automatically. Neither
+        IDs nor types are filtered or deduplicated before independent comparison.
+        """
+
+        document_id = _local_identifier(document_id)
+        revision_id = _local_identifier(revision_id)
+        batch_size = _validate_batch_size(batch_size)
+        iterator: object | None = None
+        primary_error: BaseException | None = None
+
+        async def acquire() -> None:
+            nonlocal iterator
+            iterator = await self._call(
+                self._client.query_iterator,
+                collection_name=self._collection_name,
+                filter=_revision_filter(document_id, revision_id),
+                output_fields=list(PROJECTION_FIELDS),
+                batch_size=batch_size,
+                limit=-1,
+                consistency_level="Strong",
+            )
+
+        try:
+            # Keep ownership even if cancellation arrives before acquisition
+            # returns. The shielded task stores the iterator before settling.
+            await _settle_index_task(asyncio.create_task(acquire()))
+            next_page = getattr(iterator, "next", None)
+            close = getattr(iterator, "close", None)
+            if not callable(next_page) or not callable(close):
+                raise ProviderResponseError
+            while True:
+                response = await _settle_index_task(
+                    asyncio.create_task(_run_sync(next_page))
+                )
+                if (
+                    not isinstance(response, (list, tuple))
+                    or len(response) > batch_size
+                ):
+                    raise ProviderResponseError
+                if not response:
+                    break
+                try:
+                    page = tuple(
+                        MilvusRevisionProjection.model_validate(row) for row in response
+                    )
+                except (ValidationError, TypeError, ValueError):
+                    raise ProviderResponseError from None
+                for row in page:
+                    yield row
+        except GeneratorExit:
+            raise
+        except BaseException as error:
+            primary_error = error
+            raise
+        finally:
+            close = getattr(iterator, "close", None)
+            if callable(close):
+                try:
+                    await _settle_index_task(asyncio.create_task(_run_sync(close)))
+                except asyncio.CancelledError:
+                    # Cancellation also wins when it arrives during cleanup of
+                    # an already failed read; owned cleanup has still settled.
+                    raise
+                except BaseException:
+                    if primary_error is None:
+                        raise
 
     async def list_revision_chunk_ids(
         self,

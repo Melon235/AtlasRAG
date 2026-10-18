@@ -12,7 +12,7 @@
 
 ## 1. 审阅结论与当前证据
 
-状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0/T1 已提交，T1 为 11eeaf0；T2 已验证待提交；尚未完成 Stage 4。**
+状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T2 已提交，T2 为 3f294c2；T3 已验证待提交；尚未完成 Stage 4。**
 
 批准限制：exact file/import/AST whitelist only，无 graph 目录通配豁免；Stage 1–3 frozen contracts 不变。LangSmith 仅允许锁定的传递 distribution，禁止直接集成/tracing/key/network requirement。ChunkInputLimitError 只用于确定性输入容量失败，不扩展 public ErrorCode，不改变 canonical chunk output/IDs。
 
@@ -213,10 +213,10 @@ PARSE/CHUNK 复用既有失败记录服务；四种 index failure 新增独立 r
 
 文件：providers/index/milvus.py、projection.py；测试 `tests/stage4/test_index_provider.py`、`tests/integration/test_stage4_index.py`。
 
-- [ ] RED：batch A/B 连续写不会互相删除；Parent、维度/有限性、scope、重复批内 ID 在 SDK 调用前失败；iterator close、强一致读、取消收束、已知拒绝与 outage 分类各自测试。
-- [ ] `uv run --frozen pytest tests/stage4/test_index_provider.py -q`。
-- [ ] 添加三项能力，复用现有 schema/record validation；projection 不读取全部 dense vectors，不使用 count 代替 ID/metadata 检查。
-- [ ] 同命令 GREEN，并运行旧 Milvus unit/integration 回归；旧 replace_revision_set 的全量校验、删除/写入/barrier、取消语义不变。提交 `feat(stage4): extend Milvus with bounded batch indexing`。
+- [x] RED：batch A/B 连续写不会互相删除；Parent、维度/有限性、scope、重复批内 ID 在 SDK 调用前失败；iterator close、强一致读、取消收束、已知拒绝与 outage 分类各自测试。
+- [x] `uv run --frozen pytest tests/stage4/test_index_provider.py -q`：初始 34 RED，追加 late-worker-error/cancel 边界 RED 后修复；独立规格审查 47 passed。
+- [x] 添加三项能力，复用现有 schema/record validation；projection 不读取全部 dense vectors，不使用 count 代替 ID/metadata 检查。
+- [x] 聚焦新/旧回归 220 passed；主代理真实 Milvus 8 passed（206.84s）、全量离线 2531 passed / 51 deselected（80.64s）；规格与质量审查通过。AST 确认旧方法均不变。提交 `feat(stage4): extend Milvus with bounded batch indexing`。
 
 ### T4 — 持久化 candidate authority 与 INDEXING 编排
 
