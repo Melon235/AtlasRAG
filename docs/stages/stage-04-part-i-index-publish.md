@@ -2,10 +2,10 @@
 
 ## Status
 
-**IN PROGRESS — T0–T2 committed; T3 verified and ready to commit.
+**IN PROGRESS — T0–T3 committed; T4 verified and ready to commit.
 Stage 4 is not complete.**
 
-T4–T11 have not started. The real Qwen smoke has passed; no publish
+T5–T11 have not started. The real Qwen smoke has passed; no publish
 verification, final commit/push, or remote Stage 4 CI success is claimed.
 
 ## Authority and approved decisions
@@ -365,6 +365,41 @@ with formatting (179 files), lint, mypy (161 files), and architecture checks
 passing. Test volumes were preserved; no user containers or volumes were
 removed. T3 is verified; independent business verification/publish remain later
 tasks, not claims made by this provider-only milestone.
+T3 was committed as `5ad929f` (`feat(stage4): extend Milvus with bounded batch
+indexing`). No push or merge has occurred.
+
+## T4 progress
+
+The candidate indexing service reconstructs the full canonical boundary from
+persisted elements and chunks, validates source-backed lineage, commits the
+short INDEXING transition, and performs all embedding/Milvus work outside
+that transaction. Its input API accepts context, not caller-supplied canonical
+chunks. Tests exercise partial four-of-ten writes followed by scoped R2 retry,
+R1 preservation, and release of previous-batch vectors/records before the next
+embedding call. The implementer's first focused run passed 33 tests. The final
+frozen implementation has 62 T4 cases, including source-consistent forged
+chunks rejected against persisted elements, full building ownership, commit
+failure rollback, TABLE mapping, and unchanged propagation of classified and
+ordinary errors for later orchestration.
+
+Compatibility inspection is additive: read-only provider dimension/analyzer
+properties let the service compare injected provider configuration with
+RuntimeConfig, then existing initialization validates the physical collection.
+Persisted typed chunk strategy version is also checked against the configured
+version, not merely for uniformity within the stored set. No frozen schema,
+fingerprint projection, canonical output, or existing provider method changes
+are made. Version/analyzer binding first produced three expected RED cases;
+the corrected suite then passed. The implementer's combined focused gate
+passed **377 tests in 36.22s**, and its full offline test run passed
+**2593 tests, 51 deselected in 82.05s**. The primary agent independently ran
+T4 plus new/old provider tests: **171 passed in 2.27s**; import boundaries and
+diff checks passed. The primary agent's complete `UV_OFFLINE=1 make verify`
+then passed: **2593 passed, 51 deselected in 81.66s**, formatting (185 files),
+lint, mypy (167 files), and architecture gates clean. Independent spec review
+passed; its own run was 61 passed with the known sandbox-thread case excluded,
+while the primary agent's escalated runs included that case successfully.
+Independent quality review also passed with no actionable findings. T4 is
+verified; this does not establish an exact-set receipt or authorize publication.
 
 ## Task ledger
 
@@ -373,8 +408,8 @@ tasks, not claims made by this provider-only milestone.
 | T0 approvals, isolated baseline, dependency/CUDA preflight | COMPLETE |
 | T1 contracts and representation | COMPLETE — 11eeaf0 |
 | T2 embedding protocol and Qwen | COMPLETE — 3f294c2 |
-| T3 Milvus batch/projection capabilities | VERIFIED — ready to commit |
-| T4 persisted candidate indexing | NOT STARTED |
+| T3 Milvus batch/projection capabilities | COMPLETE — 5ad929f |
+| T4 persisted candidate indexing | VERIFIED — ready to commit |
 | T5 independent verification | NOT STARTED |
 | T6 controlled failure recording | NOT STARTED |
 | T7 atomic publication | NOT STARTED |

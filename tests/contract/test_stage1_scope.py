@@ -391,6 +391,10 @@ STAGE4_PRODUCTION_FILES = frozenset(
         "domain/indexing/models.py",
         "services/indexing/__init__.py",
         "services/indexing/representation.py",
+        "services/indexing/ports.py",
+        "services/indexing/canonical.py",
+        "services/indexing/records.py",
+        "services/indexing/candidate.py",
     }
 )
 STAGE2_DRIVER_LAYERS = {

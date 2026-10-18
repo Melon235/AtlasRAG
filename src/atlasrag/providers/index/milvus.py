@@ -332,6 +332,16 @@ class MilvusIndexProvider:
         )
         self._index_params = build_index_params()
 
+    @property
+    def embedding_dimension(self) -> int:
+        """Configured dimension; initialize validates it against the actual schema."""
+        return self._embedding_dimension
+
+    @property
+    def analyzer(self) -> str:
+        """Configured analyzer; initialize validates it against the actual schema."""
+        return self._analyzer
+
     async def _call(
         self,
         operation: Callable[..., _ResultT],

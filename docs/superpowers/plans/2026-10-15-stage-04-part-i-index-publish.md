@@ -12,7 +12,7 @@
 
 ## 1. 审阅结论与当前证据
 
-状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T2 已提交，T2 为 3f294c2；T3 已验证待提交；尚未完成 Stage 4。**
+状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T3 已提交，T3 为 5ad929f；T4 已验证待提交；尚未完成 Stage 4。**
 
 批准限制：exact file/import/AST whitelist only，无 graph 目录通配豁免；Stage 1–3 frozen contracts 不变。LangSmith 仅允许锁定的传递 distribution，禁止直接集成/tracing/key/network requirement。ChunkInputLimitError 只用于确定性输入容量失败，不扩展 public ErrorCode，不改变 canonical chunk output/IDs。
 
@@ -222,10 +222,12 @@ PARSE/CHUNK 复用既有失败记录服务；四种 index failure 新增独立 r
 
 文件：services/indexing/ports.py、canonical.py、records.py、candidate.py；测试 `tests/stage4/test_candidate_indexing.py`。
 
-- [ ] RED：伪造 caller chunks 无法成为输入；PG lineage/metadata/schema version 损坏拒绝；模型/指纹/collection dimension mismatch 在 candidate index 写入之前拒绝；index 期间没有活跃 PG transaction。
-- [ ] `uv run --frozen pytest tests/stage4/test_candidate_indexing.py -q`。
-- [ ] 实现短 tx 状态转换，PG 重建、retrievable filtering、candidate scoped delete/empty visibility、ordered batches、最终 barrier。默认最多一 batch vectors 存活；PG canonical tuple 不等于允许累积 vector tuple。
-- [ ] GREEN：插入 10 条中的 4 条后技术失败，状态保持 INDEXING；第二次 delete R2 后完整写 10 条且无 stale extra，R1 全程相同。相同 candidate 的 CHUNKED/INDEXING retry 允许，不允许别的 revision/status 偷渡。提交 `feat(stage4): index durable canonical candidates`。
+实施细化：Milvus provider 新增只读 dimension/analyzer 属性供服务验证注入配置；既有 initialize 再核实物理 collection。持久化 typed chunk strategy version 必须匹配当前 RuntimeConfig。均不修改旧方法语义、schema 或 frozen fingerprint projection。
+
+- [x] RED：伪造 caller chunks 无法成为输入；PG lineage/metadata/schema version 损坏拒绝；模型/指纹/collection dimension mismatch 在 candidate index 写入之前拒绝；index 期间没有活跃 PG transaction。
+- [x] `uv run --frozen pytest tests/stage4/test_candidate_indexing.py -q`：初始 33 RED；版本/analyzer guard 追加 3 RED；最终 62 个 T4 测试。
+- [x] 实现短 tx 状态转换，PG 重建、retrievable filtering、candidate scoped delete/empty visibility、ordered batches、最终 barrier。上一批 vectors/records 的释放由 weakref 测试验证；PG canonical tuple 不等于允许累积 vector tuple。
+- [x] GREEN：4/10 部分技术失败保留 INDEXING，重复 attempt 删除 R2 后重写 10 条，无 stale extra，R1 不变；跨状态/候选拒绝。主代理聚焦 171 passed，全量离线 2593 passed / 51 deselected（81.66s）；规格/质量审查通过。提交 `feat(stage4): index durable canonical candidates`。
 
 ### T5 — 独立 verification 与 attempt receipt
 
