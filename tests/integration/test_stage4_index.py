@@ -2,13 +2,24 @@
 
 import asyncio
 import json
+from contextlib import aclosing
+from pathlib import Path
 
 import pytest
 from providers.test_milvus_provider import milvus_record
+from stage3.test_candidate_services import NOW, _document, _stored_document
+from stage4.candidate_fakes import Embedding, candidate
 from stage4.indexing_fixtures import canonical_whitespace_chunks, retrieval_record
 
 from atlasrag.domain.ingestion.chunks import ChunkType, derive_chunk_content_hash
 from atlasrag.providers.index.models import MilvusChunkRecord
+from atlasrag.repositories.postgres.records import IngestionStatus
+from atlasrag.services.indexing.verification import CandidateVerificationAttempt
+from atlasrag.services.ingestion.chunking import ChunkingProfile, build_chunks
+from atlasrag.services.ingestion.mapping import (
+    map_chunks_to_stored,
+    map_elements_to_stored,
+)
 from integration.test_milvus import SDK_TIMEOUT_SECONDS, IsolatedMilvus
 from integration.test_milvus import isolated_milvus as isolated_milvus
 
@@ -116,3 +127,57 @@ async def test_candidate_batches_append_without_replacing_last_good(
         assert sorted(actual, key=lambda row: row["chunk_id"]) == sorted(
             expected, key=lambda row: row["chunk_id"]
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    ["A" + " " * 4000 + "B", "界😀A" + " " * 4000 + "Bé\n"],
+    ids=["ascii", "mixed-unicode"],
+)
+async def test_formal_verifier_accepts_real_milvus_exact_whitespace_candidate(
+    isolated_milvus: IsolatedMilvus, tmp_path: Path, content: str
+) -> None:
+    """T5 real Milvus gate with durable fake PG; T9 owns real PG + Milvus E2E."""
+    factory, context, runtime = candidate(tmp_path)
+    document = _document(context, content)
+    chunks = build_chunks(document)  # Frozen Stage 3 default splitter, unchanged.
+    children = tuple(c for c in chunks if c.chunk_type is ChunkType.TEXT_CHILD)
+    assert len(children) == 3 and children[1].raw_content == " " * 1500
+    scope = context.document_id, context.revision_id
+    factory.database.documents[context.document_id] = _stored_document(
+        context,
+        status=IngestionStatus.CHUNKED,
+        current=True,
+        building_document=document,
+    )
+    factory.database.elements[scope] = map_elements_to_stored(
+        document.elements, created_at=NOW
+    )
+    factory.database.chunks[scope] = map_chunks_to_stored(
+        chunks,
+        chunker_behavior_version=runtime.part_i.chunker_behavior_version,
+        profile_fingerprint=ChunkingProfile().profile_fingerprint,
+        created_at=NOW,
+    )
+    embedding = Embedding(factory, runtime)
+    attempt = CandidateVerificationAttempt(
+        factory, context, config=runtime, index=isolated_milvus.provider
+    )
+    await attempt.index(embedding=embedding, clock=lambda: NOW, batch_size=2)
+    assert " " * 1500 in [text for batch in embedding.inputs for text in batch]
+    embedding.error = AssertionError("formal verification must not re-embed")
+    await attempt.verify(batch_size=1)
+    async with factory() as unit:
+        verified = await attempt.consume_verified(unit, context)
+        assert verified.chunks == chunks
+    async with aclosing(
+        isolated_milvus.provider.iter_revision_projection(*scope, batch_size=1)
+    ) as rows:
+        observed = {row.chunk_id: row async for row in rows}
+    assert set(observed) == {child.chunk_id for child in children}
+    for child in children:
+        row = observed[child.chunk_id]
+        assert row.content.encode("utf-8") == child.raw_content.encode("utf-8")
+        assert row.sparse_text == row.content
+        assert derive_chunk_content_hash(row.content) == child.content_hash

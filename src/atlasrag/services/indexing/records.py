@@ -5,6 +5,36 @@ from atlasrag.domain.indexing.models import RetrievalRecord, RetrievalRepresenta
 from atlasrag.domain.ingestion.chunks import ChunkRecord
 from atlasrag.domain.ingestion.document import DocumentContainer
 from atlasrag.providers.index.models import MilvusChunkRecord
+from atlasrag.providers.index.projection import MilvusRevisionProjection
+
+
+def build_expected_projection(
+    document: DocumentContainer,
+    chunk: ChunkRecord,
+    representation: RetrievalRepresentation,
+) -> MilvusRevisionProjection:
+    """Derive scalar verification authority without embeddings or placeholder vectors."""
+    if (document.document_id, document.revision_id) != (
+        chunk.document_id,
+        chunk.revision_id,
+    ) or (
+        representation.chunk_id,
+        representation.document_id,
+        representation.revision_id,
+    ) != (chunk.chunk_id, chunk.document_id, chunk.revision_id):
+        raise InvariantViolationError
+    return MilvusRevisionProjection(
+        chunk_id=chunk.chunk_id,
+        document_id=chunk.document_id,
+        revision_id=chunk.revision_id,
+        parent_id=chunk.parent_id,
+        file_name=document.source.file_name,
+        chunk_type=representation.chunk_type.value,
+        source_type=document.source.source_type.value,
+        content=representation.dense_text,
+        sparse_text=representation.sparse_text,
+        structured_metadata=representation.structured_metadata.model_dump(mode="json"),
+    )
 
 
 def build_retrieval_record(

@@ -395,6 +395,7 @@ STAGE4_PRODUCTION_FILES = frozenset(
         "services/indexing/canonical.py",
         "services/indexing/records.py",
         "services/indexing/candidate.py",
+        "services/indexing/verification.py",
     }
 )
 STAGE2_DRIVER_LAYERS = {

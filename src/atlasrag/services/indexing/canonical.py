@@ -1,5 +1,7 @@
 """Reconstruct candidate authority from a complete persisted PostgreSQL boundary."""
 
+import hashlib
+import json
 from dataclasses import dataclass
 
 from atlasrag.domain.errors import CanonicalDataError, InvariantViolationError
@@ -25,6 +27,7 @@ class CanonicalCandidate:
     stored_document: StoredDocument
     document: DocumentContainer
     chunks: tuple[ChunkRecord, ...]
+    canonical_digest: str
 
 
 async def load_canonical_candidate(
@@ -82,4 +85,30 @@ async def load_canonical_candidate(
         or validate_chunk_set(document, chunks).outcome is ValidationOutcome.FAIL
     ):
         raise CanonicalDataError
-    return CanonicalCandidate(canonical, stored, document, chunks)
+    # Bind all persisted authority, including schema/profile metadata that the
+    # domain mappers intentionally do not expose. Lifecycle-only indexing writes
+    # do not change this snapshot. Repository enumeration order is immaterial.
+    payload = {
+        "context": canonical.model_dump(mode="json"),
+        "document": stored.model_dump(
+            mode="json", exclude={"ingestion_status", "updated_at"}
+        ),
+        "elements": [
+            element.model_dump(mode="json")
+            for element in sorted(elements, key=lambda item: item.element_id)
+        ],
+        "chunks": [
+            chunk.model_dump(mode="json")
+            for chunk in sorted(persisted_chunks, key=lambda item: item.chunk_id)
+        ],
+    }
+    digest = hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    return CanonicalCandidate(canonical, stored, document, chunks, digest)

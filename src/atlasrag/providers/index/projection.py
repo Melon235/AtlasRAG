@@ -19,6 +19,15 @@ class IndexWriteRejectedError(ProviderResponseError):
     safe_message = "The index rejected candidate data."
 
 
+class IndexProjectionMalformedError(ProviderResponseError):
+    """A successful reachable query returned an invalid projection page or row.
+
+    This classification excludes SDK, iterator-interface and cleanup failures.
+    """
+
+    safe_message = "The index returned malformed candidate projection data."
+
+
 def _freeze_json(value: object, active: set[int]) -> object:
     if value is None or type(value) in (bool, int, str):
         return value

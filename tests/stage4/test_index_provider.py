@@ -3,7 +3,7 @@
 import asyncio
 import math
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import aclosing
 from typing import Any, Never, cast
 
@@ -437,3 +437,61 @@ async def test_partial_insert_confirmation_is_not_success() -> None:
             [milvus_record()], document_id="doc-1", revision_id="rev-1"
         )
     assert call_names(client) == ["insert"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "page", ["not-a-page", [{"chunk_id": 1}], [projection(), projection()]]
+)
+async def test_malformed_projection_response_has_precise_internal_classification(
+    page: Any,
+) -> None:
+    from atlasrag.providers.index import projection as projection_module
+
+    malformed = getattr(projection_module, "IndexProjectionMalformedError", None)
+    assert malformed is not None, (
+        "malformed reachable projection needs a precise subtype"
+    )
+    client = FakeMilvusClient()
+    client.iterator = FakeQueryIterator(client.calls, [page])
+    with pytest.raises(malformed):
+        _ = [
+            row
+            async for row in provider(client).iter_revision_projection(
+                "doc-1", "rev-1", batch_size=1
+            )
+        ]
+    assert call_names(client)[-1] == "iterator.close"
+
+
+@pytest.mark.asyncio
+async def test_malformed_projection_and_cleanup_failure_remains_technical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from atlasrag.providers.index import milvus
+    from atlasrag.providers.index.projection import IndexProjectionMalformedError
+
+    # Isolate response/cleanup classification from the separately tested SDK
+    # thread boundary; all operations here are deterministic in-memory fakes.
+    async def invoke(
+        operation: Callable[..., object], *args: object, **kwargs: object
+    ) -> object:
+        try:
+            return operation(*args, **kwargs)
+        except OSError:
+            raise DependencyUnavailableError from None
+
+    monkeypatch.setattr(milvus, "_run_sync", invoke)
+    client = FakeMilvusClient()
+    client.iterator = FakeQueryIterator(client.calls, [None])
+    client.iterator.close_error = OSError("close unavailable")
+    with pytest.raises(ProviderResponseError) as caught:
+        _ = [
+            row
+            async for row in provider(client).iter_revision_projection(
+                "doc-1", "rev-1", batch_size=1
+            )
+        ]
+    assert type(caught.value) is ProviderResponseError
+    assert isinstance(caught.value.__cause__, IndexProjectionMalformedError)
+    assert call_names(client)[-1] == "iterator.close"

@@ -107,12 +107,14 @@ async def index_candidate(
     index: CandidateIndex,
     clock: Clock,
     batch_size: int = 1,
-) -> None:
+) -> CanonicalCandidate:
     """Rebuild R2 only; leave INDEXING on technical or classified failures.
 
     Callers must hold the document lease for the entire attempt. Successful
     indexing is only a visibility boundary; independent verification/publish
-    remain separate capabilities. No caller-provided chunks are accepted.
+    remain separate capabilities. No caller-provided chunks are accepted. Return
+    the exact canonical snapshot used so an invocation-owned verifier can bind
+    its proof to indexing authority without trusting caller-supplied digests.
     """
     canonical_context = CandidateBuildContext.model_validate(context)
     runtime = RuntimeConfig.model_validate(config)
@@ -165,3 +167,4 @@ async def index_candidate(
             dimension=runtime.part_i.embedding_dimension,
         )
     await index.wait_revision_visible(document_id, revision_id)
+    return candidate

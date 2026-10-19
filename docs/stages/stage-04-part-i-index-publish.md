@@ -2,10 +2,10 @@
 
 ## Status
 
-**IN PROGRESS — T0–T3 committed; T4 verified and ready to commit.
+**IN PROGRESS — T0–T5 implementation and task verification complete.
 Stage 4 is not complete.**
 
-T5–T11 have not started. The real Qwen smoke has passed; no publish
+T6–T11 have not started. The real Qwen smoke has passed; no publish
 verification, final commit/push, or remote Stage 4 CI success is claimed.
 
 ## Authority and approved decisions
@@ -400,6 +400,75 @@ passed; its own run was 61 passed with the known sandbox-thread case excluded,
 while the primary agent's escalated runs included that case successfully.
 Independent quality review also passed with no actionable findings. T4 is
 verified; this does not establish an exact-set receipt or authorize publication.
+T4 was committed as `55422a8` (`feat(stage4): index durable canonical
+candidates`). No push or merge has occurred.
+
+## T5 implementation and pending gates
+
+The invocation-owned `CandidateVerificationAttempt` binds the actual immutable
+snapshot returned by T4 indexing. Its private receipt binds complete persisted
+authority (including typed strategy metadata) and expected scalar projection,
+without accepting caller digests or insert acknowledgements. Verification
+reconstructs the PostgreSQL canonical boundary, checks every actual Strong
+projection row, and rereads the boundary afterward. It never re-embeds or
+constructs placeholder vectors. Consumption is single-use inside the future
+publisher's existing transaction, with no writes or commits of its own.
+Missing proof, canonical changes, wrong lifecycle state, overlapping operations,
+and cancellation fail closed; an invalidated generation cannot rearm proof.
+
+Only positively identified malformed projection data receives the new narrow
+internal provider subtype. Ordinary provider errors, outages, timeouts, and
+cleanup failures remain technical. If malformed data and cleanup failure occur
+together, the result is a generic technical provider error, not INDEX_VERIFY.
+This refinement touches only the additive Stage 4 projection capability; frozen
+Stage 2 methods, schema, public ErrorCode, and canonical output are unchanged.
+
+The implementer's initial RED run had **39 failures**; additional targeted RED
+runs covered malformed response classification (4), lifecycle validation (1),
+and simultaneous cleanup failure (1). Its final sandbox-safe focused run passed
+**179 tests, 51 deselected in 41.16s**. The primary agent independently ran all
+T5 verifier tests: **52 passed in 4.81s**, plus the deterministic provider
+cleanup-classification regression: **1 passed in 0.35s**. Full Ruff lint,
+formatting (187 files), mypy (169 source files), and `git diff --check` passed.
+The limited focused run explicitly excludes threaded provider tests and the
+T4 threaded schema-check case; it is not a full offline-gate result.
+
+Two new real-Milvus cases exercise the formal attempt index/verify/consume path
+on Stage 3 whitespace Children, including mixed Unicode. They use a durable
+test-only fake PostgreSQL store and fake embeddings; T9 still owns real
+PostgreSQL plus Milvus E2E. After normal approval capability recovered, the
+primary agent ran both new cases together with all prior Stage 2/Stage 4 Milvus
+integration regressions: **10 passed in 262.89s**. The formal-verifier whitespace
+hard gate is therefore established on real Milvus, not merely on a frozen
+fixture or direct low-level query. The owned Milvus/MinIO/etcd containers were
+then stopped without removing volumes or touching other projects.
+
+On 2026-10-19, automatic approval review initially failed with a selected-model capacity
+error before executing sandbox-external commands, including the primary
+agent's read-only isolated Compose status check. This was an approval-service
+failure, not a determination that the commands were unsafe. No approval bypass
+was attempted. After the user's subsequent continuation request, a retry through
+the normal approval path succeeded. Read-only inspection confirmed all three
+owned containers were stopped; the isolated project was then started and all
+three services reported healthy. The primary agent's complete threaded
+verifier/candidate/new-and-old-provider regression passed **227 tests in 8.48s**.
+The known baseline sandbox thread-wakeup limitation was handled through normal
+approval, not skips or a changed production threading boundary. Import/artifact
+checks and **65 scope-contract tests in 35.17s** also passed independently.
+
+Independent spec review passed (53 tests in 5.51s). Independent quality review
+found no critical or important issue (53 tests in 5.23s); one minor lifecycle
+test-coverage gap was corrected by independently exercising direct consumption
+after status mutation while a valid receipt still exists. Quality re-review
+confirmed resolution (2 targeted tests in 0.35s). The primary agent reran the
+complete updated verifier suite: **53 passed in 5.06s**, with full static checks
+still clean. With the owned services stopped, the primary agent's complete
+`UV_OFFLINE=1 make verify` (LangSmith/LangChain API keys removed and tracing
+disabled) passed: **2650 passed, 53 deselected in 92.23s**, full formatting,
+lint, mypy, and architecture checks clean. T5 task gates and both independent
+reviews are complete. Stage 4 publication, graph, real PG/Milvus E2E, final
+push, and remote CI remain outstanding. No service state was inferred from
+the earlier failed status check.
 
 ## Task ledger
 
@@ -409,8 +478,8 @@ verified; this does not establish an exact-set receipt or authorize publication.
 | T1 contracts and representation | COMPLETE — 11eeaf0 |
 | T2 embedding protocol and Qwen | COMPLETE — 3f294c2 |
 | T3 Milvus batch/projection capabilities | COMPLETE — 5ad929f |
-| T4 persisted candidate indexing | VERIFIED — ready to commit |
-| T5 independent verification | NOT STARTED |
+| T4 persisted candidate indexing | COMPLETE — 55422a8 |
+| T5 independent verification | VERIFIED |
 | T6 controlled failure recording | NOT STARTED |
 | T7 atomic publication | NOT STARTED |
 | T8 graph and whole-build lease | NOT STARTED |

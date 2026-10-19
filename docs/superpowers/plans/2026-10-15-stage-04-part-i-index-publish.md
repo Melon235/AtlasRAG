@@ -12,7 +12,7 @@
 
 ## 1. 审阅结论与当前证据
 
-状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T3 已提交，T3 为 5ad929f；T4 已验证待提交；尚未完成 Stage 4。**
+状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T4 已提交，T4 为 55422a8；T5 实施、独立审阅和全部 task gates 已通过；尚未完成 Stage 4。**
 
 批准限制：exact file/import/AST whitelist only，无 graph 目录通配豁免；Stage 1–3 frozen contracts 不变。LangSmith 仅允许锁定的传递 distribution，禁止直接集成/tracing/key/network requirement。ChunkInputLimitError 只用于确定性输入容量失败，不扩展 public ErrorCode，不改变 canonical chunk output/IDs。
 
@@ -233,10 +233,12 @@ PARSE/CHUNK 复用既有失败记录服务；四种 index failure 新增独立 r
 
 文件：services/indexing/verification.py；测试 `tests/stage4/test_candidate_verification.py`。
 
-- [ ] RED：missing/extra/duplicate/Parent、错误 doc/rev/type/parent/file/source/sheet/content/sparse_text；PG 在 index 后改变；仅 IDs 正确但 metadata 错误；伪造 insert 返回完整 IDs 均不能 PASS。
-- [ ] `uv run --frozen pytest tests/stage4/test_candidate_verification.py -q`。
-- [ ] 从 PG 重新建立 expected，分页读取实际 projection，逐字段/digest 和集合验证，产出 invocation-bound receipt。不给异常提供无证据 PASS。
-- [ ] GREEN：timeout/unavailable 不变为业务 mismatch；不 re-embed、不实现 production retrieval。真实 Milvus 测试证明新写候选可见，必要的 dense/BM25 smoke 只在测试层。提交 `feat(stage4): verify candidate exact sets independently`。
+实施细化：T4 index capability 返回其实际使用的 immutable CanonicalCandidate snapshot，由 per-invocation CandidateVerificationAttempt 内部绑定；不是接受 caller digest。attempt 提供 index、verify、consume_verified（供 T7 的现有事务内调用），receipt 保持私有且一次消费；异常/新 index/并发操作使 generation 失效，旧操作不能重新授权。canonical digest 不含正常 CHUNKED→INDEXING 的状态/时间变化，但覆盖源、完整 canonical 与构建身份；不进入 State。
+
+- [x] RED：missing/extra/duplicate/Parent、错误 doc/rev/type/parent/file/source/sheet/content/sparse_text；PG 在 index 后改变；仅 IDs 正确但 metadata 错误；伪造 insert 返回完整 IDs 均不能 PASS。
+- [x] `uv run --frozen pytest tests/stage4/test_candidate_verification.py -q`（既有 frozen 环境直接调用：53 passed；完整 make verify 也覆盖）。
+- [x] 从 PG 重新建立 expected，分页读取实际 projection，逐字段/digest 和集合验证，产出 invocation-bound receipt。不给异常提供无证据 PASS。
+- [x] GREEN：timeout/unavailable 不变为业务 mismatch；不 re-embed、不实现 production retrieval。真实 Milvus 10 tests passed，包含正式 verifier whitespace cases；完整 make verify 2650 passed。提交消息：`feat(stage4): verify candidate exact sets independently`。
 
 ### T6 — Classified failure recorder 与 CHUNK 分类
 

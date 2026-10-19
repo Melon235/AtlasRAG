@@ -29,6 +29,7 @@ from atlasrag.providers.index.models import (
 )
 from atlasrag.providers.index.projection import (
     PROJECTION_FIELDS,
+    IndexProjectionMalformedError,
     IndexWriteRejectedError,
     MilvusRevisionProjection,
 )
@@ -571,7 +572,7 @@ class MilvusIndexProvider:
                     not isinstance(response, (list, tuple))
                     or len(response) > batch_size
                 ):
-                    raise ProviderResponseError
+                    raise IndexProjectionMalformedError
                 if not response:
                     break
                 try:
@@ -579,7 +580,7 @@ class MilvusIndexProvider:
                         MilvusRevisionProjection.model_validate(row) for row in response
                     )
                 except (ValidationError, TypeError, ValueError):
-                    raise ProviderResponseError from None
+                    raise IndexProjectionMalformedError from None
                 for row in page:
                     yield row
         except GeneratorExit:
@@ -597,6 +598,11 @@ class MilvusIndexProvider:
                     # an already failed read; owned cleanup has still settled.
                     raise
                 except BaseException:
+                    if isinstance(primary_error, IndexProjectionMalformedError):
+                        # Malformed data is deterministic only when owned cleanup
+                        # also succeeds. Keep its safe diagnostic cause but prevent
+                        # T5 from treating a simultaneous outage as business FAILED.
+                        raise ProviderResponseError from primary_error
                     if primary_error is None:
                         raise
 
