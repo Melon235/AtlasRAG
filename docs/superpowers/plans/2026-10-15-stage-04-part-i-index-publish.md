@@ -12,7 +12,7 @@
 
 ## 1. 审阅结论与当前证据
 
-状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T4 已提交，T4 为 55422a8；T5 实施、独立审阅和全部 task gates 已通过；尚未完成 Stage 4。**
+状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T5 已提交，T5 为 5af10dc；T6 实施、独立审阅和完整 make verify 已通过；尚未完成 Stage 4。**
 
 批准限制：exact file/import/AST whitelist only，无 graph 目录通配豁免；Stage 1–3 frozen contracts 不变。LangSmith 仅允许锁定的传递 distribution，禁止直接集成/tracing/key/network requirement。ChunkInputLimitError 只用于确定性输入容量失败，不扩展 public ErrorCode，不改变 canonical chunk output/IDs。
 
@@ -244,10 +244,12 @@ PARSE/CHUNK 复用既有失败记录服务；四种 index failure 新增独立 r
 
 文件：domain/indexing/failures.py、domain/ingestion/failures.py、services/ingestion/chunking.py、services/indexing/failure.py；测试 `tests/stage4/test_failures.py`。
 
-- [ ] RED：四类 index failure 仅允许匹配的 INDEXING candidate；PARSE/CHUNK 仍走旧 recorder；R1 triple/envelope 不变；record failure 的 PG 错误继续传播。
-- [ ] `uv run --frozen pytest tests/stage4/test_failures.py tests/stage3/test_chunking.py -q`。
-- [ ] 只对 C 中批准的明确容量失败引入 ValueError 子类；编排仅捕捉精确业务类型或明确 FAILED validation result，不捕捉普通 ValueError/Exception。
-- [ ] GREEN：普通 ValueError、内部 chunk invariant、SDK unavailable、timeout、cancel 绝不记 FAILED；既有 chunk fixtures/output/ID 不变。提交 `feat(stage4): classify controlled build failures`。
+实施细化：复用已有四类 indexing 的精确异常类型，不为满足文件清单增加无用类型。新增 `classify_index_failure(error)` 和 `record_index_failure(factory, context, error, *, clock)`；未分类异常在读取 clock / 创建 UoW 之前原样传播。ChunkInputLimitError 仅用于已有 table header/cell/header-block/row 四处容量失败；已验证 profile 下的 split/source-map/structural-atom 防御性检查仍是普通 ValueError，不改变成功 canonical 输出、版本或 IDs。
+
+- [x] RED：四类 index failure 仅允许匹配的 INDEXING candidate；PARSE/CHUNK 仍走旧 recorder；R1 triple/envelope 不变；record failure 的 PG 错误继续传播。
+- [x] `uv run --frozen pytest tests/stage4/test_failures.py tests/stage3/test_chunking.py -q`（既有 frozen 环境直接调用；最终 174 passed；完整 gate 也覆盖）。
+- [x] 只对 C 中批准的明确容量失败引入 ValueError 子类；本任务分类/记录只接受精确业务类型，不捕捉普通 ValueError/Exception；Graph route 在 T8 接入。
+- [x] GREEN：普通 ValueError、内部 chunk invariant、SDK unavailable、timeout、cancel 绝不记 FAILED；既有 chunk fixtures/output/ID 不变，AST 与四组 pre-change golden hashes 已验证。完整 make verify 2775 passed。提交消息：`feat(stage4): classify controlled build failures`。
 
 ### T7 — 单事务 publish 与 marker
 

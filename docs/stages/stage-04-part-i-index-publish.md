@@ -2,10 +2,10 @@
 
 ## Status
 
-**IN PROGRESS — T0–T5 implementation and task verification complete.
+**IN PROGRESS — T0–T6 implementation and task verification complete.
 Stage 4 is not complete.**
 
-T6–T11 have not started. The real Qwen smoke has passed; no publish
+T7–T11 have not started. The real Qwen smoke has passed; no publish
 verification, final commit/push, or remote Stage 4 CI success is claimed.
 
 ## Authority and approved decisions
@@ -469,6 +469,41 @@ lint, mypy, and architecture checks clean. T5 task gates and both independent
 reviews are complete. Stage 4 publication, graph, real PG/Milvus E2E, final
 push, and remote CI remain outstanding. No service state was inferred from
 the earlier failed status check.
+T5 was committed as `5af10dc` (`feat(stage4): verify candidate exact sets
+independently`). No push or merge has occurred.
+
+## T6 controlled failure classification
+
+The indexing-specific classifier admits only the existing narrow deterministic
+types for REPRESENTATION, EMBEDDING, INDEX_WRITE, and INDEX_VERIFY. Its recorder
+propagates every unclassified original exception before reading the clock or
+opening a UoW. For an admitted failure, it revalidates matching INDEXING
+ownership, source, observed hash, building triple, and metadata slots before
+changing only status, failed stage, and timestamp with one explicit commit.
+Current/building identities, metadata, canonical rows, and cache freshness are
+not changed. Storage errors and cancellation propagate and roll back.
+
+The approved `ChunkInputLimitError(ValueError)` applies only to the four existing
+table header/cell/header-block/row capacity checks. Profile, source-map, split,
+structural-atom, and internal consistency errors remain unclassified. The
+frozen PARSE/CHUNK recorder and public ErrorCode are untouched. The primary
+agent's AST comparison proved the chunker is identical to the pre-T6 source
+apart from the added import and exactly four exception types. Tests additionally
+pin pre-change canonical serialization hashes for text, whitespace, FULL
+tables, and ROW_GROUP tables, including chunk IDs and unchanged profile/version.
+
+Initial RED: **111 failed, 11 passed**, from missing T6 capabilities. The final
+suite contains 125 T6 cases. The primary agent independently ran T6 plus frozen
+chunking/table/determinism/candidate-service regressions: **206 passed in 4.33s**.
+The implementer's scope suites passed **107 tests in 70.38s**. Full static checks
+initially caught formatting and test annotation issues omitted by the focused
+check; these were corrected without behavior changes. The primary agent's
+complete `UV_OFFLINE=1 make verify`, with API keys removed, tracing disabled,
+and owned services stopped, passed **2775 tests, 53 deselected in 91.70s**,
+plus full formatting (190 files), lint, mypy (172 source files), and architecture
+checks. Independent spec review passed (181 focused tests and 65 scope tests);
+independent quality review passed without findings (125 tests in 2.16s).
+T6 task gates and reviews are complete; graph-level routing remains T8 work.
 
 ## Task ledger
 
@@ -479,8 +514,8 @@ the earlier failed status check.
 | T2 embedding protocol and Qwen | COMPLETE — 3f294c2 |
 | T3 Milvus batch/projection capabilities | COMPLETE — 5ad929f |
 | T4 persisted candidate indexing | COMPLETE — 55422a8 |
-| T5 independent verification | VERIFIED |
-| T6 controlled failure recording | NOT STARTED |
+| T5 independent verification | COMPLETE — 5af10dc |
+| T6 controlled failure recording | VERIFIED |
 | T7 atomic publication | NOT STARTED |
 | T8 graph and whole-build lease | NOT STARTED |
 | T9 real storage integration | NOT STARTED |

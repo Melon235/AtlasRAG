@@ -36,6 +36,7 @@ from atlasrag.domain.ingestion.elements import (
     normalize_canonical_text,
     normalize_single_line,
 )
+from atlasrag.domain.ingestion.failures import ChunkInputLimitError
 from atlasrag.services.ingestion.analysis import (
     ChunkRouter,
     DocumentAnalyzer,
@@ -601,14 +602,16 @@ def _table_slices(
         _escape_table_cell(cell) for row in table.rows for cell in row
     )
     if any(len(cell) > limit for cell in escaped_headers):
-        raise ValueError("table header cannot fit without data loss")
+        raise ChunkInputLimitError("table header cannot fit without data loss")
     if any(len(cell) > limit for cell in escaped_cells):
-        raise ValueError("table cell cannot fit without data loss")
+        raise ChunkInputLimitError("table cell cannot fit without data loss")
     if len(prefix) >= limit:
-        raise ValueError("table header block leaves no room for a complete row")
+        raise ChunkInputLimitError(
+            "table header block leaves no room for a complete row"
+        )
     row_costs = tuple(1 + len(line) for line in row_lines)
     if any(len(prefix) + cost > limit for cost in row_costs):
-        raise ValueError("table row cannot fit without data loss")
+        raise ChunkInputLimitError("table row cannot fit without data loss")
 
     full_length = len(prefix) + sum(row_costs)
     if full_length <= limit:
