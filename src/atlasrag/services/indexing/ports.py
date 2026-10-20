@@ -8,6 +8,7 @@ from typing import Protocol, Self
 from atlasrag.providers.index.models import MilvusChunkRecord
 from atlasrag.providers.index.projection import MilvusRevisionProjection
 from atlasrag.repositories.postgres.records import (
+    RuntimeMetadata,
     StoredChunk,
     StoredDocument,
     StoredElement,
@@ -57,6 +58,20 @@ class IndexingUnitOfWork(Protocol):
 
 
 IndexingUnitOfWorkFactory = Callable[[], IndexingUnitOfWork]
+
+
+class PublicationRuntimeMetadata(Protocol):
+    def set_query_cache_invalidation_required(
+        self, required: bool
+    ) -> Awaitable[RuntimeMetadata]: ...
+
+
+class PublicationUnitOfWork(IndexingUnitOfWork, Protocol):
+    @property
+    def runtime_metadata(self) -> PublicationRuntimeMetadata: ...
+
+
+PublicationUnitOfWorkFactory = Callable[[], PublicationUnitOfWork]
 
 
 class CandidateIndex(Protocol):

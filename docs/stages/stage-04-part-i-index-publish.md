@@ -2,10 +2,10 @@
 
 ## Status
 
-**IN PROGRESS — T0–T6 implementation and task verification complete.
+**IN PROGRESS — T0–T7 implementation and task verification complete.
 Stage 4 is not complete.**
 
-T7–T11 have not started. The real Qwen smoke has passed; no publish
+T8–T11 have not started. The real Qwen smoke has passed; no publish
 verification, final commit/push, or remote Stage 4 CI success is claimed.
 
 ## Authority and approved decisions
@@ -504,6 +504,54 @@ plus full formatting (190 files), lint, mypy (172 source files), and architectur
 checks. Independent spec review passed (181 focused tests and 65 scope tests);
 independent quality review passed without findings (125 tests in 2.16s).
 T6 task gates and reviews are complete; graph-level routing remains T8 work.
+T6 was committed as `c63c0b6` (`feat(stage4): classify controlled build
+failures`). No push or merge has occurred.
+
+## T7 atomic publication progress
+
+Publication is being implemented against the existing PostgreSQL UoW and
+typed parse-metadata envelope. Its invocation capability must invalidate proof
+on every exit, including failures opening the transaction or evaluating the
+clock, so a failed publication requires fresh verification. This adds only a
+proof-invalidating method to the Stage 4 attempt, never a proof-creating API.
+
+The primary agent started only the owned Stage 4 PostgreSQL service and checked
+the loopback port and isolated database name before probing readiness. Compose
+supplies separate connection variables; the test DSN was assembled in-process
+without printing or persisting credentials. Readiness passed. Existing Stage 2
+PostgreSQL integration regressions then passed **15 tests in 8.45s**, using the
+existing per-test UUID database creation/migration/cleanup fixture. This is a
+storage baseline, not by itself proof of T7 publication or rollback.
+
+T7 now consumes actual invocation proof in its sole transaction, constructs and
+validates the promoted typed envelope/document, writes the cache marker, and
+commits once. Its finally block invalidates proof even if transaction opening
+fails. Uncertain commit outcomes retain frozen UoW semantics; no retry or claim
+of rollback after an already completed server commit is introduced. Nothing
+calls Redis, touches Milvus, deletes R1, or changes schema during publication.
+
+The initial TDD run produced 36 expected missing-capability failures. The frozen
+implementation has 48 publication unit cases plus the existing 53 verifier
+cases; the primary agent's combined run passed **101 tests in 11.12s**, full
+Ruff/format (193 files), mypy (175 source files), and diff checks clean. Exact
+scope/import tests passed **137 in 35.77s**. Independent spec review passed,
+including its own **101 tests in 10.59s**.
+
+The first real T7 PostgreSQL run passed **12 tests in 9.05s**. On the frozen
+implementation, the final combined Stage 2/Stage 3/T7 PostgreSQL suite passed
+**40 tests in 22.63s**. The 12 T7 cases cover four successful publications and
+eight injected failures after actual document/marker SQL writes, across no
+current revision/R1 and initially false/true marker. A fresh real UoW proves
+the document, both metadata slots, revision triples, canonical rows, and marker
+roll back together; stale proof is rejected and a real reverify permits retry.
+Embedding and Milvus remain test doubles in this PG-focused gate; T9 still owns
+combined real PG/Milvus E2E. The owned PostgreSQL container was then stopped
+without removing its volume. Independent quality review passed without
+findings, including **101 tests in 11.07s**. The primary agent's full
+`UV_OFFLINE=1 make verify`, with owned services stopped, API keys removed,
+and tracing disabled, passed **2823 tests, 65 deselected in 93.19s**, plus
+formatting, lint, mypy, and architecture checks. T7 task gates are complete;
+T8 orchestration, T9 E2E, final push, and remote CI remain outstanding.
 
 ## Task ledger
 
@@ -515,8 +563,8 @@ T6 task gates and reviews are complete; graph-level routing remains T8 work.
 | T3 Milvus batch/projection capabilities | COMPLETE — 5ad929f |
 | T4 persisted candidate indexing | COMPLETE — 55422a8 |
 | T5 independent verification | COMPLETE — 5af10dc |
-| T6 controlled failure recording | VERIFIED |
-| T7 atomic publication | NOT STARTED |
+| T6 controlled failure recording | COMPLETE — c63c0b6 |
+| T7 atomic publication | VERIFIED |
 | T8 graph and whole-build lease | NOT STARTED |
 | T9 real storage integration | NOT STARTED |
 | T10 scope gates, commands, CI | NOT STARTED |

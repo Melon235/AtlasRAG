@@ -12,7 +12,7 @@
 
 ## 1. 审阅结论与当前证据
 
-状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T5 已提交，T5 为 5af10dc；T6 实施、独立审阅和完整 make verify 已通过；尚未完成 Stage 4。**
+状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T6 已提交，T6 为 c63c0b6；T7 实施、双审、真实 PG 和完整离线 gate 已通过；尚未完成 Stage 4。**
 
 批准限制：exact file/import/AST whitelist only，无 graph 目录通配豁免；Stage 1–3 frozen contracts 不变。LangSmith 仅允许锁定的传递 distribution，禁止直接集成/tracing/key/network requirement。ChunkInputLimitError 只用于确定性输入容量失败，不扩展 public ErrorCode，不改变 canonical chunk output/IDs。
 
@@ -255,10 +255,12 @@ PARSE/CHUNK 复用既有失败记录服务；四种 index failure 新增独立 r
 
 文件：services/indexing/publication.py；测试 `tests/stage4/test_publication.py`、`tests/integration/test_stage4_publish.py`。
 
-- [ ] RED：None→R1、R1→R2；缺失/跨 invocation/stale/已消费 receipt；错误 building triple/slot/status；current==building；marker 原先 true/false 两种情形。
-- [ ] `uv run --frozen pytest tests/stage4/test_publication.py -q`。
-- [ ] 用原 UoW 在同一事务重读/重验 canonical digest、移动 triple/envelope、READY、clear failure、marker=true；只调用一次显式 commit。
-- [ ] GREEN，并真实 PG 注入“document.put 完成后 marker 写失败”，证明整个事务回滚且 R1/slots/marker 全不变。成功不删旧 R1、不连 Redis。提交 `feat(stage4): atomically publish verified revisions`。
+实施细化：`publish_revision(factory, context, *, verification: CandidateVerificationAttempt, clock)` 返回既有 `PublishResult`。在 indexing ports 中增加仅含既有 runtime metadata capability 的结构 Protocol，不修改冻结 UoW。attempt 新增仅清除 receipt 并推进 generation 的 `invalidate_verified()`；publisher 的 finally 覆盖 factory/open/clock/write/commit 失败，确保失败后必须重新验证，不释放其他操作的 busy guard，也不暴露或创建 proof。
+
+- [x] RED：None→R1、R1→R2；缺失/跨 invocation/stale/已消费 receipt；错误 building triple/slot/status；current==building；marker 原先 true/false 两种情形。
+- [x] `uv run --frozen pytest tests/stage4/test_publication.py -q`（既有 frozen 环境直接调用，与 verification 合计 101 passed；完整 gate 也覆盖）。
+- [x] 用原 UoW 在同一事务重读/重验 canonical digest、移动 triple/envelope、READY、clear failure、marker=true；只调用一次显式 commit。
+- [x] GREEN，并真实 PG 注入“document.put 完成后 marker 写失败”，证明整个事务回滚且 R1/slots/marker 全不变。真实 Stage 2/3/4 PG 联合回归 40 passed，完整离线 gate 2823 passed；成功不删旧 R1、不连 Redis。提交消息：`feat(stage4): atomically publish verified revisions`。
 
 ### T8 — Thin graph 与 whole-build runner
 

@@ -116,6 +116,15 @@ class CandidateVerificationAttempt:
         self.__busy = True
         return self.__generation
 
+    def invalidate_verified(self) -> None:
+        """Discard proof, including a pending verifier's ability to rearm it.
+
+        Publication cleanup uses this even if opening its transaction fails.
+        It cannot create proof or release another operation's busy guard.
+        """
+        self.__receipt = None
+        self.__generation += 1
+
     def _check_generation(self, generation: int) -> None:
         if generation != self.__generation:
             raise InvariantViolationError
