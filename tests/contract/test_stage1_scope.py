@@ -292,6 +292,10 @@ EXPECTED_GRAPH_FILES = frozenset(
         "state/rag_core.py",
         "state/retrieval.py",
         "state/web_evidence.py",
+        "indexing/__init__.py",
+        "indexing/contracts.py",
+        "indexing/state.py",
+        "indexing/document_build.py",
     }
 )
 EXPECTED_PRODUCTION_FILES = frozenset(
@@ -381,6 +385,12 @@ STAGE3_PRODUCTION_FILES = frozenset(
 )
 STAGE4_PRODUCTION_FILES = frozenset(
     {
+        "application/document_build.py",
+        "graphs/indexing/__init__.py",
+        "graphs/indexing/contracts.py",
+        "graphs/indexing/state.py",
+        "graphs/indexing/document_build.py",
+        "services/indexing/build.py",
         "providers/index/projection.py",
         "providers/embedding/__init__.py",
         "providers/embedding/base.py",
@@ -457,6 +467,48 @@ def test_qwen_module_is_not_a_general_import_exemption(sdk: str) -> None:
     )
 
 
+@pytest.mark.parametrize("absolute", [False, True], ids=["relative", "absolute"])
+@pytest.mark.parametrize(
+    ("relative_path", "source", "allowed"),
+    [
+        (
+            "src/atlasrag/graphs/indexing/document_build.py",
+            "from langgraph.graph import StateGraph",
+            True,
+        ),
+        (
+            "src/atlasrag/graphs/indexing/document_build.py",
+            "from langgraph.graph.state import CompiledStateGraph",
+            True,
+        ),
+        (
+            "src/atlasrag/graphs/indexing/other.py",
+            "from langgraph.graph import StateGraph",
+            False,
+        ),
+        (
+            "src/atlasrag/graphs/indexing/document_build.py",
+            "from langgraph.checkpoint.memory import MemorySaver",
+            False,
+        ),
+    ],
+)
+def test_build_graph_import_exception_is_exact_for_both_path_forms(
+    absolute: bool, relative_path: str, source: str, allowed: bool
+) -> None:
+    path = Path(relative_path)
+    if absolute:
+        path = REPOSITORY_ROOT / path
+    assert bool(_source_import_violations(source, path)) is not allowed
+
+
+def test_build_graph_import_exception_rejects_external_same_named_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "src/atlasrag/graphs/indexing/document_build.py"
+    assert _source_import_violations("from langgraph.graph import StateGraph", path)
+
+
 def test_embedding_files_are_an_exact_manifest(tmp_path: Path) -> None:
     path = tmp_path / "providers/embedding/unapproved.py"
     path.parent.mkdir(parents=True)
@@ -470,6 +522,24 @@ def test_embedding_files_are_an_exact_manifest(tmp_path: Path) -> None:
 def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
     normalized = module_name.casefold()
     root = normalized.partition(".")[0].replace("-", "_")
+    if root == "langgraph" and path is not None:
+        relative_path = (
+            path.relative_to(REPOSITORY_ROOT)
+            if path.is_absolute() and path.is_relative_to(REPOSITORY_ROOT)
+            else path
+        )
+        return not (
+            relative_path.as_posix() == "src/atlasrag/graphs/indexing/document_build.py"
+            and module_name
+            in {
+                "langgraph.graph",
+                "langgraph.graph.START",
+                "langgraph.graph.END",
+                "langgraph.graph.StateGraph",
+                "langgraph.graph.state",
+                "langgraph.graph.state.CompiledStateGraph",
+            }
+        )
     if root in {"torch", "transformers", "huggingface_hub"}:
         if path is None:
             return True
@@ -804,7 +874,7 @@ def test_dependency_manifests_have_no_deferred_runtime_packages() -> None:
     assert not violations, f"deferred Stage 1 dependencies found: {violations}"
 
 
-def test_graph_package_contains_only_declarative_state_modules() -> None:
+def test_graph_package_contains_frozen_states_and_exact_part_i_build_modules() -> None:
     actual_files = frozenset(
         path.relative_to(GRAPH_ROOT).as_posix() for path in GRAPH_ROOT.rglob("*.py")
     )
@@ -816,8 +886,17 @@ def test_graph_package_contains_only_declarative_state_modules() -> None:
     violations: list[str] = []
     for path in sorted(GRAPH_ROOT.rglob("*.py")):
         relative_path = path.relative_to(REPOSITORY_ROOT).as_posix()
+        if path.relative_to(GRAPH_ROOT).as_posix() in {
+            "indexing/contracts.py",
+            "indexing/document_build.py",
+        }:
+            # These exact internal Part I modules are executable. Their import
+            # and plumbing boundaries are checked by the production checker.
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative_path)
-        is_state_schema = path.parent.name == "state" and path.name != "__init__.py"
+        is_state_schema = (
+            path.parent.name == "state" and path.name != "__init__.py"
+        ) or path.relative_to(GRAPH_ROOT).as_posix() == "indexing/state.py"
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):

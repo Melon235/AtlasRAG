@@ -12,7 +12,7 @@
 
 ## 1. 审阅结论与当前证据
 
-状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T6 已提交，T6 为 c63c0b6；T7 实施、双审、真实 PG 和完整离线 gate 已通过；尚未完成 Stage 4。**
+状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T7 已提交，T7 为 ecc88a6；T8 已验证待提交；尚未完成 Stage 4。**
 
 批准限制：exact file/import/AST whitelist only，无 graph 目录通配豁免；Stage 1–3 frozen contracts 不变。LangSmith 仅允许锁定的传递 distribution，禁止直接集成/tracing/key/network requirement。ChunkInputLimitError 只用于确定性输入容量失败，不扩展 public ErrorCode，不改变 canonical chunk output/IDs。
 
@@ -141,6 +141,8 @@ PARSE/CHUNK 复用既有失败记录服务；四种 index failure 新增独立 r
 
 所有退出路径 finally 释放一次 lease；已发出的同步 SDK 工作 settle 后再解锁，避免后台旧写入污染下一次 attempt。PostgreSQL session 丢失是技术失败，不能把本地 lease 对象仍存在当作锁继续有效；相应故障测试必须覆盖 publish 前的数据库失联。
 
+T8 实施细化：每 invocation 独立 pool adapter 通过既有 lock manager 的公共构造依赖捕获实际持锁连接；复用该连接上的既有 RuntimeMetadataRepository.get() 并及时 rollback 只读事务，在操作边界（尤其 publish 前）证明同一 session 仍可往返。SQL 不进 application/graph，不读取 lease 私有字段，不改冻结 API。观察到失联即 latch technical failure、使 receipt 失效，原 lease 仍是唯一 release owner；probe/release 不并发。真实回归须只终止 lease backend、同时证明普通 UoW 可用。这是 checkpoint 检测，不是 fencing，不能声称消除 probe 后断线或已发出的外部工作窗口。
+
 ## 4. 文件职责地图
 
 下列路径均相对仓库根；新 regular package 包含仅 docstring 的 `__init__.py`，不扩展 Stage 1 public export surface。
@@ -266,11 +268,11 @@ PARSE/CHUNK 复用既有失败记录服务；四种 index failure 新增独立 r
 
 文件：graphs/indexing、services/indexing/build.py、application/document_build.py；测试 `tests/stage4/test_document_build.py`、`test_build_lock.py`。
 
-- [ ] RED：记录 node 事件并精确断言八节点顺序；六个业务 failure stage 各走 recorder→END；mutation 只 discard→END；技术/程序错误传播；不能绕过 verify 直达 publish。
-- [ ] `uv run --frozen pytest tests/stage4/test_document_build.py tests/stage4/test_build_lock.py -q`。
-- [ ] 实现 StateGraph、显式 injected attempt services、无 checkpointer；runner 同文档锁覆盖整个 ainvoke，finally release。
-- [ ] GREEN：成功、业务失败、异常、取消均先 settle 再 release 一次；同文档 B 在 A release 后才能开始 prepare；不同文档可并行。清 key/关闭 tracing/禁止网络的 fake-service graph 仍完成。
-- [ ] 检查 State 每个字段与 actual update：vectors、records、config、providers、receipt、异常对象均不能写入。提交 `feat(stage4): compose locked document build subgraph`。
+- [x] RED：记录 node 事件并精确断言八节点顺序；六个业务 failure stage 各走 recorder→END；mutation 只 discard→END；技术/程序错误传播；不能绕过 verify 直达 publish。
+- [x] `uv run --frozen pytest tests/stage4/test_document_build.py tests/stage4/test_build_lock.py -q`：主代理 63 passed（1.62s）。
+- [x] 实现 StateGraph、显式 injected attempt services、无 checkpointer；runner 同文档锁覆盖整个 ainvoke，finally release。实际持锁 session probe 不宣称 fencing。
+- [x] GREEN：成功、业务失败、异常、取消均先 settle 再 release 一次；同文档 B 在 A release 后才能开始 prepare；不同文档可并行。清 key/关闭 tracing/禁止网络的 fake-service graph 仍完成。hash/parser/chunk 实际线程双取消、后续 index batch 停止、startup settlement 均覆盖。
+- [x] 检查 State 每个字段与 actual update：vectors、records、config、providers、receipt、异常对象均不能写入。独立规格/质量审阅通过；修正精确 whitelist 的绝对/相对路径差异后，主代理全量 2929 passed / 65 deselected（98.53s）。提交信息 `feat(stage4): compose locked document build subgraph`。
 
 ### T9 — 真实 PG/Milvus 故障与 E2E
 

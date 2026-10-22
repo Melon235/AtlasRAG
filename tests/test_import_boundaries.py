@@ -82,6 +82,59 @@ def test_real_repository_respects_import_boundaries() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "graphs/indexing/document_build.py",
+        "graphs/indexing/contracts.py",
+        "graphs/indexing/state.py",
+        "graphs/indexing/unapproved.py",
+    ],
+)
+@pytest.mark.parametrize(
+    "imported",
+    [
+        "psycopg",
+        "redis",
+        "httpx",
+        "pymilvus",
+        "torch",
+        "atlasrag.repositories.postgres.uow",
+        "atlasrag.providers.parsing.text",
+        "langgraph.checkpoint.memory",
+    ],
+)
+def test_thin_build_graph_cannot_import_plumbing(
+    tmp_path: Path,
+    relative_path: str,
+    imported: str,
+) -> None:
+    path = tmp_path / "src/atlasrag" / relative_path
+    path.parent.mkdir(parents=True)
+    path.write_text(f"import {imported}\n", encoding="utf-8")
+    result = run_checker(tmp_path)
+    assert result.returncode != 0
+
+
+def test_langgraph_execution_is_allowed_only_in_exact_build_graph(
+    tmp_path: Path,
+) -> None:
+    graph = tmp_path / "src/atlasrag/graphs/indexing/document_build.py"
+    graph.parent.mkdir(parents=True)
+    graph.write_text("from langgraph.graph import StateGraph\n", encoding="utf-8")
+    assert run_checker(tmp_path).returncode == 0
+    other = graph.with_name("other.py")
+    other.write_text("from langgraph.graph import StateGraph\n", encoding="utf-8")
+    assert run_checker(tmp_path).returncode != 0
+
+
+def test_build_graph_rejects_sql_even_without_driver_import(tmp_path: Path) -> None:
+    graph = tmp_path / "src/atlasrag/graphs/indexing/document_build.py"
+    graph.parent.mkdir(parents=True)
+    graph.write_text('query = "SELECT * FROM documents"\n', encoding="utf-8")
+    assert run_checker(tmp_path).returncode != 0
+
+
 @pytest.mark.parametrize("sdk", ["torch", "transformers", "huggingface_hub"])
 @pytest.mark.parametrize(
     "relative_path",

@@ -2,11 +2,12 @@
 
 ## Status
 
-**IN PROGRESS — T0–T7 implementation and task verification complete.
+**IN PROGRESS — T0–T7 committed; T8 verified and ready to commit.
 Stage 4 is not complete.**
 
-T8–T11 have not started. The real Qwen smoke has passed; no publish
-verification, final commit/push, or remote Stage 4 CI success is claimed.
+T9–T11 have not started. Real Qwen, Milvus verification, and PostgreSQL
+publication gates have passed individually; no complete build E2E, final
+commit/push, or remote Stage 4 CI success is claimed.
 
 ## Authority and approved decisions
 
@@ -552,6 +553,85 @@ findings, including **101 tests in 11.07s**. The primary agent's full
 and tracing disabled, passed **2823 tests, 65 deselected in 93.19s**, plus
 formatting, lint, mypy, and architecture checks. T7 task gates are complete;
 T8 orchestration, T9 E2E, final push, and remote CI remain outstanding.
+T7 was committed as `ecc88a6` (`feat(stage4): atomically publish verified
+revisions`). No push or merge has occurred.
+
+## T8 lease preflight
+
+Independent technical review confirmed that pool health cannot establish the
+health of the separately held advisory-lock session. A public composition route
+exists without changing the frozen lease API: an invocation-local pool adapter
+captures the exact connection supplied to the existing lock manager and builds
+an existing `RuntimeMetadataRepository` against it. A read plus prompt rollback
+provides a same-session checkpoint and validates the required singleton. SQL
+stays in the repository; the original lease remains the sole releaser. No
+private lease fields, shared last-connection registry, new repository file, or
+migration are needed. This is part of the planned outer runner, not Graph State.
+
+T8 must latch observed session loss, invalidate proof, propagate a technical
+error, and prevent publication at the pre-publication checkpoint. T9 must kill
+only the lease backend while an ordinary UoW remains usable to test that case.
+These are checkpoint guarantees under the sole-owner protocol, not database
+fencing: session death after a probe and already-issued external work remain
+possible. Absolute exclusion of stale work after session death at any instant
+would require a separate architectural decision; it is not claimed here.
+
+Implementation resumed on 2026-10-21. The runner design uses an explicit
+document concurrency bound and reserves separate pool capacity for held leases
+and short UoWs. Injected pools have a caller-declared capacity contract; the
+production composition owns its configured pool. Cancellation shields only
+the current unsafe operation until it settles, never the whole graph through
+publication. The final T8 gates and independent reviews are recorded below.
+
+Early TDD evidence: graph/contracts started with 33 missing-implementation
+failures, the real service composition added five missing-capability failures,
+and the outer runner added 11 missing-module failures. A parent-run offline
+focused suite then passed **49 tests in 1.15s**, including actual worker-thread
+cancellation. This is an intermediate result, not a frozen T8 completion gate.
+The pinned LangGraph runtime deliberately wraps a node-raised CancelledError
+as NodeCancelledError; tests distinguish that technical error from actual
+task cancellation. Neither path may record a business failure or continue to
+publication. No vendor changes or test skips were used.
+
+## T8 graph and runner verification
+
+The actual LangGraph graph now composes the eight fixed lifecycle nodes and
+the two explicit business exits. Each invocation owns fresh services and
+verification proof; State contains only transient canonical data and safe
+result metadata. Indexing continues to reconstruct persisted canonical data,
+not consume transient chunks as authority. Source mutation discards only the
+candidate. WARN parsing remains publishable; six positively classified failure
+stages use their existing or Stage 4 recorder, while technical failures escape.
+
+The outer runner captures and probes the actual lease session through public
+dependencies. It hashes only after acquiring the document lock, reserves
+separate lease/UoW capacity, and releases once after issued work settles. The
+process owner explicitly initializes shared Qwen and index resources before
+accepting builds; parser SDKs remain lazy. It rejects close while builds are
+active, so its caller must await them first. Injected index lifecycle ownership
+is explicit. Qwen has no unload API and retains its process-lifetime model.
+
+Actual worker-barrier tests cover parse, initial hashing, and chunking under
+repeated cancellation. A separate regression proves cancellation stops later
+index batches. Startup cancellation initially exposed index close before its
+worker finished; the application now settles only that initialization before
+cleanup, without modifying the frozen provider or shielding the whole graph.
+
+The parent independently passed **63 focused tests in 1.62s**. The first full
+gate found one scope-helper defect: Stage 2 passed absolute paths while the
+new exact LangGraph whitelist handled relative paths only (**2919 passed,
+1 failed, 65 deselected**). Nine new path/API regressions now prove only the
+approved repository file and imports are admitted, including rejection of an
+external same-name file. No Stage 2 business tests or contracts were changed.
+
+Final parent-run `make verify` passed **2929 tests, 65 deselected in 98.53s**,
+with **202 formatted files**, Ruff, mypy over **184 files**, and both architecture
+checks passing. LangSmith keys were removed, tracing disabled, uv offline,
+and the task-owned infrastructure containers stopped. The focused graph gate
+also blocks network connection attempts. Independent specification and code
+quality reviews both passed on 2026-10-22. These are T8 offline guarantees;
+real combined PostgreSQL/Milvus build and selective lease-backend termination
+remain T9 work. Stage 4 push and final remote gates remain outstanding.
 
 ## Task ledger
 
@@ -564,8 +644,8 @@ T8 orchestration, T9 E2E, final push, and remote CI remain outstanding.
 | T4 persisted candidate indexing | COMPLETE — 55422a8 |
 | T5 independent verification | COMPLETE — 5af10dc |
 | T6 controlled failure recording | COMPLETE — c63c0b6 |
-| T7 atomic publication | VERIFIED |
-| T8 graph and whole-build lease | NOT STARTED |
+| T7 atomic publication | COMPLETE — ecc88a6 |
+| T8 graph and whole-build lease | VERIFIED — awaiting commit |
 | T9 real storage integration | NOT STARTED |
 | T10 scope gates, commands, CI | NOT STARTED |
 | T11 complete verification and publication | NOT STARTED |
