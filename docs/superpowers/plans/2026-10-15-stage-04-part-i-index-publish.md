@@ -12,7 +12,7 @@
 
 ## 1. 审阅结论与当前证据
 
-状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T7 已提交，T7 为 ecc88a6；T8 已验证待提交；尚未完成 Stage 4。**
+状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T8 已提交，T8 为 69953f4；T9 已验证待提交；尚未完成 Stage 4。**
 
 批准限制：exact file/import/AST whitelist only，无 graph 目录通配豁免；Stage 1–3 frozen contracts 不变。LangSmith 仅允许锁定的传递 distribution，禁止直接集成/tracing/key/network requirement。ChunkInputLimitError 只用于确定性输入容量失败，不扩展 public ErrorCode，不改变 canonical chunk output/IDs。
 
@@ -278,11 +278,11 @@ T8 实施细化：每 invocation 独立 pool adapter 通过既有 lock manager �
 
 文件：`tests/integration/test_stage4_index.py`、`test_stage4_publish.py`、`test_stage4_locks.py`、`test_stage4_build.py`，测试 fixtures 只位于 tests。
 
-- [ ] 使用唯一 doc/revision/test collection/project，正式服务数据不能复用为破坏性测试对象；启动只需 postgres、etcd、minio、milvus。
-- [ ] TXT/MD→真实 Stage 3 parse/chunk→测试 FakeEmbeddingProvider→真实 Milvus→verify→真实 PG publish，证明 READY/current/exact set，包含 TABLE metadata 路径。
-- [ ] R1 已存在时逐点注入 representation/embed/write/verify/publish failure，证明 R1 PG/Milvus 与 current metadata 不变；分别证明 source mutation 没有 current/已有 current 的两种恢复。
-- [ ] 重复 candidate、partial insert retry、delete visibility、metadata tamper、真实事务 rollback、同/不同文档双连接锁和取消释放全部运行。
-- [ ] 不把上述 tests 变成 mock integration，不把服务故障 skip，不引入 ranking/answer/benchmark 指标。提交 `test(stage4): cover real index publish and lease invariants`。
+- [x] 使用唯一 doc/revision/test collection/project，正式服务数据不能复用为破坏性测试对象；启动只需 postgres、etcd、minio、milvus。
+- [x] TXT/MD→真实 Stage 3 parse/chunk→测试 FakeEmbeddingProvider→真实 Milvus→verify→真实 PG publish，证明 READY/current/exact set，包含 TABLE metadata 路径。
+- [x] R1 已存在时逐点注入 representation/embed/write/verify/publish failure，证明 R1 PG/Milvus 与 current metadata 不变；分别证明 source mutation 没有 current/已有 current 的两种恢复。
+- [x] 重复 candidate、partial insert retry、delete visibility、metadata tamper、真实事务 rollback、同/不同文档双连接锁和取消释放全部运行。仅终止实际 lease backend，并证明普通 UoW 可用而 publish 被拒绝。
+- [x] 主代理完整真实 gate **36 passed（855.01s）**；服务停止后完整离线 gate **2929 passed / 84 deselected（106.88s）**；规格/质量审阅通过。并发用例只将自有 provider 的 SDK timeout 对齐生产默认 30 秒，保留 60 秒外层 watchdog；未改 Stage 2 fixture、生产逻辑或服务限流。无 skip、mock storage 或额外 retry。提交信息 `test(stage4): cover real index publish and lease invariants`。
 
 ### T10 — Scope gates、命令与 CI
 

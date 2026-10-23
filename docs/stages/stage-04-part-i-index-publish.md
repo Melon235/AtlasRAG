@@ -2,12 +2,14 @@
 
 ## Status
 
-**IN PROGRESS — T0–T7 committed; T8 verified and ready to commit.
+**IN PROGRESS — T0–T8 committed; T9 verified for commit.
 Stage 4 is not complete.**
 
-T9–T11 have not started. Real Qwen, Milvus verification, and PostgreSQL
-publication gates have passed individually; no complete build E2E, final
-commit/push, or remote Stage 4 CI success is claimed.
+T9 is verified; T10–T11 have not started. Real Qwen, Milvus verification,
+PostgreSQL publication, and the complete 36-case T9 storage gate have passed
+after the test-only timeout correction documented below. The services-stopped
+full offline gate also passed.
+No final commit/push or remote Stage 4 CI success is claimed.
 
 ## Authority and approved decisions
 
@@ -632,6 +634,82 @@ also blocks network connection attempts. Independent specification and code
 quality reviews both passed on 2026-10-22. These are T8 offline guarantees;
 real combined PostgreSQL/Milvus build and selective lease-backend termination
 remain T9 work. Stage 4 push and final remote gates remain outstanding.
+T8 was committed as `69953f4` (`feat(stage4): compose locked document build
+subgraph`).
+
+## T9 real storage and lease integration
+
+The storage gate now contains 36 cases across the four explicitly selected
+Stage 4 integration files. Test-only composition uses real TXT/Markdown
+parsers, canonical chunking, the actual build graph and runner, real PostgreSQL
+and Milvus, and deterministic fake embedding without model assets. Full scalar
+and typed-metadata projections are compared with persisted canonical source;
+whitespace-only Child text is preserved. Markdown TABLE coverage exercises
+both stores; non-null sheet/ROW_GROUP coverage separately uses a canonical
+fixture with real Milvus, not a claimed real XLSX parse.
+
+R1 snapshots cover canonical rows, current triple/metadata, and full Milvus
+projections. R2 fault cases cover all four controlled index failures, technical
+embedding/write/verification failures, and rollback after actual publication
+document/marker SQL. Source mutation tests cover both current/no-current
+recovery. Partial-write retry proves real partial and stale rows exist, then
+observes an empty candidate set before full replacement without touching R1.
+
+Real session tests cover same-document exclusion and different-document
+concurrency. Cancellation records normal parser settlement before the sole
+unconditional lease release. The lease-loss case terminates only the captured
+runner backend after validating its uniquely owned test database, proves an
+ordinary UoW remains usable, and rejects publication without FAILED conversion
+or reacquisition. This is checkpoint liveness evidence, not fencing.
+
+The initial complete gate returned **35 passed, 1 failed in 828.84s**. The
+different-document concurrency case exceeded the frozen Stage 2 fixture's
+10-second SDK timeout during rate-limited collection flush. An isolated
+unchanged rerun reproduced it (**1 failed in 39.05s**). Each candidate issues
+three flushes; two concurrent candidates share one collection. Milvus documents
+the default per-collection flush quota as 0.1 QPS
+([official configuration reference](https://milvus.io/docs/configure_quotaandlimits.md)).
+
+The single-variable experiment constructs only this test's provider through
+the fixture's public client/collection fields with the production-default
+30-second SDK timeout. The 60-second outer watchdog, actual concurrency and
+all assertions remain unchanged. No production code, Stage 2 fixture, server
+quota, retry policy, or business error classification changed. Both targeted
+cases then passed: **2 passed in 82.61s**. Parent-run static checks passed:
+205 formatted files, Ruff, mypy over 187 files, and import boundaries. The
+complete four-file rerun then passed **36 tests in 855.01s**. No production
+change was necessary; all storage assertions, failure routes, and actual
+lease-backend termination ran without skips. Stage 4 still requires T10–T11
+and successful publication.
+
+The parent reran the entire focused `tests/stage4` suite with tracing disabled,
+keys removed, and uv offline: **560 passed in 17.40s**. The storage containers
+were still running for the independent integration gate; this focused result
+is not presented as the services-stopped full `make verify` gate.
+
+On 2026-10-23 the parent also reran the real Qwen gate with Hugging Face
+offline mode and the already cached pinned snapshot: **1 passed in 30.73s**.
+The actual model/tokenizer revision remained
+`97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`, CUDA 0, float16/SDPA, 1024
+dimensions. Batch-three versus individual inference, finite normalized
+vectors, ordering, and the exact 1500-space canonical Child all passed.
+This smoke batch is not a change to the production batch-one baseline.
+
+A supplemental T0–T9 static review found no actionable correctness defect.
+It identified a deployment constraint: the approved offline guarantee assumes
+tracing is disabled. External LangSmith/LangChain tracing flags or an inherited
+tracing context can enable upstream callback tracing of graph inputs/outputs.
+AtlasRAG adds no direct integration, but does not claim to override an external
+opt-in. Do not enable those flags or wrap these builds in a tracing context;
+stronger isolation is not part of the approved Stage 4 gate.
+
+Final T9 parent-run `make verify` passed **2929 tests, 84 deselected in
+106.88s**, with format, Ruff, mypy (187 files), import boundaries, and tracked
+artifact checks all passing. The task-owned PostgreSQL/Milvus stack was
+stopped, API keys removed, tracing disabled, and uv offline; volumes were
+retained. Specification and quality reviews, including the final test-only
+timeout delta, passed. Commit message: `test(stage4): cover real index publish
+and lease invariants`.
 
 ## Task ledger
 
@@ -645,8 +723,8 @@ remain T9 work. Stage 4 push and final remote gates remain outstanding.
 | T5 independent verification | COMPLETE — 5af10dc |
 | T6 controlled failure recording | COMPLETE — c63c0b6 |
 | T7 atomic publication | COMPLETE — ecc88a6 |
-| T8 graph and whole-build lease | VERIFIED — awaiting commit |
-| T9 real storage integration | NOT STARTED |
+| T8 graph and whole-build lease | COMPLETE — 69953f4 |
+| T9 real storage integration | VERIFIED — commit pending |
 | T10 scope gates, commands, CI | NOT STARTED |
 | T11 complete verification and publication | NOT STARTED |
 

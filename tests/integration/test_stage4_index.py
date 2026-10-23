@@ -7,11 +7,20 @@ from pathlib import Path
 
 import pytest
 from providers.test_milvus_provider import milvus_record
+from pydantic import ValidationError
 from stage3.test_candidate_services import NOW, _document, _stored_document
 from stage4.candidate_fakes import Embedding, candidate
-from stage4.indexing_fixtures import canonical_whitespace_chunks, retrieval_record
+from stage4.indexing_fixtures import (
+    canonical_whitespace_chunks,
+    retrieval_record,
+    table_chunk,
+)
 
-from atlasrag.domain.ingestion.chunks import ChunkType, derive_chunk_content_hash
+from atlasrag.domain.ingestion.chunks import (
+    ChunkType,
+    TableSliceMode,
+    derive_chunk_content_hash,
+)
 from atlasrag.providers.index.models import MilvusChunkRecord
 from atlasrag.repositories.postgres.records import IngestionStatus
 from atlasrag.services.indexing.verification import CandidateVerificationAttempt
@@ -24,6 +33,48 @@ from integration.test_milvus import SDK_TIMEOUT_SECONDS, IsolatedMilvus
 from integration.test_milvus import isolated_milvus as isolated_milvus
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.asyncio
+async def test_real_milvus_preserves_table_slice_headers_rows_sheet_and_anchor(
+    isolated_milvus: IsolatedMilvus,
+) -> None:
+    """Non-null sheet metadata supplements the frozen Markdown TABLE E2E case."""
+    chunk = table_chunk(TableSliceMode.ROW_GROUP)
+    record = MilvusChunkRecord.model_validate(
+        retrieval_record(chunk).model_dump(mode="json")
+    )
+    index = isolated_milvus.provider
+    await index.initialize()
+    await index.insert_revision_batch(
+        [record], document_id=record.document_id, revision_id=record.revision_id
+    )
+    await index.wait_revision_visible(record.document_id, record.revision_id)
+    actual = [
+        row.model_dump(mode="json")
+        async for row in index.iter_revision_projection(
+            record.document_id, record.revision_id, batch_size=1
+        )
+    ]
+    expected = record.model_dump(mode="json", exclude={"dense_vector"})
+    assert actual == [expected]
+    assert chunk.table_slice is not None
+    assert chunk.table_slice.headers == ("Name", "值")
+    assert chunk.table_slice.rows == (("Alpha", "1"), ("Beta", "2"))
+    assert actual[0]["content"] == chunk.raw_content
+    metadata = actual[0]["structured_metadata"]
+    assert metadata["provenance"]["row_start"] == 5
+    assert metadata["provenance"]["row_end"] == 7
+    assert metadata["provenance"]["sheet_name"] == "Metrics"
+    assert metadata["source_anchor"]["sheet_name"] == "Metrics"
+    assert metadata["source_anchor"]["cell_range"] == "A1:B9"
+    # Whitespace admission is not permission to admit an empty text record.
+    for field in ("content", "sparse_text"):
+        with pytest.raises(ValidationError):
+            MilvusChunkRecord.model_validate(
+                {**record.model_dump(mode="json"), field: ""}
+            )
+    assert await index.count_revision(record.document_id, record.revision_id) == 1
 
 
 @pytest.mark.asyncio
