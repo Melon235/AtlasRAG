@@ -135,6 +135,62 @@ def test_build_graph_rejects_sql_even_without_driver_import(tmp_path: Path) -> N
     assert run_checker(tmp_path).returncode != 0
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from atlasrag.providers import cache\n",
+        "from ...providers import cache\n",
+        "from atlasrag.services import retrieval\n",
+        "from ..retrieval import search\n",
+        "from redis.asyncio import Redis\n",
+    ],
+)
+def test_indexing_service_boundary_resolves_import_forms(
+    tmp_path: Path, source: str
+) -> None:
+    path = tmp_path / "src/atlasrag/services/indexing/publication.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    result = run_checker(tmp_path)
+    assert result.returncode != 0
+    assert "indexing service may not import" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import docling\n",
+        "import mineru\n",
+        "from sqlalchemy import text\n",
+        "from sqlite3 import connect\n",
+    ],
+)
+def test_graph_nodes_cannot_import_parser_or_database_sdks(
+    tmp_path: Path, source: str
+) -> None:
+    path = tmp_path / "src/atlasrag/graphs/indexing/document_build.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    assert run_checker(tmp_path).returncode != 0
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from atlasrag.services.indexing.build import *\n",
+        "from atlasrag.services.indexing.ports import *\n",
+        "from langgraph.graph import *\n",
+    ],
+)
+def test_exact_graph_capabilities_do_not_allow_wildcard_imports(
+    tmp_path: Path, source: str
+) -> None:
+    path = tmp_path / "src/atlasrag/graphs/indexing/document_build.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    assert run_checker(tmp_path).returncode != 0
+
+
 @pytest.mark.parametrize("sdk", ["torch", "transformers", "huggingface_hub"])
 @pytest.mark.parametrize(
     "relative_path",

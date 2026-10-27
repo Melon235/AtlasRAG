@@ -39,6 +39,9 @@ INDEXING_PURE_FORBIDDEN_PREFIXES = (
     "huggingface_hub",
     "pymilvus",
     "psycopg",
+    "psycopg_pool",
+    "sqlalchemy",
+    "sqlite3",
     "redis",
     "httpx",
     "requests",
@@ -46,6 +49,16 @@ INDEXING_PURE_FORBIDDEN_PREFIXES = (
     "socket",
     "urllib.request",
     "http.client",
+)
+INDEXING_SERVICE_FORBIDDEN_PREFIXES = (
+    "atlasrag.graphs",
+    "atlasrag.providers.cache",
+    "atlasrag.services.retrieval",
+    "atlasrag.services.rag_core",
+    "atlasrag.services.local_evidence",
+    "atlasrag.services.web_evidence",
+    "atlasrag.services.answer",
+    "redis",
 )
 STAGE3_BOUNDARY_FORBIDDEN_PREFIXES = {
     ("domain", "ingestion"): (
@@ -112,6 +125,8 @@ GRAPH_PLUMBING_PREFIXES = (
     "atlasrag.providers",
     "psycopg",
     "psycopg_pool",
+    "sqlalchemy",
+    "sqlite3",
     "pymilvus",
     "redis",
     "httpx",
@@ -231,6 +246,16 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             targets = _import_targets(node, path, root)
+            if relative_path.startswith("src/atlasrag/services/indexing/"):
+                for target in targets:
+                    if _matching_prefix(INDEXING_SERVICE_FORBIDDEN_PREFIXES, target):
+                        diagnostics.append(
+                            Diagnostic(
+                                relative_path,
+                                node.lineno,
+                                f"indexing service may not import '{target}'",
+                            )
+                        )
             for target in targets:
                 if target == "langgraph" or target.startswith("langgraph."):
                     if (
@@ -245,6 +270,21 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
                             )
                         )
                 if relative_path.startswith("src/atlasrag/graphs/"):
+                    if (
+                        isinstance(node, ast.ImportFrom)
+                        and any(alias.name == "*" for alias in node.names)
+                        and _matching_prefix(
+                            ("langgraph", "atlasrag.repositories", "atlasrag.services"),
+                            target,
+                        )
+                    ):
+                        diagnostics.append(
+                            Diagnostic(
+                                relative_path,
+                                node.lineno,
+                                "thin graph capabilities require explicit named imports",
+                            )
+                        )
                     capability = _matching_prefix(
                         ("atlasrag.repositories", "atlasrag.services"), target
                     )

@@ -12,7 +12,7 @@
 
 ## 1. 审阅结论与当前证据
 
-状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T8 已提交，T8 为 69953f4；T9 已验证待提交；尚未完成 Stage 4。**
+状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T9 已提交，T9 为 22a984a；T10 完整脚本已验证待提交；尚未完成 Stage 4。**
 
 批准限制：exact file/import/AST whitelist only，无 graph 目录通配豁免；Stage 1–3 frozen contracts 不变。LangSmith 仅允许锁定的传递 distribution，禁止直接集成/tracing/key/network requirement。ChunkInputLimitError 只用于确定性输入容量失败，不扩展 public ErrorCode，不改变 canonical chunk output/IDs。
 
@@ -288,12 +288,12 @@ T8 实施细化：每 invocation 独立 pool adapter 通过既有 lock manager �
 
 文件：Makefile、scripts/stage4_verify.sh、integration.yml、check_import_boundaries.py；测试 `tests/stage4/test_stage4_scope.py`、`test_stage4_commands.py`、现有 checker/workflow tests。
 
-- [ ] RED：representations 禁 SDK；graph 禁 SQL/Redis/HTTP/model plumbing；production 禁 tests/benchmarks；embedding SDK 限 providers/embedding；禁止 migration、index_graph、Redis publish、State vectors/deps。
-- [ ] `uv run --frozen pytest tests/stage4/test_stage4_scope.py tests/stage4/test_stage4_commands.py tests/test_import_boundaries.py -q`。
-- [ ] 新 targets：`test-stage4` 只跑 tests/stage4；`test-stage4-integration` 显式枚举四个 storage/lock/E2E 文件；`stage4-model-smoke` 仅模型文件 + 非默认模型组；`stage4-verify`=默认 verify+focused+真实 integration。
-- [ ] CI 新 Stage 4 Integration job，默认 frozen dependencies + fake embedding、真实 PG/Milvus，无模型下载。沿用冻结 MinIO build 方案，不依赖无法拉取的旧镜像；Actions 全固定 SHA。
-- [ ] failure 打诊断、always 清唯一 CI ephemeral project/volumes；本地脚本不 down -v。Stage 2/3 selectors 保持不变，新增 Stage 4 测试不能污染旧 targets。
-- [ ] GREEN；默认 uv sync/make verify 无 parser/model 组、API key、外部网络服务需求。提交 `ci(stage4): add isolated offline and storage gates`。
+- [x] RED：representations 禁 SDK；graph 禁 SQL/Redis/HTTP/model plumbing；production 禁 tests/benchmarks；embedding SDK 限 providers/embedding；禁止 migration、index_graph、Redis publish、State vectors/deps。初始 56 failures；wildcard capability bypass 另有 3 RED 后精确修复。
+- [x] 聚焦/旧 tooling 合计 210 passed；独立规格与质量审阅通过，主代理 full gate 3013 passed / 84 deselected（108.88s），新一轮实际 stage4-verify 的默认 gate 3013 passed（111.83s）、focused 631 passed（21.28s）。
+- [x] 新 targets：`test-stage4` 只跑 tests/stage4；`test-stage4-integration` 显式枚举四个 storage/lock/E2E 文件；`stage4-model-smoke` 仅模型文件 + 非默认模型组；`stage4-verify`=默认 verify+focused+真实 integration。
+- [x] CI 新 Stage 4 Integration job，默认 frozen dependencies + fake embedding、真实 PG/Milvus，无模型下载。沿用冻结 MinIO build 方案，不依赖无法拉取的旧镜像；Actions 全固定 SHA。
+- [x] failure 打诊断、always 清唯一 CI ephemeral project/volumes；本地脚本不 down -v。Stage 2/3 selectors 保持不变，新增 Stage 4 测试不能污染旧 targets。真实脚本通过 bounded health/PG probe、36 项真实 storage gate（842.87s）和保留卷的清理，exit 0。
+- [x] GREEN；默认 uv sync/make verify 无 parser/model 组、API key、外部网络服务需求。主代理实际 `make stage4-model-smoke` 真实 CUDA 1 passed（23.65s）；最终静态跨模块审阅通过。提交信息 `ci(stage4): add isolated offline and storage gates`。
 
 ### T11 — 全量验证、报告、commit/push 与 PR
 

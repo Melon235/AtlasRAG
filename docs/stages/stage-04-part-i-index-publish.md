@@ -2,10 +2,12 @@
 
 ## Status
 
-**IN PROGRESS — T0–T8 committed; T9 verified for commit.
+**IN PROGRESS — T0–T9 committed; T10 verified for commit.
 Stage 4 is not complete.**
 
-T9 is verified; T10–T11 have not started. Real Qwen, Milvus verification,
+T9 is committed as `22a984a`; T10 has passed its complete real script gate.
+T11 closeout regression/publication work remains.
+Real Qwen, Milvus verification,
 PostgreSQL publication, and the complete 36-case T9 storage gate have passed
 after the test-only timeout correction documented below. The services-stopped
 full offline gate also passed.
@@ -125,6 +127,12 @@ Direct and key transitive versions currently resolved:
 | torch (Linux/Windows explicit CUDA source) | 2.13.0+cu126 |
 | torch (retained macOS resolution) | 2.14.1 |
 | transformers | 5.19.0 |
+| huggingface-hub | 1.33.0 |
+| docling-slim | 2.135.0 |
+| docling-core | 2.101.1 |
+| mineru | 4.0.11 |
+| pymilvus | 2.6.17 |
+| psycopg | 3.3.6 |
 
 Independent spec review passed: the reviewer reran 61 focused tests, verified
 the four optional environments, the complete lock, and real CUDA matmul/SDPA.
@@ -711,6 +719,107 @@ retained. Specification and quality reviews, including the final test-only
 timeout delta, passed. Commit message: `test(stage4): cover real index publish
 and lease invariants`.
 
+## T10 scope gates, commands, and CI
+
+The four new Make targets keep offline tests, the exact four-file real storage
+suite, and optional Qwen smoke separate. `stage4-verify` runs the default gate,
+focused Stage 4 tests, then the storage script. The script starts only
+PostgreSQL, etcd, MinIO, and Milvus with bounded Compose health waiting plus a
+PostgreSQL capability probe. Its failure/signal cleanup preserves the primary
+exit status, surfaces cleanup failures after otherwise successful work, and
+never removes local volumes.
+
+CI adds a run-specific Stage 4 job using frozen default dependencies and fake
+embedding. Actions and the MinIO source build remain pinned; all three tracing
+flags are disabled. Failure diagnostics precede always-cleanup of the owned
+ephemeral CI project and volumes. Existing Stage 2/3 jobs and selectors remain
+unchanged; the workflow test now terminates its Stage 3 slice at the exact new
+job boundary.
+
+Scope regressions close SQLAlchemy/sqlite3 plumbing and indexing-service
+cache/Part II import gaps. Exact graph capability checks now reject wildcard
+imports rather than treating their permitted base module as permission for
+every symbol. Closed State fields, the fifteen public exports, migration set,
+and indexing graph files remain frozen. No production business code changed.
+
+TDD evidence: **56 failed / 120 passed** before implementation, plus **3
+failed** for the subsequently identified wildcard bypass. Implementer final
+focused/Stage 3 tooling validation passed **210 tests**, and standalone Stage
+4 passed **631 tests**. The parent full gate on 2026-10-23 passed **3013 tests,
+84 deselected in 108.88s**, with 207 formatted files and mypy over 189 files.
+Specification and code-quality reviews both passed. After resuming on
+2026-10-27, a fresh actual `make stage4-verify` passed its default gate
+(**3013 passed / 84 deselected in 111.83s**) and focused target (**631 passed
+in 21.28s**), then successfully started the four dependencies and passed the
+PostgreSQL readiness probe. The real integration completed **36 passed in
+842.87s**, followed by successful cleanup and exit code 0. The four owned
+containers and their network were removed; persistent volumes were retained.
+This independently validates the actual full script, not only recording-tool
+tests. All eight T10 code/test files passed staged artifact, whitespace, and
+common credential-pattern checks. Commit message: `ci(stage4): add isolated
+offline and storage gates`.
+
+## Closeout regression evidence in progress
+
+On 2026-10-23, `make stage3-parser-smoke` was rerun in the existing isolated
+MinerU dependency environment with frozen, offline uv resolution. The real
+PDF-to-canonical flash path passed **1 test in 4.22s**, using MinerU SDK and
+producer **4.0.11** (one page, seven canonical elements). The default
+environment was not changed. Remaining closeout gates and final-HEAD remote
+results are still outstanding.
+
+On 2026-10-27 the new `make stage4-model-smoke` target passed **1 test in
+23.65s** using the isolated embedding environment and offline cached snapshot.
+Actual CUDA/float16/SDPA, the pinned model/tokenizer revision, 1024 dimensions,
+canonical whitespace, ordering, finiteness, and normalization all passed.
+
+The real `make stage3-parser-smoke` was refreshed on 2026-10-27 as well:
+**1 passed in 2.62s**, still using SDK/producer 4.0.11 and the same canonical
+one-page/seven-element result.
+
+| Gate | Latest parent evidence (2026-10-27 unless noted) |
+| --- | --- |
+| `make verify` | PASS — 3013 passed, 84 deselected; services stopped |
+| `make test-stage4` | PASS — 631 passed |
+| `make stage2-verify` | Pending closeout rerun |
+| `make stage3-verify` | Pending closeout rerun |
+| `make stage3-parser-smoke` | PASS — real MinerU flash, 1 passed |
+| `make stage4-verify` | PASS — full script, 36 real integration tests, successful volume-preserving cleanup |
+| `make stage4-model-smoke` | PASS — real CUDA Qwen, 1 passed |
+| Final-HEAD remote CI / Integration | Not yet pushed |
+
+## Final review questions
+
+The final independent static review passed on 2026-10-27. These answers apply
+to AtlasRAG's supported ownership protocol, not arbitrary external database
+writers. Runtime and remote completion evidence remains separately gated.
+
+| Question | Answer / enforced boundary |
+| --- | --- |
+| Can TEXT_PARENT be written to Milvus? | No; service filtering and record/provider validation reject it. |
+| Can an embedding vector enter Graph State? | No; closed State fields and streamed-update regressions exclude it. |
+| Can NaN/Inf be indexed? | No; embedding/service/record validation rejects nonfinite values. |
+| Can wrong-dimension embeddings be indexed? | No; identity, vector, and physical collection checks reject them. |
+| Can the provider silently use another model revision? | No; model/tokenizer pins and loaded identity checks must match. |
+| Can representation silently truncate? | No; full raw/rendered text is retained or capacity fails explicitly. |
+| Can stale in-memory chunks be indexing authority? | No; indexing reconstructs persisted canonical records. |
+| Can retry leave stale candidate records? | Not after successful retry and verification; a failed attempt can leave unpublished residuals. |
+| Can verification pass with an extra record? | No; full exact-set comparison rejects extras/duplicates/Parent rows. |
+| Can verification pass with a missing chunk? | No; expected records are independently rebuilt from PostgreSQL. |
+| Can R2 publish before verification? | No; invocation-bound, single-use proof is required and revalidated. |
+| Can R1 change while R2 indexes? | R1 rows/current triple/current metadata are preserved; latest-candidate status may change. |
+| Can successful publish leave the cache marker false? | No; promotion and marker=true share one transaction/commit. |
+| Can candidate metadata overwrite current early? | No; building/current envelope slots remain separate until publication. |
+| Can building_revision_id remain after published READY? | No; the complete building triple and metadata slot are cleared atomically. |
+| Can transient Milvus outage become business FAILED? | No; technical failures propagate without that classification. |
+| Can crash/cancellation automatically become FAILED? | No; recovery policy is deferred, and cancellation preserves technical semantics. |
+| Can same-document builds overlap? | Not while the healthy session lease is held; lost-session checks are not fencing. |
+| Does the lease span prepare through publish? | Yes, with issued work settled before the sole release. |
+| Can different documents hold independent locks? | Yes; real concurrent-runner integration verifies this. |
+| Can Stage 4 invalidate Redis? | No; only the PostgreSQL freshness marker is set. |
+| Can Stage 4 serve production retrieval? | No; Part II remains deferred. |
+| Can Stage 4 start directory sync/reconciliation? | No; Stage 5 has not started. |
+
 ## Task ledger
 
 | Task | Status |
@@ -724,8 +833,8 @@ and lease invariants`.
 | T6 controlled failure recording | COMPLETE — c63c0b6 |
 | T7 atomic publication | COMPLETE — ecc88a6 |
 | T8 graph and whole-build lease | COMPLETE — 69953f4 |
-| T9 real storage integration | VERIFIED — commit pending |
-| T10 scope gates, commands, CI | NOT STARTED |
+| T9 real storage integration | COMPLETE — 22a984a |
+| T10 scope gates, commands, CI | VERIFIED — commit pending |
 | T11 complete verification and publication | NOT STARTED |
 
 ## Deferred scope
