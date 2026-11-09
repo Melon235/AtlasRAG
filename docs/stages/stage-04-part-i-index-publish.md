@@ -2,16 +2,16 @@
 
 ## Status
 
-**IN PROGRESS — T0–T9 committed; T10 verified for commit.
-Stage 4 is not complete.**
+**IN PROGRESS — T0–T10 committed; every T11 local gate passed on 2026-11-09.
+Publication and final-HEAD remote gates remain. Stage 4 is not complete.**
 
-T9 is committed as `22a984a`; T10 has passed its complete real script gate.
-T11 closeout regression/publication work remains.
-Real Qwen, Milvus verification,
-PostgreSQL publication, and the complete 36-case T9 storage gate have passed
-after the test-only timeout correction documented below. The services-stopped
-full offline gate also passed.
-No final commit/push or remote Stage 4 CI success is claimed.
+T9 is committed as `22a984a`; T10 is committed as `b27f3e0`. The fresh
+2026-11-09 closeout reran the complete local matrix — offline verification,
+Stage 2 services, Stage 3 PostgreSQL/Docling, real MinerU, Stage 4
+PostgreSQL/Milvus, and real Qwen CUDA — and all gates passed. Results dated
+October below remain historical task evidence; the fresh November evidence is
+recorded in the T11 closeout section. No final commit/push or remote Stage 4 CI
+success is claimed yet.
 
 ## Authority and approved decisions
 
@@ -820,6 +820,89 @@ writers. Runtime and remote completion evidence remains separately gated.
 | Can Stage 4 serve production retrieval? | No; Part II remains deferred. |
 | Can Stage 4 start directory sync/reconciliation? | No; Stage 5 has not started. |
 
+## T11 closeout verification — 2026-11-09
+
+The temporary Stage 4 worktree, optional environments, model cache, test env
+file, and prior execution session were unavailable after the execution
+environment changed. All implementation commits through `b27f3e0` survived in
+Git. Only the confirmed stale worktree registration was pruned; the branch was
+restored into an isolated worktree. Main, its untracked user documents, and all
+pre-existing containers, volumes, and credentials were left unchanged. No
+production code, test, canonical contract, schema, migration, or dependency
+version changed during restoration.
+
+The default locked environment (68 packages), Docling (98), MinerU (150), and
+embedding (109) environments were reconstructed offline from the frozen uv
+cache. The pinned Qwen snapshot (`97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`,
+12 files, about 1.2 GB) was restored to an ignored cache; six small repository
+metadata files were completed so the Hub completeness check passes. Docker,
+the pinned service images, and the RTX 3070 Laptop (8192 MiB, driver 576.28)
+were available. The gates used a fresh, uniquely named Compose project with
+process-only credentials and non-default loopback ports; no pre-existing
+volume, credential, or user data was reused. Containers were stopped after each
+script; named test volumes were retained.
+
+| Command | Fresh result on the closeout tree |
+| --- | --- |
+| `UV_OFFLINE=1 make verify` | PASS — 3036 passed, 84 deselected in 112.11s; 208 formatted files, Ruff clean, mypy 190 files, import/artifact checks clean |
+| `make stage2-verify` | PASS — exit 0; 28 real integration tests in 156.82s across all six healthy services; migration head `20260928_0001`; volume-preserving teardown |
+| `make stage3-verify` | PASS — exit 0; 529 focused Stage 3 tests in 5.33s plus 18 real PostgreSQL/Docling tests in 7.81s |
+| `make stage3-parser-smoke` | PASS — 1 passed in 3.01s; real MinerU SDK/producer 4.0.11, one page, seven canonical elements |
+| `make stage4-verify` | PASS — exit 0; 653 focused Stage 4 tests in 22.26s plus 36 real PostgreSQL/Milvus tests in 848.04s; volume-preserving cleanup |
+| `make stage4-model-smoke` | PASS — 1 passed in 24.99s; real Qwen revision `97b0c614...`, `cuda:0`, float16/SDPA, 1024 dimensions, batch 3, exact 1500-space canonical Child, finite normalized vectors, order correspondence |
+| `make architecture-check` | PASS — import boundaries and forbidden tracked artifacts |
+| `git diff --check` | PASS |
+
+Two environment observations did not change code or tests. During Stage 2
+startup, bounded Milvus readiness probes observed transient collection
+creation/loading errors; each recovered on the next poll and all 28 tests
+passed. The first Qwen smoke attempt failed before inference because the
+restored cache used the legacy `huggingface/` layout while `HF_HOME` made
+Hugging Face 1.33 resolve `hub/`, and the session `NO_PROXY` contained the
+bracket form `[::1]`, which httpx rejects. Pointing `HF_HUB_CACHE` at the
+existing snapshot, completing the six small metadata files, and sanitizing
+`NO_PROXY` fixed the environment; the retry passed every real inference
+assertion. No sentinel, CPU fallback, truncation, test skip, or validator
+relaxation was introduced.
+
+### Final review corrections
+
+The final independent static audit found one gate-hermeticity gap and three
+minor guard/contract gaps. All were corrected before publication; no frozen
+Stage 1–3 contract, canonical output, schema, migration, or dependency version
+changed.
+
+1. **Offline graph and storage gates are now self-contained.** A Stage 4-wide
+   autouse test guard removes LangSmith/LangChain keys and endpoints, forces
+   `LANGSMITH_TRACING`, `LANGSMITH_TRACING_V2`, `LANGCHAIN_TRACING`, and
+   `LANGCHAIN_TRACING_V2` false, and denies `socket.connect`, `connect_ex`,
+   `create_connection`, and `getaddrinfo`. `scripts/stage4_verify.sh` applies the
+   same environment override for the real storage run, and the CI Stage 4 job
+   declares all four tracing flags false. The command regression runs with all
+   four flags inherited as true and dummy keys, then asserts the script removed
+   the keys and forced every flag false. A graph test passes under inherited
+   `LANGSMITH_TRACING_V2=true` without a LangSmith warning or upload.
+2. **Stage 4 index DTOs now match the Milvus text boundary.** Dense/sparse text
+   rejects NUL and Unicode surrogate code points while remaining nonempty and
+   whitespace-preserving; the record `file_name` enforces nonblank, no NUL, and
+   the existing 1,024-byte cap. Tests cover NUL, surrogates, the accepted
+   1,024-byte boundary, and rejected 1,025-byte input.
+3. **Database plumbing is rejected in every indexing service.** The import
+   checker now rejects direct `sqlite3`, SQLAlchemy, psycopg, psycopg_pool, and
+   PyMilvus imports under `services/indexing/`, with negative tests for the
+   publication and candidate services.
+4. **The embedding-SDK scope exception is path-exact.** The Stage 1 scope helper
+   now admits `torch`/`transformers`/`huggingface_hub` only for the exact
+   repository-relative Qwen adapter path and rejects an external same-named
+   file.
+
+Re-verification after these corrections: 290 focused review tests passed; the
+full offline gate passed **3036 tests, 84 deselected** in 112.44s with 208
+formatted files, Ruff clean, mypy over 190 files, and both architecture checks
+clean; the focused Stage 4 suite passed **653 tests**; and the complete real
+PostgreSQL/Milvus gate passed **36 tests in 848.04s** with volume-preserving
+cleanup. The added conftest is tracked in the same closeout commit.
+
 ## Task ledger
 
 | Task | Status |
@@ -834,8 +917,8 @@ writers. Runtime and remote completion evidence remains separately gated.
 | T7 atomic publication | COMPLETE — ecc88a6 |
 | T8 graph and whole-build lease | COMPLETE — 69953f4 |
 | T9 real storage integration | COMPLETE — 22a984a |
-| T10 scope gates, commands, CI | VERIFIED — commit pending |
-| T11 complete verification and publication | NOT STARTED |
+| T10 scope gates, commands, CI | COMPLETE — b27f3e0 |
+| T11 complete verification and publication | IN PROGRESS — local gates PASS 2026-11-09; publication pending |
 
 ## Deferred scope
 
