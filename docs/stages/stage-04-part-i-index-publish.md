@@ -2,16 +2,19 @@
 
 ## Status
 
-**IN PROGRESS — T0–T10 committed; every T11 local gate passed on 2026-11-09.
-Publication and final-HEAD remote gates remain. Stage 4 is not complete.**
+**COMPLETE — all local gates pass; the branch was published normally; final-HEAD
+push and pull-request CI/Integration checks are green; pull request #5 is open
+and unmerged.**
 
-T9 is committed as `22a984a`; T10 is committed as `b27f3e0`. The fresh
-2026-11-09 closeout reran the complete local matrix — offline verification,
-Stage 2 services, Stage 3 PostgreSQL/Docling, real MinerU, Stage 4
-PostgreSQL/Milvus, and real Qwen CUDA — and all gates passed. Results dated
-October below remain historical task evidence; the fresh November evidence is
-recorded in the T11 closeout section. No final commit/push or remote Stage 4 CI
-success is claimed yet.
+T9 is committed as `22a984a`, T10 as `b27f3e0`, the final review hardening as
+`5bbd88f`, and the verified closeout documentation as `6ce5070`. The 2026-11-09
+closeout reran the complete local matrix — offline verification, Stage 2
+services, Stage 3 PostgreSQL/Docling, real MinerU, Stage 4 PostgreSQL/Milvus,
+and real Qwen CUDA — and all gates passed. Results dated October below remain
+historical task evidence; the fresh November evidence is recorded in the T11
+closeout section. The documentation-only publication-evidence successor is the
+commit containing this section; it is verified through pull request #5 head
+rather than a self-referential commit hash.
 
 ## Authority and approved decisions
 
@@ -918,7 +921,51 @@ cleanup. The added conftest is tracked in the same closeout commit.
 | T8 graph and whole-build lease | COMPLETE — 69953f4 |
 | T9 real storage integration | COMPLETE — 22a984a |
 | T10 scope gates, commands, CI | COMPLETE — b27f3e0 |
-| T11 complete verification and publication | IN PROGRESS — local gates PASS 2026-11-09; publication pending |
+| T11 complete verification and publication | COMPLETE — 6ce5070; PR #5 open and unmerged |
+
+## Git history and publication
+
+Committed Stage 4 work:
+
+```text
+d9d6703 chore(stage4): establish approved scope and locked dependencies
+11eeaf0 feat(stage4): add typed retrieval representations
+3f294c2 feat(stage4): add pinned local Qwen embedding provider
+5ad929f feat(stage4): extend Milvus with bounded batch indexing
+55422a8 feat(stage4): index durable canonical candidates
+5af10dc feat(stage4): verify candidate exact sets independently
+c63c0b6 feat(stage4): classify controlled build failures
+ecc88a6 feat(stage4): atomically publish verified revisions
+69953f4 feat(stage4): compose locked document build subgraph
+22a984a test(stage4): cover real index publish and lease invariants
+b27f3e0 ci(stage4): add isolated offline and storage gates
+5bbd88f fix(stage4): harden final offline and index contract gates
+6ce5070 docs(stage4): record T11 closeout verification
+```
+
+The documentation-only commit containing this publication section supersedes
+`6ce5070` for the report itself. It changes documentation only and is verified
+through the pull-request head rather than embedding its own commit hash.
+
+Publication evidence:
+
+- Verified closeout commit:
+  `6ce507098ce3623172f2de5a4b465c8ad6fe7f8e`
+- Normal push to `origin/stage/04-part-i-index-publish`: **PASS**
+- Force push: **NOT USED; PROHIBITED**
+- Remote CI `Verify`: **PASS** — push run
+  [42615965981](https://github.com/Melon235/AtlasRAG/actions/runs/42615965981)
+  and pull-request run
+  [42616008288](https://github.com/Melon235/AtlasRAG/actions/runs/42616008288)
+- Remote `Integration`: **PASS** — push run
+  [42615966072](https://github.com/Melon235/AtlasRAG/actions/runs/42615966072)
+  and pull-request run
+  [42616008083](https://github.com/Melon235/AtlasRAG/actions/runs/42616008083)
+  passed the Stage 2, Stage 3, and Stage 4 jobs
+- Pull request number/status:
+  [#5](https://github.com/Melon235/AtlasRAG/pull/5) — **OPEN, CLEAN,
+  UNMERGED**
+- Merge into `main`: **NOT PERFORMED; MUST REMAIN MANUAL**
 
 ## Deferred scope
 

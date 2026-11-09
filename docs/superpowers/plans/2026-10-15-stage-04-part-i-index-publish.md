@@ -12,7 +12,7 @@
 
 ## 1. 审阅结论与当前证据
 
-状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T10 已提交，T10 为 b27f3e0；2026-11-09 已从保留提交恢复独立 worktree，T11 本地全量门禁全部通过，发布与最终远端 CI 进行中；尚未完成 Stage 4。**
+状态：**用户已批准 A/B/C 并授权执行 T0 → T11（2026-10-15）。T0–T10 已提交；2026-11-09 从保留提交恢复独立 worktree，T11 本地全量门禁、最终 HEAD push/PR CI 与 Stage 2/3/4 Integration 全部通过，PR #5 open/unmerged；Stage 4 COMPLETE。**
 
 批准限制：exact file/import/AST whitelist only，无 graph 目录通配豁免；Stage 1–3 frozen contracts 不变。LangSmith 仅允许锁定的传递 distribution，禁止直接集成/tracing/key/network requirement。ChunkInputLimitError 只用于确定性输入容量失败，不扩展 public ErrorCode，不改变 canonical chunk output/IDs。
 
@@ -312,9 +312,9 @@ make architecture-check
 
 - [x] inner verify 有明确记录地去重；Stage 2、Docling、MinerU、Stage 4 PG/Milvus、Qwen CUDA 证据均已通过。硬门未失败。
 - [x] Stage report 记录 base/HEAD、实际 resolved versions 与 wheel source、模型/tokenizer SHA、device/dtype、representation version、batch、mapping、exact-set、INDEXING 分类、publish/marker rollback、lock/cancel、全部测试、批准事项、deferred scope；不记录 secret、本机模型绝对路径、raw text/vector。
-- [ ] 扫描 staged files 和 forbidden artifacts；只 stage 本任务明确文件，不纳入根目录用户手册。提交正常 push 到 Stage 4 branch，不 force。
-- [ ] 等最终 HEAD 的 CI 与 Stage 2/3/4 Integration 全绿。文档更正形成新 HEAD 也重新确认对应 gate，不能引用前一个 SHA 的绿灯。
-- [ ] 按附件开 PR `Stage 4 — Part I: Index & Publish`，提供证据与 deferred scope；**不自动合并 main**。只有 push 成功、最终远端 gates 通过且所有本地硬门通过才标记 COMPLETE。
+- [x] 扫描 staged files 和 forbidden artifacts；只 stage 本任务明确文件，不纳入根目录用户手册。提交正常 push 到 Stage 4 branch，不 force（PR #5）。
+- [x] 等最终 HEAD 的 CI 与 Stage 2/3/4 Integration 全绿。文档更正形成新 HEAD 也重新确认对应 gate，不能引用前一个 SHA 的绿灯（push/PR runs 42615965981、42615966072、42616008288、42616008083，最终 HEAD 以 PR #5 为准）。
+- [x] 按附件开 PR `Stage 4 — Part I: Index & Publish`，提供证据与 deferred scope；**不自动合并 main**。push 成功、最终远端 gates 通过且所有本地硬门通过后才标记 COMPLETE。PR: https://github.com/Melon235/AtlasRAG/pull/5 。
 
 ## 6. 验收断言示例
 
