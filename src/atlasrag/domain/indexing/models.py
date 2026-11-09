@@ -15,6 +15,7 @@ from pydantic import (
     model_validator,
 )
 
+from atlasrag._canonical import validate_unicode_scalar_text
 from atlasrag.domain.base import (
     FrozenModel,
     StrictReal,
@@ -28,6 +29,7 @@ from atlasrag.domain.ingestion.elements import normalize_section_path
 from atlasrag.domain.ingestion.source import validate_document_id, validate_revision_id
 
 INDEX_TEXT_MAX_BYTES = 65_535
+INDEX_FILE_NAME_MAX_BYTES = 1_024
 
 
 def _chunk_id(value: str) -> str:
@@ -37,8 +39,20 @@ def _chunk_id(value: str) -> str:
 
 
 def _nonblank(value: str) -> str:
+    value = validate_unicode_scalar_text(value)
     if not value.strip():
         raise ValueError("value must not be blank")
+    return value
+
+
+def _file_name(value: str) -> str:
+    value = _nonblank(value)
+    if "\x00" in value:
+        raise ValueError("file_name must not contain NUL")
+    if len(value.encode("utf-8")) > INDEX_FILE_NAME_MAX_BYTES:
+        raise ValueError(
+            f"file_name must not exceed {INDEX_FILE_NAME_MAX_BYTES} UTF-8 bytes"
+        )
     return value
 
 
@@ -49,6 +63,9 @@ def _strict_schema_version(value: object) -> object:
 
 
 def _index_text(value: str) -> str:
+    value = validate_unicode_scalar_text(value)
+    if "\x00" in value:
+        raise ValueError("index text must not contain NUL")
     if not value:
         raise ValueError("index text must not be empty")
     if len(value.encode("utf-8")) > INDEX_TEXT_MAX_BYTES:
@@ -61,6 +78,7 @@ _ChunkId = Annotated[StrictStr, AfterValidator(_chunk_id)]
 _DocumentId = Annotated[StrictStr, AfterValidator(validate_document_id)]
 _RevisionId = Annotated[StrictStr, AfterValidator(validate_revision_id)]
 _Nonblank = Annotated[StrictStr, AfterValidator(_nonblank)]
+_FileName = Annotated[StrictStr, AfterValidator(_file_name)]
 _IndexText = Annotated[StrictStr, AfterValidator(_index_text)]
 _RetrievalChunkType = Annotated[
     RetrievalChunkType, BeforeValidator(validate_string_enum_input)
@@ -144,7 +162,7 @@ class RetrievalRecord(FrozenModel):
     chunk_id: _ChunkId
     document_id: _DocumentId
     revision_id: _RevisionId
-    file_name: _Nonblank
+    file_name: _FileName
     parent_id: _ChunkId | None = None
     chunk_type: _RetrievalChunkType
     source_type: _SourceType

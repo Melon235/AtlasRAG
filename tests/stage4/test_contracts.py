@@ -116,6 +116,53 @@ def test_index_text_preserves_nonempty_whitespace_and_unicode(
         model.model_validate(values | {field: ""})
 
 
+@pytest.mark.parametrize(
+    ("field", "content"),
+    [
+        ("content", "a\x00b"),
+        ("sparse_text", "a\x00b"),
+        ("file_name", "a\x00b.md"),
+    ],
+)
+def test_record_rejects_nul_in_index_text_and_file_name(
+    field: str, content: str
+) -> None:
+    with pytest.raises(ValidationError):
+        RetrievalRecord.model_validate(record_data() | {field: content})
+
+
+@pytest.mark.parametrize("field", ["content", "sparse_text", "file_name"])
+def test_record_rejects_unicode_surrogates(field: str) -> None:
+    with pytest.raises(ValidationError):
+        RetrievalRecord.model_validate(record_data() | {field: "a\ud800b"})
+
+
+def test_record_file_name_enforces_the_milvus_byte_capacity() -> None:
+    values = record_data()
+    at_limit = "a" * 1024
+    assert RetrievalRecord.model_validate(
+        values | {"file_name": at_limit}
+    ).file_name == (at_limit)
+    with pytest.raises(ValidationError):
+        RetrievalRecord.model_validate(values | {"file_name": at_limit + "a"})
+
+
+@pytest.mark.parametrize("field", ["dense_text", "sparse_text"])
+@pytest.mark.parametrize("content", ["a\x00b", "a\ud800b"])
+def test_representation_rejects_nul_and_surrogates(field: str, content: str) -> None:
+    values = {
+        "chunk_id": record_data()["chunk_id"],
+        "document_id": record_data()["document_id"],
+        "revision_id": record_data()["revision_id"],
+        "chunk_type": RetrievalChunkType.TEXT_CHILD,
+        "structured_metadata": metadata(),
+        "dense_text": "text",
+        "sparse_text": "text",
+    }
+    with pytest.raises(ValidationError):
+        RetrievalRepresentation.model_validate(values | {field: content})
+
+
 def test_record_nested_values_are_immutable_and_input_is_detached() -> None:
     values = record_data()
     record = RetrievalRecord(**values)

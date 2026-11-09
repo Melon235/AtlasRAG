@@ -206,6 +206,11 @@ def test_pure_representation_and_graph_forbid_database_plumbing(
         "atlasrag.services.web_evidence",
         "atlasrag.services.local_evidence",
         "atlasrag.services.rag_core",
+        "pymilvus",
+        "psycopg",
+        "psycopg_pool",
+        "sqlalchemy",
+        "sqlite3",
     ],
 )
 @pytest.mark.parametrize(

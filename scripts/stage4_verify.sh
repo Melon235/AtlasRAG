@@ -5,6 +5,13 @@ script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repository_root=$(cd -- "${script_directory}/.." && pwd)
 cd "${repository_root}"
 
+# The Stage 4 gate is offline regardless of an inherited tracing opt-in.
+unset LANGSMITH_API_KEY LANGCHAIN_API_KEY LANGSMITH_ENDPOINT LANGCHAIN_ENDPOINT
+export LANGSMITH_TRACING=false
+export LANGSMITH_TRACING_V2=false
+export LANGCHAIN_TRACING=false
+export LANGCHAIN_TRACING_V2=false
+
 mode=${1-full}
 if (($# > 1)) || [[ "${mode}" != "full" && "${mode}" != "--integration-only" ]]; then
     printf '%s\n' "usage: scripts/stage4_verify.sh [full|--integration-only]" >&2

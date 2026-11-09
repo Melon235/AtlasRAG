@@ -17,6 +17,13 @@ INTEGRATION_FILES = [
     f"tests/integration/test_stage4_{name}.py"
     for name in ("index", "publish", "locks", "build")
 ]
+TRACING_FLAGS = (
+    "LANGSMITH_TRACING",
+    "LANGSMITH_TRACING_V2",
+    "LANGCHAIN_TRACING",
+    "LANGCHAIN_TRACING_V2",
+)
+SECRET_KEYS = ("LANGSMITH_API_KEY", "LANGCHAIN_API_KEY")
 
 
 @pytest.fixture
@@ -43,7 +50,12 @@ elif tool == "make":
 with open(os.environ["STAGE4_COMMAND_LOG"], "a", encoding="utf-8") as output:
     output.write(json.dumps({"tool": tool, "args": args, "phase": phase,
         "project": os.environ.get("COMPOSE_PROJECT_NAME"),
-        "opt_in": os.environ.get("ATLASRAG_RUN_INTEGRATION")}) + "\\n")
+        "opt_in": os.environ.get("ATLASRAG_RUN_INTEGRATION"),
+        "tracing": {name: os.environ.get(name) for name in (
+            "LANGSMITH_TRACING", "LANGSMITH_TRACING_V2",
+            "LANGCHAIN_TRACING", "LANGCHAIN_TRACING_V2")},
+        "keys": {name: os.environ.get(name) for name in (
+            "LANGSMITH_API_KEY", "LANGCHAIN_API_KEY")}}) + "\\n")
 if os.environ.get("STAGE4_SIGNAL_PHASE") == phase:
     os.kill(os.getppid(), int(os.environ["STAGE4_SIGNAL"]))
 sys.exit(int(os.environ.get("STAGE4_EXIT_" + phase, "0")))
@@ -56,6 +68,10 @@ sys.exit(int(os.environ.get("STAGE4_EXIT_" + phase, "0")))
     env = dict(os.environ)
     env.pop("COMPOSE_PROJECT_NAME", None)
     env.pop("ATLASRAG_RUN_INTEGRATION", None)
+    for name in TRACING_FLAGS:
+        env[name] = "true"
+    for name in SECRET_KEYS:
+        env[name] = "inherited-test-key"
     env.update(
         PATH=f"{directory}:{env['PATH']}",
         ATLASRAG_ENV_FILE=str(tmp_path / "configuration with spaces.env"),
@@ -103,6 +119,10 @@ def test_script_runs_exact_bounded_dependencies_and_selectors(
     assert all(
         call["project"] == (project or "atlasrag-stage4-local") for call in calls
     )
+    assert all(
+        call["tracing"] == {name: "false" for name in TRACING_FLAGS} for call in calls
+    )
+    assert all(call["keys"] == {name: None for name in SECRET_KEYS} for call in calls)
     compose = [
         "compose",
         "--env-file",

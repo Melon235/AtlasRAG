@@ -509,6 +509,13 @@ def test_build_graph_import_exception_rejects_external_same_named_file(
     assert _source_import_violations("from langgraph.graph import StateGraph", path)
 
 
+def test_embedding_import_exception_rejects_external_same_named_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "src/atlasrag/providers/embedding/qwen.py"
+    assert _source_import_violations("import torch", path)
+
+
 def test_embedding_files_are_an_exact_manifest(tmp_path: Path) -> None:
     path = tmp_path / "providers/embedding/unapproved.py"
     path.parent.mkdir(parents=True)
@@ -543,13 +550,12 @@ def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
     if root in {"torch", "transformers", "huggingface_hub"}:
         if path is None:
             return True
-        parts = path.parts
-        relative = (
-            Path(*parts[parts.index("atlasrag") + 1 :]).as_posix()
-            if "atlasrag" in parts
-            else path.as_posix()
+        relative_path = (
+            path.relative_to(REPOSITORY_ROOT)
+            if path.is_absolute() and path.is_relative_to(REPOSITORY_ROOT)
+            else path
         )
-        return relative != "providers/embedding/qwen.py"
+        return relative_path.as_posix() != "src/atlasrag/providers/embedding/qwen.py"
     driver_layers = STAGE2_DRIVER_LAYERS | STAGE3_DRIVER_LAYERS
     if path is not None and root in driver_layers:
         parts = path.parts

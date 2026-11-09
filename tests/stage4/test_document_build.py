@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import socket
 from asyncio import CancelledError
 from pathlib import Path
@@ -84,18 +85,18 @@ class Steps:
         await self.call("discard_candidate")
 
 
-@pytest.fixture(autouse=True)
-def offline(monkeypatch: pytest.MonkeyPatch) -> None:
-    for key in ("LANGSMITH_API_KEY", "LANGCHAIN_API_KEY"):
-        monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("LANGSMITH_TRACING", "false")
-    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
-
-    def denied(*args: object, **kwargs: object) -> None:
-        raise AssertionError("offline build graph attempted network access")
-
-    monkeypatch.setattr(socket.socket, "connect", denied)
-    monkeypatch.setattr(socket, "create_connection", denied)
+def test_stage4_offline_guard_overrides_inherited_tracing() -> None:
+    assert all(
+        os.environ[name] == "false"
+        for name in (
+            "LANGSMITH_TRACING",
+            "LANGSMITH_TRACING_V2",
+            "LANGCHAIN_TRACING",
+            "LANGCHAIN_TRACING_V2",
+        )
+    )
+    with pytest.raises(AssertionError, match="outbound network"):
+        socket.getaddrinfo("example.invalid", 443)
 
 
 async def invoke(steps: Steps) -> dict[str, Any]:

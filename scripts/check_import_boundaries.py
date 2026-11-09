@@ -58,6 +58,11 @@ INDEXING_SERVICE_FORBIDDEN_PREFIXES = (
     "atlasrag.services.local_evidence",
     "atlasrag.services.web_evidence",
     "atlasrag.services.answer",
+    "pymilvus",
+    "psycopg",
+    "psycopg_pool",
+    "sqlalchemy",
+    "sqlite3",
     "redis",
 )
 STAGE3_BOUNDARY_FORBIDDEN_PREFIXES = {
