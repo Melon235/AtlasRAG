@@ -16,7 +16,7 @@ green remote CI result.
 ## Current stage
 
 - **Stage:** Stage 5 — Part I: Sync / Recovery / Maintenance
-- **Status:** Stage 5 IN PROGRESS — publication and final remote gates pending
+- **Status:** Stage 5 COMPLETE — pull request #6 open and unmerged
 - **Report:**
   [stage-05-part-i-sync-recovery-maintenance.md](stage-05-part-i-sync-recovery-maintenance.md)
 - **Next:** Stage 6 — Part II: Local Evidence — NOT STARTED
@@ -26,6 +26,7 @@ planning, bounded whole-directory build execution, durable PARSED/CHUNKED
 recovery, startup reconciliation, exact-set current-index repair, Milvus-first
 missing-source deletion, and global published-knowledge verification with
 separate SyncOutcome/ServingSafety verdicts. Its real PostgreSQL/Milvus
-integration gates are green; remote publication is pending. No RuntimeGate,
-runtime lifecycle, Redis invalidation execution, Part II, or benchmark behavior
-has started.
+integration gates are green; all push- and PR-triggered remote gates are green,
+and pull request #6 remains deliberately unmerged. No RuntimeGate, runtime
+lifecycle, Redis invalidation execution, Part II, or benchmark behavior has
+started.

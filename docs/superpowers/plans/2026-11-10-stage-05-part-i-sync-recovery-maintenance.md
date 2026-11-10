@@ -10,6 +10,8 @@
   `docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`,
   frozen Stage 1–4 contracts, and the approved Stage 4 amendments.
 - Database migration: **NONE planned**.
+- Implementation status: **COMPLETE** — see
+  [the Stage 5 report](../../stages/stage-05-part-i-sync-recovery-maintenance.md).
 - Frozen Stage 3 canonical IDs/chunk semantics and Stage 4 publish/verification
   contracts are reused unchanged.
 

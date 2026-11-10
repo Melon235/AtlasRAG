@@ -2,8 +2,9 @@
 
 ## Status
 
-**IN PROGRESS — implementation, audit corrections, and all local Stage 5 gates
-pass. Publication and final-HEAD remote gates remain. Stage 5 is not complete.**
+**COMPLETE — all local gates pass; the branch was published normally; final-HEAD
+push and pull-request CI/Integration checks are green; pull request #6 is open
+and unmerged.**
 
 Base: `origin/main` at
 `23def47e4ceaa4b8332b6db575d9534d6177fc2b` (Stage 4 merge, PR #5).
@@ -245,6 +246,52 @@ were corrected before publication and covered by regressions:
     repair, changed deletion state, lease/root behavior, and the full real
     interrupted-state/integration matrix.
 
+## Git history and publication
+
+```text
+0e72598 feat(stage5): implement sync recovery and global safety
+2c34d8d docs(stage5): add design plan and closeout evidence
+```
+
+The documentation-only commit containing this publication section supersedes
+`2c34d8d` for the report itself and is verified through the pull-request head
+rather than embedding its own commit hash.
+
+Publication evidence:
+
+- Verified implementation/docs closeout commit:
+  `2c34d8de23ab98fc2d84d1ced3597e803fe6c123`
+- Normal push to `origin/stage/05-part-i-sync-recovery-maintenance`: **PASS**
+- Force push: **NOT USED; PROHIBITED**
+- Remote CI `Verify`: **PASS** — push run
+  [42851516783](https://github.com/Melon235/AtlasRAG/actions/runs/42851516783)
+  (2m43s) and pull-request run
+  [42851883916](https://github.com/Melon235/AtlasRAG/actions/runs/42851883916)
+  (2m56s)
+- Remote `Integration`: **PASS** — push run
+  [42851516964](https://github.com/Melon235/AtlasRAG/actions/runs/42851516964)
+  and pull-request run
+  [42851883901](https://github.com/Melon235/AtlasRAG/actions/runs/42851883901)
+  passed Stage 2 (8m41s/8m9s), Stage 3 (35s/35s), Stage 4 (17m4s/17m11s),
+  and Stage 5 (12m42s/12m20s)
+- Pull request number/status:
+  [#6](https://github.com/Melon235/AtlasRAG/pull/6) — **OPEN, CLEAN,
+  UNMERGED**
+- Merge into `main`: **NOT PERFORMED; MUST REMAIN MANUAL**
+
+## Reviews
+
+- **Architecture review:** PASS after corrections. Scanner/planner purity,
+  durable recovery, current-index repair ownership, Milvus-first deletion,
+  global exact-set safety, and the six-node graph were independently audited.
+  The audit's RECEIVED dead-end blocker and full-build revision race were
+  fixed; no RuntimeGate/Stage 10 responsibility was pulled into Stage 5.
+- **Security/release review:** PASS. No secrets, model weights, `.env`, logs,
+  benchmark data, or migrations are tracked. Technical exceptions are not
+  converted to business FAILED; deletion failures and technical build items
+  cannot produce a SAFE verdict. No force push, automatic merge, or Stage 6
+  work is included.
+
 ## Task ledger
 
 | Task | Status |
@@ -260,7 +307,7 @@ were corrected before publication and covered by regressions:
 | T8 global published-knowledge safety | COMPLETE |
 | T9 six-node index_graph and injected application runner | COMPLETE |
 | T10 real PostgreSQL/Milvus integration and fault injection | COMPLETE |
-| T11 commands, CI, full closeout, report, push, PR | IN PROGRESS |
+| T11 commands, CI, full closeout, report, push, PR | COMPLETE — 2c34d8d; PR #6 open and unmerged |
 
 ## Deferred work
 

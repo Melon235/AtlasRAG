@@ -8,7 +8,7 @@ The authoritative design is
 
 **Current implementation stage: Stage 5 — Part I: Sync / Recovery / Maintenance**
 
-**Status: Stage 5 IN PROGRESS — publication and final remote gates pending**
+**Status: Stage 5 COMPLETE — pull request #6 open and unmerged**
 
 Stage 5 adds complete fail-closed Knowledge Directory scanning, deterministic
 `SyncPlan` construction, bounded whole-directory build execution, durable
@@ -18,8 +18,13 @@ verification. The Stage adds no database migration and does not implement
 RuntimeGate/MaintenanceCoordinator lifecycle, Redis invalidation execution,
 Part II, or benchmarks.
 
-The authoritative Stage 5 evidence report is
+The evidence-bearing report is
 [`docs/stages/stage-05-part-i-sync-recovery-maintenance.md`](docs/stages/stage-05-part-i-sync-recovery-maintenance.md).
+Fresh local offline, Stage 2, Stage 3 PostgreSQL/Docling, real MinerU, Stage 4
+PostgreSQL/Milvus, real Qwen CUDA, and Stage 5 PostgreSQL/Milvus gates pass.
+The branch is published normally, push- and PR-triggered CI/Integration checks
+are green, and [pull request #6](https://github.com/Melon235/AtlasRAG/pull/6)
+remains open and deliberately unmerged.
 
 ## Setup
 
