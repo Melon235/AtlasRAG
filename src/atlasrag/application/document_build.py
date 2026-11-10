@@ -10,7 +10,11 @@ from typing import Generic, Protocol, TypeVar
 
 from atlasrag.config.fingerprint import pipeline_fingerprint
 from atlasrag.config.models import RuntimeConfig
-from atlasrag.domain.errors import ConfigurationError, InvariantViolationError
+from atlasrag.domain.errors import (
+    ConfigurationError,
+    InvariantViolationError,
+    SourceMutationError,
+)
 from atlasrag.domain.ingestion.source import derive_document_id
 from atlasrag.graphs.indexing.contracts import BuildRequest, BuildResult
 from atlasrag.graphs.indexing.document_build import build_document_build_graph
@@ -197,13 +201,21 @@ class DocumentBuildRunner(Generic[_Session]):
                 if lease is None:
                     await asyncio.sleep(self._poll_seconds)
             await capture.probe()
-            context = await settled_operation(
-                asyncio.to_thread(
-                    build_candidate_context,
-                    request.source,
-                    request.expected_pipeline_fingerprint,
+            try:
+                context = await settled_operation(
+                    asyncio.to_thread(
+                        build_candidate_context,
+                        request.source,
+                        request.expected_pipeline_fingerprint,
+                    )
                 )
-            )
+            except (OSError, ValueError):
+                raise SourceMutationError from None
+            if (
+                request.expected_revision_id is not None
+                and context.revision_id != request.expected_revision_id
+            ):
+                raise SourceMutationError
             services = DocumentBuildServices(
                 self.resources, context, checkpoint=capture.probe
             )

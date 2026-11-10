@@ -91,3 +91,12 @@ stage4-model-smoke:
 
 stage4-verify:
 	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage4_verify.sh
+
+test-stage5:
+	uv run --frozen pytest tests/stage5 -q
+
+test-stage5-integration:
+	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage5_verify.sh --integration-only
+
+stage5-verify:
+	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage5_verify.sh

@@ -13,6 +13,7 @@ from atlasrag.repositories.postgres.errors import (
     postgres_error_boundary,
     require_canonical_id,
     validate_canonical_row,
+    validate_rowcount,
 )
 from atlasrag.repositories.postgres.records import StoredDocument
 
@@ -107,6 +108,17 @@ class DocumentRepository:
         self, relative_source_path: str
     ) -> StoredDocument | None:
         return await self._get_one("relative_source_path", relative_source_path)
+
+    @marks_uow_failed
+    async def delete(self, document_id: str) -> int:
+        """Delete exactly one document row after caller-owned child cleanup."""
+        self._guard()
+        canonical_id = require_canonical_id(document_id)
+        with postgres_error_boundary():
+            cursor = await self._connection.execute(
+                "DELETE FROM documents WHERE document_id = %s", (canonical_id,)
+            )
+        return validate_rowcount(cursor.rowcount)
 
     @marks_uow_failed
     async def list(self) -> tuple[StoredDocument, ...]:

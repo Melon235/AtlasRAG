@@ -159,19 +159,21 @@ def test_no_new_migration_or_top_level_maintenance_graph() -> None:
         "contracts.py",
         "state.py",
         "document_build.py",
+        "sync_state.py",
+        "sync_contracts.py",
+        "index_graph.py",
     }
+    approved_index_graph = ROOT / "src/atlasrag/graphs/indexing/index_graph.py"
     for path in (ROOT / "src/atlasrag").rglob("*.py"):
         tree = ast.parse(path.read_text())
-        assert path.stem != "index_graph"
+        if path != approved_index_graph:
+            assert path.stem != "index_graph"
+        forbidden = {"enter_maintenance", "resume_serving"}
+        if path != approved_index_graph:
+            forbidden |= {"build_index_graph", "reconcile_runtime"}
         assert not any(
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name
-            in {
-                "build_index_graph",
-                "reconcile_runtime",
-                "enter_maintenance",
-                "resume_serving",
-            }
+            and node.name in forbidden
             for node in ast.walk(tree)
         ), path
 
