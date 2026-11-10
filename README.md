@@ -6,27 +6,20 @@ incrementally through independently verified implementation stages.
 The authoritative design is
 [`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md).
 
-**Current implementation stage: Stage 4 — Part I: Index & Publish**
+**Current implementation stage: Stage 5 — Part I: Sync / Recovery / Maintenance**
 
-**Status: Stage 4 COMPLETE — pull request #5 open and unmerged**
+**Status: Stage 5 IN PROGRESS — publication and final remote gates pending**
 
-Stage 4 adds lossless representation construction, pinned local
-`Qwen3-Embedding-0.6B` embeddings, bounded Milvus candidate indexing,
-independent exact-set verification with invocation-bound proof, atomic
-PostgreSQL publication through `READY`, and an eight-node LangGraph document
-build subgraph with a whole-build advisory lease. The Stage adds no database
-migration and does not implement directory synchronization/reconciliation,
-runtime maintenance, Redis cache invalidation execution, Part II, or
-benchmarks.
+Stage 5 adds complete fail-closed Knowledge Directory scanning, deterministic
+`SyncPlan` construction, bounded whole-directory build execution, durable
+`PARSED`/`CHUNKED` recovery, startup reconciliation and exact-set current-index
+repair, Milvus-first missing-source deletion, and global published-knowledge
+verification. The Stage adds no database migration and does not implement
+RuntimeGate/MaintenanceCoordinator lifecycle, Redis invalidation execution,
+Part II, or benchmarks.
 
-The evidence-bearing report is
-[`docs/stages/stage-04-part-i-index-publish.md`](docs/stages/stage-04-part-i-index-publish.md).
-Fresh local offline, Stage 2 service-backed, Stage 3 PostgreSQL/Docling, real
-MinerU, Stage 4 PostgreSQL/Milvus, and real Qwen CUDA gates pass. Final
-architecture, security, and report reviews are complete. The branch is
-published normally, push- and PR-triggered CI/Integration checks are green,
-and [pull request #5](https://github.com/Melon235/AtlasRAG/pull/5) remains open
-and deliberately unmerged.
+The authoritative Stage 5 evidence report is
+[`docs/stages/stage-05-part-i-sync-recovery-maintenance.md`](docs/stages/stage-05-part-i-sync-recovery-maintenance.md).
 
 ## Setup
 
@@ -104,6 +97,21 @@ make stage4-model-smoke
   Qwen model, canonical whitespace, ordering, finiteness, and normalization.
   It uses the nondefault embedding group and is intentionally absent from
   ordinary CI.
+
+Stage 5 provides three separately scoped commands:
+
+```bash
+make test-stage5
+make test-stage5-integration
+make stage5-verify
+```
+
+- `make test-stage5` runs the focused offline Stage 5 suite.
+- `make test-stage5-integration` starts PostgreSQL, etcd, MinIO, and Milvus and
+  runs the real sync/recovery/global-safety gate with deterministic fake
+  embedding.
+- `make stage5-verify` composes ordinary offline verification, the focused
+  Stage 5 suite, and the real PostgreSQL/Milvus gate.
 
 Ordinary `make verify` remains network-free, Docker-free, parser-SDK-free,
 model-free, and independent of PostgreSQL, Redis, Milvus, and SearXNG.
