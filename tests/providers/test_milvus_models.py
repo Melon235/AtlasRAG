@@ -77,12 +77,24 @@ def test_text_child_requires_a_distinct_parent() -> None:
         ("file_name", " "),
         ("parent_id", "bad\x7fid"),
         ("content", ""),
-        ("sparse_text", "   "),
+        # Approved Stage 4 amendment admits canonical whitespace-only Children.
+        ("sparse_text", ""),
     ],
 )
 def test_record_text_boundaries_are_canonical(field: str, value: str) -> None:
     with pytest.raises(ValidationError):
         milvus_record(**{field: value})
+
+
+@pytest.mark.parametrize("field", ["content", "sparse_text"])
+@pytest.mark.parametrize("value", [" ", "\t\n ", " \n界😀é\t "])
+def test_nonempty_index_text_preserves_whitespace_and_unicode(
+    field: str, value: str
+) -> None:
+    record = milvus_record(**{field: value})
+    assert getattr(record, field).encode("utf-8") == value.encode("utf-8")
+    with pytest.raises(ValidationError):
+        milvus_record(**{field: ""})
 
 
 @pytest.mark.parametrize(

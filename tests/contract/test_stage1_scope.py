@@ -61,13 +61,16 @@ FORBIDDEN_IMPORT_PREFIXES = (
 )
 EXPECTED_DECLARED_DISTRIBUTIONS = {
     "project.dependencies": frozenset(
-        {"pydantic", "alembic", "psycopg", "redis", "pymilvus"}
+        {"pydantic", "alembic", "psycopg", "redis", "pymilvus", "langgraph"}
     ),
     "dependency-groups.dev": frozenset(
         {"mypy", "pytest", "pytest-cov", "pytest-asyncio", "ruff"}
     ),
     "dependency-groups.parsing-docling": frozenset({"docling-slim"}),
     "dependency-groups.parsing-mineru": frozenset({"mineru"}),
+    "dependency-groups.indexing-embedding": frozenset(
+        {"torch", "transformers", "huggingface-hub"}
+    ),
     "build-system.requires": frozenset({"setuptools"}),
 }
 EXPECTED_LOCKED_DISTRIBUTIONS = frozenset(
@@ -235,6 +238,50 @@ EXPECTED_LOCKED_DISTRIBUTIONS = frozenset(
         "ziamath",
     }
 )
+# Approved Stage 4 LangGraph transitives and optional CUDA 12.6 runtime.
+# Keep this explicit: unrelated locked distributions must still fail closed.
+EXPECTED_LOCKED_DISTRIBUTIONS |= frozenset(
+    {
+        "cuda-bindings",
+        "cuda-pathfinder",
+        "cuda-toolkit",
+        "httpcore2",
+        "httpx2",
+        "jsonpatch",
+        "jsonpointer",
+        "langchain-core",
+        "langchain-protocol",
+        "langgraph",
+        "langgraph-checkpoint",
+        "langgraph-prebuilt",
+        "langgraph-sdk",
+        "langsmith",
+        "nvidia-cublas-cu12",
+        "nvidia-cuda-cupti-cu12",
+        "nvidia-cuda-nvrtc-cu12",
+        "nvidia-cuda-runtime-cu12",
+        "nvidia-cudnn-cu12",
+        "nvidia-cufft-cu12",
+        "nvidia-cufile-cu12",
+        "nvidia-curand-cu12",
+        "nvidia-cusolver-cu12",
+        "nvidia-cusparse-cu12",
+        "nvidia-cusparselt-cu12",
+        "nvidia-nccl-cu12",
+        "nvidia-nvjitlink-cu12",
+        "nvidia-nvshmem-cu12",
+        "nvidia-nvtx-cu12",
+        "ormsgpack",
+        "requests-toolbelt",
+        "tenacity",
+        "triton",
+        "truststore",
+        "uuid-utils",
+        "websockets",
+        "xxhash",
+        "zstandard",
+    }
+)
 
 EXPECTED_GRAPH_FILES = frozenset(
     {
@@ -245,6 +292,10 @@ EXPECTED_GRAPH_FILES = frozenset(
         "state/rag_core.py",
         "state/retrieval.py",
         "state/web_evidence.py",
+        "indexing/__init__.py",
+        "indexing/contracts.py",
+        "indexing/state.py",
+        "indexing/document_build.py",
     }
 )
 EXPECTED_PRODUCTION_FILES = frozenset(
@@ -332,6 +383,34 @@ STAGE3_PRODUCTION_FILES = frozenset(
         "services/ingestion/validation.py",
     }
 )
+STAGE4_PRODUCTION_FILES = frozenset(
+    {
+        "application/document_build.py",
+        "graphs/indexing/__init__.py",
+        "graphs/indexing/contracts.py",
+        "graphs/indexing/state.py",
+        "graphs/indexing/document_build.py",
+        "services/indexing/build.py",
+        "providers/index/projection.py",
+        "providers/embedding/__init__.py",
+        "providers/embedding/base.py",
+        "providers/embedding/profile.py",
+        "providers/embedding/qwen.py",
+        "domain/indexing/__init__.py",
+        "domain/indexing/failures.py",
+        "domain/indexing/models.py",
+        "domain/ingestion/failures.py",
+        "services/indexing/__init__.py",
+        "services/indexing/representation.py",
+        "services/indexing/ports.py",
+        "services/indexing/canonical.py",
+        "services/indexing/records.py",
+        "services/indexing/candidate.py",
+        "services/indexing/verification.py",
+        "services/indexing/failure.py",
+        "services/indexing/publication.py",
+    }
+)
 STAGE2_DRIVER_LAYERS = {
     "psycopg": "repositories/postgres/",
     "psycopg_pool": "repositories/postgres/",
@@ -363,9 +442,120 @@ def _normalized_distribution_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.casefold())
 
 
+@pytest.mark.parametrize("sdk", ["torch", "transformers", "huggingface_hub"])
+def test_embedding_sdk_allowed_only_in_exact_qwen_module(sdk: str) -> None:
+    assert not _source_import_violations(
+        f"import {sdk}", Path("src/atlasrag/providers/embedding/qwen.py")
+    )
+    for name in (
+        "providers/embedding/base.py",
+        "providers/embedding/profile.py",
+        "providers/embedding/unknown.py",
+        "providers/parsing/unknown.py",
+        "services/indexing/representation.py",
+        "domain/indexing/models.py",
+    ):
+        assert _source_import_violations(f"import {sdk}", Path("src/atlasrag") / name)
+
+
+@pytest.mark.parametrize(
+    "sdk", ["httpx", "requests", "openai", "langgraph", "tests", "unapproved_sdk"]
+)
+def test_qwen_module_is_not_a_general_import_exemption(sdk: str) -> None:
+    assert _source_import_violations(
+        f"import {sdk}", Path("src/atlasrag/providers/embedding/qwen.py")
+    )
+
+
+@pytest.mark.parametrize("absolute", [False, True], ids=["relative", "absolute"])
+@pytest.mark.parametrize(
+    ("relative_path", "source", "allowed"),
+    [
+        (
+            "src/atlasrag/graphs/indexing/document_build.py",
+            "from langgraph.graph import StateGraph",
+            True,
+        ),
+        (
+            "src/atlasrag/graphs/indexing/document_build.py",
+            "from langgraph.graph.state import CompiledStateGraph",
+            True,
+        ),
+        (
+            "src/atlasrag/graphs/indexing/other.py",
+            "from langgraph.graph import StateGraph",
+            False,
+        ),
+        (
+            "src/atlasrag/graphs/indexing/document_build.py",
+            "from langgraph.checkpoint.memory import MemorySaver",
+            False,
+        ),
+    ],
+)
+def test_build_graph_import_exception_is_exact_for_both_path_forms(
+    absolute: bool, relative_path: str, source: str, allowed: bool
+) -> None:
+    path = Path(relative_path)
+    if absolute:
+        path = REPOSITORY_ROOT / path
+    assert bool(_source_import_violations(source, path)) is not allowed
+
+
+def test_build_graph_import_exception_rejects_external_same_named_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "src/atlasrag/graphs/indexing/document_build.py"
+    assert _source_import_violations("from langgraph.graph import StateGraph", path)
+
+
+def test_embedding_import_exception_rejects_external_same_named_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "src/atlasrag/providers/embedding/qwen.py"
+    assert _source_import_violations("import torch", path)
+
+
+def test_embedding_files_are_an_exact_manifest(tmp_path: Path) -> None:
+    path = tmp_path / "providers/embedding/unapproved.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("", encoding="utf-8")
+    assert any(
+        "providers/embedding/unapproved.py" in item
+        for item in _production_manifest_violations(tmp_path)
+    )
+
+
 def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
     normalized = module_name.casefold()
     root = normalized.partition(".")[0].replace("-", "_")
+    if root == "langgraph" and path is not None:
+        relative_path = (
+            path.relative_to(REPOSITORY_ROOT)
+            if path.is_absolute() and path.is_relative_to(REPOSITORY_ROOT)
+            else path
+        )
+        return not (
+            relative_path.as_posix() == "src/atlasrag/graphs/indexing/document_build.py"
+            and module_name
+            in {
+                "langgraph.graph",
+                "langgraph.graph.START",
+                "langgraph.graph.END",
+                "langgraph.graph.StateGraph",
+                "langgraph.graph.state",
+                "langgraph.graph.state.CompiledStateGraph",
+            }
+        )
+    if root in {"torch", "transformers", "huggingface_hub"}:
+        if path is None:
+            return True
+        relative_path = (
+            path.relative_to(REPOSITORY_ROOT)
+            if path.is_absolute() and path.is_relative_to(REPOSITORY_ROOT)
+            else path
+        )
+        return relative_path.as_posix() != "src/atlasrag/providers/embedding/qwen.py"
     driver_layers = STAGE2_DRIVER_LAYERS | STAGE3_DRIVER_LAYERS
     if path is not None and root in driver_layers:
         parts = path.parts
@@ -510,7 +700,9 @@ def _production_manifest_violations(production_root: Path) -> tuple[str, ...]:
         for path in production_root.rglob("*.py")
     )
     violations: list[str] = []
-    allowed_files = EXPECTED_PRODUCTION_FILES | STAGE3_PRODUCTION_FILES
+    allowed_files = (
+        EXPECTED_PRODUCTION_FILES | STAGE3_PRODUCTION_FILES | STAGE4_PRODUCTION_FILES
+    )
     if unexpected := sorted(actual_files - allowed_files):
         violations.append(f"unexpected production files: {unexpected}")
     if missing := sorted(EXPECTED_PRODUCTION_FILES - actual_files):
@@ -640,7 +832,9 @@ def _stub_package_violations(production_root: Path) -> tuple[str, ...]:
         }
         allowed_files = {"__init__.py"} | {
             path.removeprefix(f"{package_name}/")
-            for path in STAGE2_PRODUCTION_FILES | STAGE3_PRODUCTION_FILES
+            for path in STAGE2_PRODUCTION_FILES
+            | STAGE3_PRODUCTION_FILES
+            | STAGE4_PRODUCTION_FILES
             if path.startswith(f"{package_name}/")
         }
         if unexpected := actual_files - allowed_files:
@@ -686,7 +880,7 @@ def test_dependency_manifests_have_no_deferred_runtime_packages() -> None:
     assert not violations, f"deferred Stage 1 dependencies found: {violations}"
 
 
-def test_graph_package_contains_only_declarative_state_modules() -> None:
+def test_graph_package_contains_frozen_states_and_exact_part_i_build_modules() -> None:
     actual_files = frozenset(
         path.relative_to(GRAPH_ROOT).as_posix() for path in GRAPH_ROOT.rglob("*.py")
     )
@@ -698,8 +892,17 @@ def test_graph_package_contains_only_declarative_state_modules() -> None:
     violations: list[str] = []
     for path in sorted(GRAPH_ROOT.rglob("*.py")):
         relative_path = path.relative_to(REPOSITORY_ROOT).as_posix()
+        if path.relative_to(GRAPH_ROOT).as_posix() in {
+            "indexing/contracts.py",
+            "indexing/document_build.py",
+        }:
+            # These exact internal Part I modules are executable. Their import
+            # and plumbing boundaries are checked by the production checker.
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative_path)
-        is_state_schema = path.parent.name == "state" and path.name != "__init__.py"
+        is_state_schema = (
+            path.parent.name == "state" and path.name != "__init__.py"
+        ) or path.relative_to(GRAPH_ROOT).as_posix() == "indexing/state.py"
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -758,6 +961,7 @@ def test_no_backend_client_provider_or_business_modules_exist() -> None:
             ALLOWED_BOUNDARY_INITIALIZERS
             | STAGE2_PRODUCTION_FILES
             | STAGE3_PRODUCTION_FILES
+            | STAGE4_PRODUCTION_FILES
         ):
             continue
         tokens = {
@@ -920,6 +1124,29 @@ def test_production_python_manifest_rejects_new_adapter_module(tmp_path: Path) -
     assert violations == ("unexpected production files: ['adapters/search.py']",)
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "domain/indexing/unapproved.py",
+        "services/indexing/unapproved.py",
+    ],
+)
+def test_stage4_manifest_admits_only_explicit_files(
+    tmp_path: Path, relative_path: str
+) -> None:
+    production_root = tmp_path / "atlasrag"
+    for allowed_path in EXPECTED_PRODUCTION_FILES:
+        path = production_root / allowed_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('"""Test module."""\n', encoding="utf-8")
+    unexpected_path = production_root / relative_path
+    unexpected_path.parent.mkdir(parents=True, exist_ok=True)
+    unexpected_path.write_text('"""Unapproved indexing module."""\n', encoding="utf-8")
+    assert _production_manifest_violations(production_root) == (
+        f"unexpected production files: ['{relative_path}']",
+    )
+
+
 def _write_stub_initializers(production_root: Path) -> None:
     for package_name in (
         "observability",
@@ -1043,3 +1270,36 @@ def test_dependency_manifest_rejects_missing_locked_distribution(
     )
 
     assert violations == {"uv.lock": ["missing colorama"]}
+
+
+def test_dependency_manifest_rejects_unknown_locked_distribution(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "uv.lock"
+    lock_path.write_text(
+        (REPOSITORY_ROOT / "uv.lock").read_text(encoding="utf-8")
+        + '\n[[package]]\nname = "unapproved-runtime"\nversion = "1.0.0"\n',
+        encoding="utf-8",
+    )
+    violations = _dependency_manifest_violations(
+        REPOSITORY_ROOT / "pyproject.toml", lock_path
+    )
+    assert violations == {"uv.lock": ["unexpected unapproved-runtime"]}
+
+
+@pytest.mark.parametrize("dependency", ["langsmith", "unapproved-runtime"])
+def test_dependency_manifest_rejects_unapproved_direct_runtime(
+    tmp_path: Path, dependency: str
+) -> None:
+    source = (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    pyproject_path = tmp_path / "pyproject.toml"
+    pyproject_path.write_text(
+        source.replace("dependencies = [", f'dependencies = ["{dependency}",', 1),
+        encoding="utf-8",
+    )
+    violations = _dependency_manifest_violations(
+        pyproject_path, REPOSITORY_ROOT / "uv.lock"
+    )
+    assert violations == {
+        "pyproject.toml": [f"project.dependencies: unexpected {dependency}"]
+    }

@@ -45,10 +45,182 @@ def write_layer_module(
     return module
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "domain/indexing/models.py",
+        "services/indexing/representation.py",
+    ],
+)
+@pytest.mark.parametrize(
+    "module",
+    [
+        "atlasrag.providers",
+        "atlasrag.repositories",
+        "atlasrag.graphs",
+        "torch",
+        "transformers",
+        "pymilvus",
+        "httpx",
+        "socket",
+    ],
+)
+def test_stage4_pure_indexing_boundaries_reject_clients_and_orchestration(
+    tmp_path: Path, relative_path: str, module: str
+) -> None:
+    path = tmp_path / "src" / "atlasrag" / relative_path
+    path.parent.mkdir(parents=True)
+    path.write_text(f"import {module}\n", encoding="utf-8")
+    result = run_checker(tmp_path)
+    assert result.returncode != 0
+    assert f"may not import '{module}'" in result.stderr
+
+
 def test_real_repository_respects_import_boundaries() -> None:
     result = run_checker(REPOSITORY_ROOT)
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "graphs/indexing/document_build.py",
+        "graphs/indexing/contracts.py",
+        "graphs/indexing/state.py",
+        "graphs/indexing/unapproved.py",
+    ],
+)
+@pytest.mark.parametrize(
+    "imported",
+    [
+        "psycopg",
+        "redis",
+        "httpx",
+        "pymilvus",
+        "torch",
+        "atlasrag.repositories.postgres.uow",
+        "atlasrag.providers.parsing.text",
+        "langgraph.checkpoint.memory",
+    ],
+)
+def test_thin_build_graph_cannot_import_plumbing(
+    tmp_path: Path,
+    relative_path: str,
+    imported: str,
+) -> None:
+    path = tmp_path / "src/atlasrag" / relative_path
+    path.parent.mkdir(parents=True)
+    path.write_text(f"import {imported}\n", encoding="utf-8")
+    result = run_checker(tmp_path)
+    assert result.returncode != 0
+
+
+def test_langgraph_execution_is_allowed_only_in_exact_build_graph(
+    tmp_path: Path,
+) -> None:
+    graph = tmp_path / "src/atlasrag/graphs/indexing/document_build.py"
+    graph.parent.mkdir(parents=True)
+    graph.write_text("from langgraph.graph import StateGraph\n", encoding="utf-8")
+    assert run_checker(tmp_path).returncode == 0
+    other = graph.with_name("other.py")
+    other.write_text("from langgraph.graph import StateGraph\n", encoding="utf-8")
+    assert run_checker(tmp_path).returncode != 0
+
+
+def test_build_graph_rejects_sql_even_without_driver_import(tmp_path: Path) -> None:
+    graph = tmp_path / "src/atlasrag/graphs/indexing/document_build.py"
+    graph.parent.mkdir(parents=True)
+    graph.write_text('query = "SELECT * FROM documents"\n', encoding="utf-8")
+    assert run_checker(tmp_path).returncode != 0
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from atlasrag.providers import cache\n",
+        "from ...providers import cache\n",
+        "from atlasrag.services import retrieval\n",
+        "from ..retrieval import search\n",
+        "from redis.asyncio import Redis\n",
+    ],
+)
+def test_indexing_service_boundary_resolves_import_forms(
+    tmp_path: Path, source: str
+) -> None:
+    path = tmp_path / "src/atlasrag/services/indexing/publication.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    result = run_checker(tmp_path)
+    assert result.returncode != 0
+    assert "indexing service may not import" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import docling\n",
+        "import mineru\n",
+        "from sqlalchemy import text\n",
+        "from sqlite3 import connect\n",
+    ],
+)
+def test_graph_nodes_cannot_import_parser_or_database_sdks(
+    tmp_path: Path, source: str
+) -> None:
+    path = tmp_path / "src/atlasrag/graphs/indexing/document_build.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    assert run_checker(tmp_path).returncode != 0
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from atlasrag.services.indexing.build import *\n",
+        "from atlasrag.services.indexing.ports import *\n",
+        "from langgraph.graph import *\n",
+    ],
+)
+def test_exact_graph_capabilities_do_not_allow_wildcard_imports(
+    tmp_path: Path, source: str
+) -> None:
+    path = tmp_path / "src/atlasrag/graphs/indexing/document_build.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    assert run_checker(tmp_path).returncode != 0
+
+
+@pytest.mark.parametrize("sdk", ["torch", "transformers", "huggingface_hub"])
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "providers/embedding/base.py",
+        "providers/embedding/profile.py",
+        "providers/embedding/unapproved.py",
+        "services/indexing/unknown.py",
+        "graphs/nodes/unknown.py",
+    ],
+)
+def test_embedding_sdks_cannot_escape_exact_adapter(
+    tmp_path: Path, sdk: str, relative_path: str
+) -> None:
+    path = tmp_path / "src/atlasrag" / relative_path
+    path.parent.mkdir(parents=True)
+    path.write_text(f"import {sdk}\n", encoding="utf-8")
+    result = run_checker(tmp_path)
+    assert result.returncode != 0
+    assert "embedding SDK" in result.stderr
+
+
+def test_embedding_adapter_allows_only_its_sdk_location(tmp_path: Path) -> None:
+    path = tmp_path / "src/atlasrag/providers/embedding/qwen.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "import torch\nimport transformers\nimport huggingface_hub\n", encoding="utf-8"
+    )
+    result = run_checker(tmp_path)
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize(

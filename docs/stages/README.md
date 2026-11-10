@@ -15,17 +15,19 @@ green remote CI result.
 
 ## Current stage
 
-- **Stage:** Stage 3 — Part I: Parse & Canonical Build
-- **Status:** Stage 3 COMPLETE — pull request #4 open and unmerged
+- **Stage:** Stage 4 — Part I: Index & Publish
+- **Status:** Stage 4 COMPLETE — pull request #5 open and unmerged
 - **Report:**
-  [stage-03-part-i-parse-canonical-build.md](stage-03-part-i-parse-canonical-build.md)
-- **Next:** Stage 4 — Part I: Index & Publish — NOT STARTED
+  [stage-04-part-i-index-publish.md](stage-04-part-i-index-publish.md)
+- **Next:** Stage 5 — Part I: Sync / Recovery / Maintenance — NOT STARTED
 
-Stage 3 implements secure source identity, deterministic parser normalization,
-canonical elements and Parent/Child/Table chunks, typed persistence mapping,
-and atomic candidate boundaries through `CHUNKED`. Its final local offline,
-Stage 2 service, Stage 3 PostgreSQL/Docling, and real MinerU gates are green.
-The branch is published normally, all push- and PR-triggered remote gates are
-green, and pull request #4 remains deliberately unmerged. No embedding, Milvus
-write, publication, build graph, directory sync, Part II, or benchmark behavior
-has started.
+Stage 4 implements lossless representation construction, pinned local Qwen
+embeddings, bounded Milvus candidate indexing, independent exact-set
+verification with invocation-bound proof, atomic PostgreSQL publication through
+`READY`, and an eight-node LangGraph document build subgraph with a whole-build
+advisory lease. Its final local offline, Stage 2 service, Stage 3
+PostgreSQL/Docling, real MinerU, Stage 4 PostgreSQL/Milvus, and real Qwen CUDA
+gates are green. The branch is published normally, all push- and PR-triggered
+remote gates are green, and pull request #5 remains deliberately unmerged. No
+directory sync, reconciliation, runtime maintenance, Redis cache invalidation
+execution, Part II, or benchmark behavior has started.

@@ -55,7 +55,6 @@ def test_parser_dependencies_do_not_leak_into_runtime_or_dev_groups() -> None:
         "docling",
         "docling-slim",
         "mineru",
-        "langgraph",
         "torch",
         "transformers",
         "flagembedding",
@@ -65,6 +64,8 @@ def test_parser_dependencies_do_not_leak_into_runtime_or_dev_groups() -> None:
         assert not names & forbidden_direct, (
             f"{context} leaked {names & forbidden_direct}"
         )
+        if context == "dev":
+            assert "langgraph" not in names
 
 
 def test_stage3_package_roots_are_regular_packages() -> None:

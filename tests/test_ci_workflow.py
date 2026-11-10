@@ -117,7 +117,7 @@ def test_integration_workflow_is_isolated_and_always_destroys_volumes() -> None:
 def test_integration_workflow_keeps_stage2_and_adds_isolated_stage3_job() -> None:
     workflow = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
     stage2 = _job(workflow, "stage2-integration", "stage3-integration")
-    stage3 = _job(workflow, "stage3-integration")
+    stage3 = _job(workflow, "stage3-integration", "stage4-integration")
 
     assert "make stage2-verify" in stage2
     assert "Set up Go 1.23.4" in stage2
@@ -146,3 +146,48 @@ def test_integration_workflow_keeps_stage2_and_adds_isolated_stage3_job() -> Non
         "astral-sh/setup-uv@v",
     ):
         assert floating_reference not in workflow
+
+
+def test_stage4_ci_uses_frozen_cpu_dependencies_and_owned_ephemeral_services() -> None:
+    workflow = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
+    assert "  stage4-integration:" in workflow
+    stage4 = _job(workflow, "stage4-integration")
+    for reference in (
+        CHECKOUT_REFERENCE,
+        SETUP_PYTHON_REFERENCE,
+        SETUP_UV_REFERENCE,
+        SETUP_GO_REFERENCE,
+    ):
+        assert reference in stage4
+    assert "uv sync --frozen" in stage4
+    assert "make test-stage4-integration" in stage4
+    assert (
+        "COMPOSE_PROJECT_NAME: atlasrag-stage4-ci-${{ github.run_id }}-${{ github.run_attempt }}"
+        in stage4
+    )
+    assert "cp deploy/local/.env.example deploy/local/.env" in stage4
+    assert "Build pinned MinIO release from official source" in stage4
+    assert "https://github.com/minio/minio.git" in stage4
+    assert "MINIO_COMMIT: 16f8cf1c52f0a77eeb8f7565aaf7f7df12454583" in stage4
+    assert "MINIO_RELEASE_TIMESTAMP: 2024-12-18T13-15-44Z" in stage4
+    assert "CGO_ENABLED=0 go build" in stage4
+    assert "--file deploy/local/minio-ci.Dockerfile" in stage4
+    assert "logs --no-color postgres etcd minio milvus" in stage4
+    assert (
+        stage4.index("if: failure()")
+        < stage4.index("logs --no-color")
+        < stage4.index("if: always()")
+        < stage4.index("down -v --remove-orphans")
+    )
+    for excluded in (
+        "--group",
+        "--extra",
+        "stage4-model-smoke",
+        "parsing-docling",
+        "parsing-mineru",
+        "${{ secrets.",
+        "gpu",
+        "up -d redis",
+        "up -d searxng",
+    ):
+        assert excluded not in stage4.casefold()

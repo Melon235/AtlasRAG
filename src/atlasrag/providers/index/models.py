@@ -102,8 +102,11 @@ def _file_name(value: str) -> str:
 
 
 def _content(value: str) -> str:
+    value = _milvus_text(value)
+    if not value:
+        raise ValueError("content must not be empty")
     return _validate_utf8_size(
-        _nonblank(value),
+        value,
         maximum=MILVUS_CONTENT_MAX_LENGTH,
         label="content",
     )

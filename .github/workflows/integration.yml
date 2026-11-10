@@ -128,3 +128,81 @@ jobs:
       - name: Destroy ephemeral PostgreSQL volume
         if: always()
         run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml down -v --remove-orphans
+
+  stage4-integration:
+    name: Stage 4 PostgreSQL and Milvus Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      ATLASRAG_ENV_FILE: deploy/local/.env
+      COMPOSE_PROJECT_NAME: atlasrag-stage4-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      LANGSMITH_TRACING: "false"
+      LANGSMITH_TRACING_V2: "false"
+      LANGCHAIN_TRACING: "false"
+      LANGCHAIN_TRACING_V2: "false"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Set up Go 1.23.4
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: "1.23.4"
+          cache: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Sync locked dependencies
+        run: uv sync --frozen
+
+      - name: Create ephemeral local configuration
+        run: |
+          cp deploy/local/.env.example deploy/local/.env
+          sed -i "s/replace-with-local-postgres-password/ci-stage4-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/g" deploy/local/.env
+          sed -i "s/replace-with-local-minio-user/ci-stage4-minio-${GITHUB_RUN_ID}/g" deploy/local/.env
+          sed -i "s/replace-with-local-minio-password/ci-stage4-minio-password-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/g" deploy/local/.env
+          sed -i "s/replace-with-local-searxng-secret-at-least-32-characters/ci-stage4-unused-searxng-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-local-only/g" deploy/local/.env
+
+      - name: Build pinned MinIO release from official source
+        env:
+          MINIO_COMMIT: 16f8cf1c52f0a77eeb8f7565aaf7f7df12454583
+          MINIO_RELEASE_TIMESTAMP: 2024-12-18T13-15-44Z
+          MINIO_TARGET: minio/minio:RELEASE.2024-12-18T13-15-44Z
+        run: |
+          minio_source="${RUNNER_TEMP}/minio-source"
+          minio_image_context="${RUNNER_TEMP}/minio-image"
+          mkdir -p "${minio_source}" "${minio_image_context}"
+          git -C "${minio_source}" init --quiet
+          git -C "${minio_source}" remote add origin https://github.com/minio/minio.git
+          git -C "${minio_source}" fetch --quiet --depth=1 origin "${MINIO_COMMIT}"
+          git -C "${minio_source}" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "${minio_source}" rev-parse HEAD)" = "${MINIO_COMMIT}"
+          (
+            cd "${minio_source}"
+            minio_ldflags="$(MINIO_RELEASE=RELEASE go run buildscripts/gen-ldflags.go "${MINIO_RELEASE_TIMESTAMP}")"
+            CGO_ENABLED=0 go build -tags kqueue -trimpath --ldflags "${minio_ldflags}" -o "${minio_image_context}/minio"
+          )
+          docker build --file deploy/local/minio-ci.Dockerfile --tag "${MINIO_TARGET}" "${minio_image_context}"
+          minio_version="$(docker run --rm "${MINIO_TARGET}" --version)"
+          printf '%s\n' "${minio_version}"
+          grep -Fqx "minio version RELEASE.2024-12-18T13-15-44Z (commit-id=16f8cf1c52f0a77eeb8f7565aaf7f7df12454583)" <<<"${minio_version}"
+          grep -Fqx "Runtime: go1.23.4 linux/amd64" <<<"${minio_version}"
+
+      - name: Verify Stage 4 PostgreSQL and Milvus integration with fake embedding
+        run: make test-stage4-integration
+
+      - name: Print Stage 4 dependency logs on failure
+        if: failure()
+        run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml logs --no-color postgres etcd minio milvus
+
+      - name: Destroy ephemeral Stage 4 infrastructure and volumes
+        if: always()
+        run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml down -v --remove-orphans

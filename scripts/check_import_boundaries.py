@@ -29,6 +29,42 @@ LAYER_FORBIDDEN_PREFIXES = {
     ),
 }
 PARSER_SDK_PREFIXES = ("docling", "mineru")
+EMBEDDING_SDK_PREFIXES = ("torch", "transformers", "huggingface_hub")
+INDEXING_PURE_FORBIDDEN_PREFIXES = (
+    "atlasrag.graphs",
+    "atlasrag.providers",
+    "atlasrag.repositories",
+    "torch",
+    "transformers",
+    "huggingface_hub",
+    "pymilvus",
+    "psycopg",
+    "psycopg_pool",
+    "sqlalchemy",
+    "sqlite3",
+    "redis",
+    "httpx",
+    "requests",
+    "aiohttp",
+    "socket",
+    "urllib.request",
+    "http.client",
+)
+INDEXING_SERVICE_FORBIDDEN_PREFIXES = (
+    "atlasrag.graphs",
+    "atlasrag.providers.cache",
+    "atlasrag.services.retrieval",
+    "atlasrag.services.rag_core",
+    "atlasrag.services.local_evidence",
+    "atlasrag.services.web_evidence",
+    "atlasrag.services.answer",
+    "pymilvus",
+    "psycopg",
+    "psycopg_pool",
+    "sqlalchemy",
+    "sqlite3",
+    "redis",
+)
 STAGE3_BOUNDARY_FORBIDDEN_PREFIXES = {
     ("domain", "ingestion"): (
         "atlasrag.graphs",
@@ -53,6 +89,61 @@ STAGE3_BOUNDARY_NAMES = {
     ("providers", "parsing"): "parsing provider",
     ("services", "ingestion"): "ingestion service",
 }
+BUILD_GRAPH_PATH = "src/atlasrag/graphs/indexing/document_build.py"
+BUILD_LANGGRAPH_IMPORTS = frozenset(
+    {
+        "langgraph.graph",
+        "langgraph.graph.START",
+        "langgraph.graph.END",
+        "langgraph.graph.StateGraph",
+        "langgraph.graph.state",
+        "langgraph.graph.state.CompiledStateGraph",
+    }
+)
+BUILD_GRAPH_CAPABILITIES = {
+    BUILD_GRAPH_PATH: frozenset(
+        {
+            "atlasrag.services.indexing.build",
+            "atlasrag.services.indexing.build.BuildBusinessFailure",
+            "atlasrag.services.indexing.ports",
+            "atlasrag.services.indexing.ports.DocumentBuildSteps",
+        }
+    ),
+    "src/atlasrag/graphs/indexing/contracts.py": frozenset(
+        {
+            "atlasrag.repositories.postgres.records",
+            "atlasrag.repositories.postgres.records.FailedStage",
+            "atlasrag.services.indexing.ports",
+            "atlasrag.services.indexing.ports.BuildFailureCode",
+        }
+    ),
+    "src/atlasrag/graphs/indexing/state.py": frozenset(
+        {
+            "atlasrag.repositories.postgres.records",
+            "atlasrag.repositories.postgres.records.FailedStage",
+            "atlasrag.services.indexing.ports",
+            "atlasrag.services.indexing.ports.BuildFailureCode",
+        }
+    ),
+}
+GRAPH_PLUMBING_PREFIXES = (
+    "atlasrag.providers",
+    "psycopg",
+    "psycopg_pool",
+    "sqlalchemy",
+    "sqlite3",
+    "pymilvus",
+    "redis",
+    "httpx",
+    "requests",
+    "aiohttp",
+    "socket",
+    "urllib.request",
+    "http.client",
+    "torch",
+    "transformers",
+    "huggingface_hub",
+)
 
 
 @dataclass(frozen=True, order=True)
@@ -160,6 +251,109 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             targets = _import_targets(node, path, root)
+            if relative_path.startswith("src/atlasrag/services/indexing/"):
+                for target in targets:
+                    if _matching_prefix(INDEXING_SERVICE_FORBIDDEN_PREFIXES, target):
+                        diagnostics.append(
+                            Diagnostic(
+                                relative_path,
+                                node.lineno,
+                                f"indexing service may not import '{target}'",
+                            )
+                        )
+            for target in targets:
+                if target == "langgraph" or target.startswith("langgraph."):
+                    if (
+                        relative_path != BUILD_GRAPH_PATH
+                        or target not in BUILD_LANGGRAPH_IMPORTS
+                    ):
+                        diagnostics.append(
+                            Diagnostic(
+                                relative_path,
+                                node.lineno,
+                                f"LangGraph import '{target}' is not an approved build graph capability",
+                            )
+                        )
+                if relative_path.startswith("src/atlasrag/graphs/"):
+                    if (
+                        isinstance(node, ast.ImportFrom)
+                        and any(alias.name == "*" for alias in node.names)
+                        and _matching_prefix(
+                            ("langgraph", "atlasrag.repositories", "atlasrag.services"),
+                            target,
+                        )
+                    ):
+                        diagnostics.append(
+                            Diagnostic(
+                                relative_path,
+                                node.lineno,
+                                "thin graph capabilities require explicit named imports",
+                            )
+                        )
+                    capability = _matching_prefix(
+                        ("atlasrag.repositories", "atlasrag.services"), target
+                    )
+                    if (
+                        _matching_prefix(GRAPH_PLUMBING_PREFIXES, target) is not None
+                        or capability is not None
+                        and target
+                        not in BUILD_GRAPH_CAPABILITIES.get(relative_path, frozenset())
+                    ):
+                        diagnostics.append(
+                            Diagnostic(
+                                relative_path,
+                                node.lineno,
+                                f"thin graph may not import '{target}'",
+                            )
+                        )
+            embedding_sdk = next(
+                (
+                    sdk
+                    for target in targets
+                    if (sdk := _matching_prefix(EMBEDDING_SDK_PREFIXES, target))
+                    is not None
+                ),
+                None,
+            )
+            if (
+                embedding_sdk is not None
+                and relative_path != "src/atlasrag/providers/embedding/qwen.py"
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        relative_path,
+                        node.lineno,
+                        f"embedding SDK '{embedding_sdk}' is only allowed in the Qwen adapter",
+                    )
+                )
+                # Retain the pure-boundary diagnostic below for existing callers.
+            pure_indexing = (
+                relative_path.startswith("src/atlasrag/domain/indexing/")
+                or relative_path == "src/atlasrag/services/indexing/representation.py"
+            )
+            if pure_indexing:
+                forbidden_prefix = next(
+                    (
+                        prefix
+                        for target in targets
+                        if (
+                            prefix := _matching_prefix(
+                                INDEXING_PURE_FORBIDDEN_PREFIXES, target
+                            )
+                        )
+                        is not None
+                    ),
+                    None,
+                )
+                if forbidden_prefix is not None:
+                    diagnostics.append(
+                        Diagnostic(
+                            relative_path,
+                            node.lineno,
+                            f"pure indexing boundary may not import '{forbidden_prefix}'",
+                        )
+                    )
+                    continue
             if stage3_boundary is not None:
                 forbidden_prefix = next(
                     (
@@ -237,6 +431,19 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
                         f"forbidden import '{global_target}'",
                     )
                 )
+        elif (
+            relative_path.startswith("src/atlasrag/graphs/")
+            and isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.lstrip()
+            .upper()
+            .startswith(("SELECT ", "INSERT ", "UPDATE ", "DELETE ", "CREATE TABLE "))
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    relative_path, node.lineno, "SQL is not allowed in graph modules"
+                )
+            )
         elif (
             layer == "repositories"
             and path.name != "uow.py"
