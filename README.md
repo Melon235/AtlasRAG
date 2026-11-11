@@ -8,7 +8,7 @@ The authoritative design is
 
 **Current implementation stage: Stage 6 — Part II: Local Evidence**
 
-**Status: Stage 6 IN PROGRESS — publication and final remote gates pending**
+**Status: Stage 6 COMPLETE — pull request #7 open and unmerged**
 
 Stage 6 adds one complete local evidence attempt: shared published retrieval
 scope, Dense + BM25 retrieval, deterministic RRF, pinned BGE reranking with
@@ -18,8 +18,13 @@ expansion, deterministic sufficiency, and the six-node
 implement Query Construction, RagCore retry/routing, Web evidence, Answer
 generation, Query Cache, RuntimeGate, Stage 7, or benchmarks.
 
-The authoritative Stage 6 evidence report is
+The evidence-bearing report is
 [`docs/stages/stage-06-part-ii-local-evidence.md`](docs/stages/stage-06-part-ii-local-evidence.md).
+Fresh local offline, Stage 2–5 regression, real PostgreSQL/Milvus, real Qwen
+CUDA, and real BGE reranker gates pass. The branch is published normally,
+push- and PR-triggered CI/Integration checks are green, and
+[pull request #7](https://github.com/Melon235/AtlasRAG/pull/7) remains open and
+deliberately unmerged.
 
 ## Setup
 

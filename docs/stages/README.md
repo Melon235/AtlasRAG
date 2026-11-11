@@ -16,7 +16,7 @@ green remote CI result.
 ## Current stage
 
 - **Stage:** Stage 6 — Part II: Local Evidence
-- **Status:** Stage 6 IN PROGRESS — publication and final remote gates pending
+- **Status:** Stage 6 COMPLETE — pull request #7 open and unmerged
 - **Report:**
   [stage-06-part-ii-local-evidence.md](stage-06-part-ii-local-evidence.md)
 - **Next:** Stage 7 — Part II: Web Evidence & Answer — NOT STARTED
@@ -25,7 +25,8 @@ Stage 6 implements the shared published retrieval scope, Dense and BM25
 retrieval, deterministic RRF, pinned BGE reranking with degradation, unique
 evidence selection, canonical PostgreSQL Parent/Table expansion, deterministic
 sufficiency, and the six-node `local_evidence_subgraph`. Its real
-PostgreSQL/Milvus and real Qwen/BGE model gates are green; remote publication is
-pending. No Query Construction, RagCore retry/routing, Web evidence, Answer
+PostgreSQL/Milvus and real Qwen/BGE model gates are green; all push- and
+PR-triggered remote gates are green, and pull request #7 remains deliberately
+unmerged. No Query Construction, RagCore retry/routing, Web evidence, Answer
 generation, Query Cache, RuntimeGate, Stage 7, or benchmark behavior has
 started.

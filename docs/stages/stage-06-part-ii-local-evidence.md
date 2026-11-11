@@ -2,7 +2,9 @@
 
 ## 1. Status
 
-**IMPLEMENTATION COMPLETE — PUBLICATION AND FINAL-HEAD REMOTE GATES PENDING.**
+**COMPLETE — all local gates pass; the branch was published normally; final-HEAD
+push and pull-request CI/Integration checks are green; pull request #7 is open
+and unmerged.**
 
 Stage 5 was merged and closed at
 `82739b5d0311c4e121d8897a9d1b207f243646cc` (PR #6). Stage 6 is based on that
@@ -298,7 +300,7 @@ sufficiency remain Stage 9 work.
 | T8 sufficiency strategy + LocalEvidenceResult | COMPLETE |
 | T9 local_evidence_subgraph + runner | COMPLETE |
 | T10 real Milvus/model integration + fault tests | COMPLETE |
-| T11 CI, final gates, report, push, PR | IN PROGRESS |
+| T11 CI, final gates, report, push, PR | COMPLETE — 6611845; PR #7 open and unmerged |
 
 ## 15. Independent audit
 
@@ -329,6 +331,34 @@ evidence truncation, citation ID, secret, or arbitrary expression remains.
 
 ## 16. Git and publication
 
-_To be completed after the final commits, normal push, PR creation, and
-final-HEAD remote CI/Integration checks. Stage 6 PR must remain unmerged; Stage
-7 must not start._
+```text
+87b5cd7 feat(stage6): implement local evidence retrieval and safety pipeline
+6611845 docs(stage6): add design plan and evidence report
+```
+
+The documentation-only commit containing this publication section supersedes
+`6611845` for the report itself and is verified through the pull-request head
+rather than embedding its own commit hash.
+
+Publication evidence:
+
+- Verified implementation/docs closeout commit:
+  `6611845827705da962f0a2004f95754609a417fb`
+- Normal push to `origin/stage/06-part-ii-local-evidence`: **PASS**
+- Force push: **NOT USED; PROHIBITED**
+- Remote CI `Verify`: **PASS** — push run
+  [43035421856](https://github.com/Melon235/AtlasRAG/actions/runs/43035421856)
+  (2m46s) and pull-request run
+  [43035468747](https://github.com/Melon235/AtlasRAG/actions/runs/43035468747)
+  (2m46s)
+- Remote `Integration`: **PASS** — push run
+  [43035421688](https://github.com/Melon235/AtlasRAG/actions/runs/43035421688)
+  and pull-request run
+  [43035468745](https://github.com/Melon235/AtlasRAG/actions/runs/43035468745)
+  passed Stage 2 (6m27s/7m57s), Stage 3 (31s/35s), Stage 4 (17m6s/16m49s),
+  Stage 5 (12m21s/12m32s), and Stage 6 (13m29s/6m1s)
+- Pull request number/status:
+  [#7](https://github.com/Melon235/AtlasRAG/pull/7) — **OPEN, CLEAN,
+  UNMERGED**
+- Merge into `main`: **NOT PERFORMED; MUST REMAIN MANUAL**
+- Stage 7: **NOT STARTED**
