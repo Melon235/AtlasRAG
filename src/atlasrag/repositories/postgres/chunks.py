@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 
 from psycopg import AsyncConnection
 from psycopg.rows import DictRow
@@ -184,6 +184,32 @@ class ChunkRepository:
                 ORDER BY chunk_id
                 """,
                 scope,
+            )
+            rows = await cursor.fetchall()
+        return tuple(validate_canonical_row(StoredChunk, row) for row in rows)
+
+    @marks_uow_failed
+    async def list_by_ids(self, chunk_ids: Sequence[str]) -> tuple[StoredChunk, ...]:
+        """Batch-read canonical chunks by primary key without automatic commit."""
+        self._guard()
+        if isinstance(chunk_ids, (str, bytes, bytearray)) or not isinstance(
+            chunk_ids, Sequence
+        ):
+            raise InvariantViolationError
+        if not chunk_ids:
+            return ()
+        canonical = tuple(require_canonical_id(chunk_id) for chunk_id in chunk_ids)
+        if len(set(canonical)) != len(canonical):
+            raise InvariantViolationError
+        with postgres_error_boundary():
+            cursor = await self._connection.execute(
+                f"""
+                SELECT {_COLUMNS}
+                FROM chunks
+                WHERE chunk_id = ANY(%s)
+                ORDER BY chunk_id
+                """,
+                (list(canonical),),
             )
             rows = await cursor.fetchall()
         return tuple(validate_canonical_row(StoredChunk, row) for row in rows)

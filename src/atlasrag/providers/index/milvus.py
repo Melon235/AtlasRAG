@@ -26,6 +26,7 @@ from atlasrag.domain.errors import (
 from atlasrag.providers.index.models import (
     CanonicalId,
     MilvusChunkRecord,
+    MilvusSearchHit,
     validate_milvus_record_set,
 )
 from atlasrag.providers.index.projection import (
@@ -71,6 +72,8 @@ class _MilvusClient(Protocol):
 
     def query(self, **kwargs: object) -> object: ...
 
+    def search(self, **kwargs: object) -> object: ...
+
     def query_iterator(self, **kwargs: object) -> object: ...
 
     def close(self) -> object: ...
@@ -110,6 +113,77 @@ def _is_timeout_failure(error: Exception) -> bool:
     return any(
         marker in text for marker in ("DEADLINE_EXCEEDED", "TIMED OUT", "TIMEOUT")
     )
+
+
+_SEARCH_OUTPUT_FIELDS = (
+    "chunk_id",
+    "document_id",
+    "revision_id",
+    "parent_id",
+    "chunk_type",
+    "content",
+)
+_MAX_SEARCH_LIMIT = 1_000
+
+
+def _search_limit(value: object) -> int:
+    if type(value) is not int or not 1 <= value <= _MAX_SEARCH_LIMIT:
+        raise InvariantViolationError
+    return value
+
+
+def _search_expression(value: object) -> str:
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        raise InvariantViolationError
+    return value
+
+
+def _search_vector(value: object, dimension: int) -> list[float]:
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        raise InvariantViolationError
+    if len(value) != dimension:
+        raise InvariantViolationError
+    rows: list[float] = []
+    for component in value:
+        if isinstance(component, bool) or not isinstance(component, (int, float)):
+            raise InvariantViolationError
+        number = float(component)
+        if not math.isfinite(number):
+            raise InvariantViolationError
+        rows.append(number)
+    return rows
+
+
+def _search_hits(response: object, *, limit: int) -> tuple[MilvusSearchHit, ...]:
+    if not isinstance(response, list) or len(response) != 1:
+        raise ProviderResponseError
+    raw_hits = response[0]
+    if not isinstance(raw_hits, list) or len(raw_hits) > limit:
+        raise ProviderResponseError
+    hits: list[MilvusSearchHit] = []
+    identities: set[str] = set()
+    for raw in raw_hits:
+        if not isinstance(raw, Mapping):
+            raise ProviderResponseError
+        entity = raw.get("entity")
+        if not isinstance(entity, Mapping):
+            entity = raw
+        payload: dict[str, object] = {}
+        for field_name in _SEARCH_OUTPUT_FIELDS:
+            value = entity.get(field_name)
+            if field_name == "chunk_id" and value is None:
+                value = raw.get("id")
+            payload[field_name] = value
+        payload["score"] = raw.get("distance", raw.get("score"))
+        try:
+            hit = MilvusSearchHit.model_validate(payload)
+        except (ValidationError, TypeError, ValueError):
+            raise ProviderResponseError from None
+        if hit.chunk_id in identities:
+            raise ProviderResponseError
+        identities.add(hit.chunk_id)
+        hits.append(hit)
+    return tuple(hits)
 
 
 async def _run_sync(
@@ -725,6 +799,55 @@ class MilvusIndexProvider:
         deleted = _validate_delete_response(response)
         await self._visibility_barrier()
         return deleted
+
+    async def search_dense(
+        self,
+        query_vector: Sequence[float],
+        *,
+        filter_expression: str,
+        limit: int = 20,
+    ) -> tuple[MilvusSearchHit, ...]:
+        """Run one bounded dense COSINE search with a precompiled safe filter."""
+        vector = _search_vector(query_vector, self._embedding_dimension)
+        expression = _search_expression(filter_expression)
+        bounded_limit = _search_limit(limit)
+        response = await self._call(
+            self._client.search,
+            collection_name=self._collection_name,
+            data=[vector],
+            anns_field="dense_vector",
+            search_params={"metric_type": "COSINE", "params": {"ef": 128}},
+            limit=bounded_limit,
+            filter=expression,
+            output_fields=list(_SEARCH_OUTPUT_FIELDS),
+            consistency_level="Strong",
+        )
+        return _search_hits(response, limit=bounded_limit)
+
+    async def search_bm25(
+        self,
+        query_text: str,
+        *,
+        filter_expression: str,
+        limit: int = 20,
+    ) -> tuple[MilvusSearchHit, ...]:
+        """Run one bounded built-in BM25 search with the same safe filter."""
+        if not isinstance(query_text, str) or not query_text or "\x00" in query_text:
+            raise InvariantViolationError
+        expression = _search_expression(filter_expression)
+        bounded_limit = _search_limit(limit)
+        response = await self._call(
+            self._client.search,
+            collection_name=self._collection_name,
+            data=[query_text],
+            anns_field="sparse_vector",
+            search_params={"metric_type": "BM25", "params": {}},
+            limit=bounded_limit,
+            filter=expression,
+            output_fields=list(_SEARCH_OUTPUT_FIELDS),
+            consistency_level="Strong",
+        )
+        return _search_hits(response, limit=bounded_limit)
 
     async def health(self) -> None:
         exists = _validate_has_collection(

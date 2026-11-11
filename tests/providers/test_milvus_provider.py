@@ -278,6 +278,8 @@ def test_public_provider_methods_are_async() -> None:
         "list_revision_chunk_ids",
         "delete_revision",
         "delete_document",
+        "search_dense",
+        "search_bm25",
         "health",
         "close",
     ):
@@ -887,3 +889,93 @@ def test_provider_source_contains_no_destructive_collection_operations() -> None
 
     assert ".drop_collection(" not in source
     assert ".truncate_collection(" not in source
+
+
+class SearchFake(FakeMilvusClient):
+    def __init__(self, response: object = None) -> None:
+        super().__init__()
+        self.search_response = (
+            response
+            if response is not None
+            else [
+                [
+                    {
+                        "id": "chunk_" + "a" * 64,
+                        "distance": 0.75,
+                        "entity": {
+                            "chunk_id": "chunk_" + "a" * 64,
+                            "document_id": "doc_" + "b" * 64,
+                            "revision_id": "rev_" + "c" * 64,
+                            "parent_id": "chunk_" + "d" * 64,
+                            "chunk_type": "TEXT_CHILD",
+                            "content": "child text",
+                        },
+                    }
+                ]
+            ]
+        )
+
+    def search(self, **kwargs: object) -> object:
+        self._record("search", kwargs)
+        if error := self.errors.get("search"):
+            raise error
+        return self.search_response
+
+
+@pytest.mark.asyncio
+async def test_dense_search_uses_cosine_anns_field_and_output_fields() -> None:
+    client = SearchFake()
+    hits = await provider(client).search_dense(
+        (1.0, 2.0, 3.0), filter_expression='chunk_type == "TEXT_CHILD"', limit=5
+    )
+    assert hits[0].chunk_id == "chunk_" + "a" * 64
+    assert hits[0].score == 0.75
+    call = calls_named(client, "search")[0]
+    assert call.kwargs["anns_field"] == "dense_vector"
+    assert call.kwargs["search_params"] == {
+        "metric_type": "COSINE",
+        "params": {"ef": 128},
+    }
+    assert call.kwargs["filter"] == 'chunk_type == "TEXT_CHILD"'
+    assert call.kwargs["consistency_level"] == "Strong"
+
+
+@pytest.mark.asyncio
+async def test_bm25_search_uses_builtin_sparse_field() -> None:
+    client = SearchFake()
+    await provider(client).search_bm25(
+        "query text", filter_expression='chunk_type == "TABLE"', limit=3
+    )
+    call = calls_named(client, "search")[0]
+    assert call.kwargs["anns_field"] == "sparse_vector"
+    assert call.kwargs["search_params"] == {"metric_type": "BM25", "params": {}}
+    assert call.kwargs["data"] == ["query text"]
+
+
+@pytest.mark.asyncio
+async def test_search_sdk_failure_is_dependency_unavailable() -> None:
+    client = SearchFake()
+    client.errors["search"] = MilvusUnavailableException("down")
+    with pytest.raises(DependencyUnavailableError):
+        await provider(client).search_dense(
+            (1.0, 2.0, 3.0), filter_expression='chunk_type == "TABLE"', limit=1
+        )
+
+
+@pytest.mark.asyncio
+async def test_malformed_search_response_fails_closed() -> None:
+    client = SearchFake(response=[[{"distance": 0.1, "entity": {}}]])
+    with pytest.raises(ProviderResponseError):
+        await provider(client).search_bm25(
+            "q", filter_expression='chunk_type == "TABLE"', limit=1
+        )
+
+
+@pytest.mark.asyncio
+async def test_invalid_query_vector_is_rejected_before_sdk() -> None:
+    client = SearchFake()
+    with pytest.raises(InvariantViolationError):
+        await provider(client).search_dense(
+            (1.0, 2.0), filter_expression='chunk_type == "TABLE"', limit=1
+        )
+    assert calls_named(client, "search") == []

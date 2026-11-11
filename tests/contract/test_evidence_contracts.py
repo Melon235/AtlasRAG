@@ -315,10 +315,8 @@ def test_local_evidence_has_stable_nonserialized_identity() -> None:
     assert "identity" not in first.model_dump()
 
 
-@pytest.mark.parametrize(
-    "field_name", ("context_id", "document_id", "revision_id", "content")
-)
-def test_local_evidence_rejects_blank_ids_and_content(field_name: str) -> None:
+@pytest.mark.parametrize("field_name", ("context_id", "document_id", "revision_id"))
+def test_local_evidence_rejects_blank_ids(field_name: str) -> None:
     payload: dict[str, object] = {
         "evidence_type": EvidenceType.TEXT_PARENT,
         "context_id": "parent-1",
@@ -330,6 +328,25 @@ def test_local_evidence_rejects_blank_ids_and_content(field_name: str) -> None:
     payload[field_name] = " \n "
 
     with pytest.raises(ValidationError, match=field_name):
+        LocalEvidence.model_validate(payload)
+
+
+def test_local_evidence_preserves_nonempty_whitespace_content_exactly() -> None:
+    payload: dict[str, object] = {
+        "evidence_type": EvidenceType.TEXT_PARENT,
+        "context_id": "context-1",
+        "document_id": "document-1",
+        "revision_id": "revision-1",
+        "content": " \n\t ",
+        "provenance": {
+            "file_name": "a.md",
+            "relative_source_path": "a.md",
+        },
+    }
+    evidence = LocalEvidence.model_validate(payload)
+    assert evidence.content == " \n\t "
+    payload["content"] = ""
+    with pytest.raises(ValidationError, match="content"):
         LocalEvidence.model_validate(payload)
 
 

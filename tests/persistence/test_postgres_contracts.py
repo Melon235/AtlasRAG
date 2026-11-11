@@ -1487,3 +1487,21 @@ def test_repository_modules_never_commit_and_uow_avoids_pool_context() -> None:
     assert ".getconn(" in uow_source
     assert ".putconn(" in uow_source
     assert ".connection(" not in uow_source
+
+
+@pytest.mark.asyncio
+async def test_chunk_batch_identity_lookup_is_ordered_and_typed() -> None:
+    from atlasrag.repositories.postgres.chunks import ChunkRepository
+
+    connection = FakeConnection()
+    repository = ChunkRepository(cast(Any, connection))
+    parent = stored_chunk()
+    table = stored_chunk(chunk_id="table-1", chunk_type="TABLE")
+    connection.queue_rows(chunk_row(parent), chunk_row(table))
+
+    assert await repository.list_by_ids(("parent-1", "table-1")) == (parent, table)
+    assert "WHERE chunk_id = ANY(%s)" in normalized_sql(connection.execute_calls[0][0])
+    assert "ORDER BY chunk_id" in normalized_sql(connection.execute_calls[0][0])
+    assert connection.execute_calls[0][1] == (["parent-1", "table-1"],)
+    assert await repository.list_by_ids(()) == ()
+    assert connection.commits == 0

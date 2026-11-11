@@ -128,6 +128,13 @@ class EvidenceRef(FrozenModel):
     )
 
 
+def _validate_nonempty_content(value: str) -> str:
+    """Approved Stage 6 amendment: canonical evidence is nonempty, never trimmed."""
+    if not value:
+        raise ValueError("content must not be empty")
+    return value
+
+
 class LocalEvidence(FrozenModel):
     """Complete canonical parent or table context for answer generation."""
 
@@ -138,9 +145,12 @@ class LocalEvidence(FrozenModel):
     content: StrictStr
     provenance: LocalProvenance
 
-    _nonblank_identity_and_content = field_validator(
-        "context_id", "document_id", "revision_id", "content"
-    )(_validate_nonblank)
+    _nonblank_identity = field_validator("context_id", "document_id", "revision_id")(
+        _validate_nonblank
+    )
+    _whitespace_preserving_content = field_validator("content")(
+        _validate_nonempty_content
+    )
 
     @property
     def identity(self) -> tuple[str, str, EvidenceType, str]:
