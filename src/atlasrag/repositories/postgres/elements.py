@@ -148,6 +148,18 @@ class ElementRepository:
         return validate_rowcount(cursor.rowcount)
 
     @marks_uow_failed
+    async def delete_document(self, document_id: str) -> int:
+        """Delete every element revision belonging to one document."""
+        self._guard()
+        canonical_id = require_canonical_id(document_id)
+        with postgres_error_boundary():
+            cursor = await self._connection.execute(
+                "DELETE FROM document_elements WHERE document_id = %s",
+                (canonical_id,),
+            )
+        return validate_rowcount(cursor.rowcount)
+
+    @marks_uow_failed
     async def list_for_revision(
         self, document_id: str, revision_id: str
     ) -> tuple[StoredElement, ...]:

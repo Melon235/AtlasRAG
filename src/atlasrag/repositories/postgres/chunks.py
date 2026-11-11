@@ -148,6 +148,28 @@ class ChunkRepository:
         return validate_rowcount(cursor.rowcount)
 
     @marks_uow_failed
+    async def delete_document(self, document_id: str) -> int:
+        """Delete every chunk revision, children before Parents, for one document."""
+        self._guard()
+        canonical_id = require_canonical_id(document_id)
+        deleted = 0
+        with postgres_error_boundary():
+            cursor = await self._connection.execute(
+                """
+                DELETE FROM chunks
+                WHERE document_id = %s AND parent_id IS NOT NULL
+                """,
+                (canonical_id,),
+            )
+            deleted += validate_rowcount(cursor.rowcount)
+            cursor = await self._connection.execute(
+                "DELETE FROM chunks WHERE document_id = %s",
+                (canonical_id,),
+            )
+            deleted += validate_rowcount(cursor.rowcount)
+        return deleted
+
+    @marks_uow_failed
     async def list_for_revision(
         self, document_id: str, revision_id: str
     ) -> tuple[StoredChunk, ...]:

@@ -90,6 +90,7 @@ STAGE3_BOUNDARY_NAMES = {
     ("services", "ingestion"): "ingestion service",
 }
 BUILD_GRAPH_PATH = "src/atlasrag/graphs/indexing/document_build.py"
+SYNC_GRAPH_PATH = "src/atlasrag/graphs/indexing/index_graph.py"
 BUILD_LANGGRAPH_IMPORTS = frozenset(
     {
         "langgraph.graph",
@@ -123,6 +124,40 @@ BUILD_GRAPH_CAPABILITIES = {
             "atlasrag.repositories.postgres.records.FailedStage",
             "atlasrag.services.indexing.ports",
             "atlasrag.services.indexing.ports.BuildFailureCode",
+        }
+    ),
+    "src/atlasrag/graphs/indexing/sync_state.py": frozenset(
+        {
+            "atlasrag.services.sync.models",
+            "atlasrag.services.sync.models.BuildExecutionSummary",
+            "atlasrag.services.sync.models.DeletionSummary",
+            "atlasrag.services.sync.models.ReconciliationResult",
+            "atlasrag.services.sync.models.ScanSnapshot",
+            "atlasrag.services.sync.models.SyncPlan",
+            "atlasrag.services.sync.models.SyncRequest",
+            "atlasrag.services.sync.models.SyncResult",
+        }
+    ),
+    "src/atlasrag/graphs/indexing/sync_contracts.py": frozenset(
+        {
+            "atlasrag.services.sync.models",
+            "atlasrag.services.sync.models.BuildExecutionSummary",
+            "atlasrag.services.sync.models.DeletionSummary",
+            "atlasrag.services.sync.models.GlobalSafetyResult",
+            "atlasrag.services.sync.models.ReconciliationResult",
+            "atlasrag.services.sync.models.ScanSnapshot",
+            "atlasrag.services.sync.models.SyncPlan",
+        }
+    ),
+    SYNC_GRAPH_PATH: frozenset(
+        {
+            "atlasrag.services.sync.failures",
+            "atlasrag.services.sync.failures.ScanError",
+            "atlasrag.services.sync.failures.SyncPlanError",
+            "atlasrag.services.sync.models",
+            "atlasrag.services.sync.models.ReconciliationOutcome",
+            "atlasrag.services.sync.results",
+            "atlasrag.services.sync.results.finalize_sync_result",
         }
     ),
 }
@@ -264,7 +299,7 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
             for target in targets:
                 if target == "langgraph" or target.startswith("langgraph."):
                     if (
-                        relative_path != BUILD_GRAPH_PATH
+                        relative_path not in {BUILD_GRAPH_PATH, SYNC_GRAPH_PATH}
                         or target not in BUILD_LANGGRAPH_IMPORTS
                     ):
                         diagnostics.append(

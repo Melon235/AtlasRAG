@@ -18,11 +18,17 @@ from atlasrag.services.indexing.ports import BuildFailureCode
 class BuildRequest(FrozenModel):
     source: SourceFile
     expected_pipeline_fingerprint: StrictStr
+    expected_revision_id: StrictStr | None = None
 
     @field_validator("expected_pipeline_fingerprint")
     @classmethod
     def _fingerprint(cls, value: str) -> str:
         return validate_sha256_hex(value, "pipeline fingerprint")
+
+    @field_validator("expected_revision_id")
+    @classmethod
+    def _revision(cls, value: str | None) -> str | None:
+        return None if value is None else validate_revision_id(value)
 
 
 class BuildResult(FrozenModel):

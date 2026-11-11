@@ -10,6 +10,7 @@ from typing import TypeVar
 
 from atlasrag.domain.errors import InvariantViolationError
 from atlasrag.repositories.postgres.records import (
+    RuntimeMetadata,
     StoredChunk,
     StoredDocument,
     StoredElement,
@@ -105,6 +106,24 @@ class FakeDocumentRepository:
         self._factory.raise_after_if_planned("documents.get_by_id")
         return result
 
+    async def list(self) -> tuple[StoredDocument, ...]:
+        self._factory.calls.append("documents.list")
+        return tuple(
+            sorted(
+                self._working.documents.values(),
+                key=lambda document: (
+                    document.relative_source_path,
+                    document.document_id,
+                ),
+            )
+        )
+
+    async def delete(self, document_id: str) -> int:
+        self._factory.calls.append("documents.delete")
+        removed = self._working.documents.pop(document_id, None)
+        self._factory.raise_after_if_planned("documents.delete")
+        return 0 if removed is None else 1
+
     async def get_by_relative_source_path(
         self, relative_source_path: str
     ) -> StoredDocument | None:
@@ -151,6 +170,13 @@ class FakeElementRepository:
         self._factory.raise_after_if_planned("elements.delete_revision")
         return len(removed)
 
+    async def delete_document(self, document_id: str) -> int:
+        self._factory.calls.append("elements.delete_document")
+        keys = [key for key in self._working.elements if key[0] == document_id]
+        removed = sum(len(self._working.elements.pop(key, ())) for key in keys)
+        self._factory.raise_after_if_planned("elements.delete_document")
+        return removed
+
     async def list_for_revision(
         self,
         document_id: str,
@@ -173,6 +199,13 @@ class FakeChunkRepository:
         self._factory = factory
         self._working = working
 
+    async def delete_document(self, document_id: str) -> int:
+        self._factory.calls.append("chunks.delete_document")
+        keys = [key for key in self._working.chunks if key[0] == document_id]
+        removed = sum(len(self._working.chunks.pop(key, ())) for key in keys)
+        self._factory.raise_after_if_planned("chunks.delete_document")
+        return removed
+
     async def replace_revision_set(
         self,
         document_id: str,
@@ -194,6 +227,37 @@ class FakeChunkRepository:
         removed = self._working.chunks.pop((document_id, revision_id), ())
         self._factory.raise_after_if_planned("chunks.delete_revision")
         return len(removed)
+
+    async def list_for_revision(
+        self, document_id: str, revision_id: str
+    ) -> tuple[StoredChunk, ...]:
+        self._factory.calls.append("chunks.list_for_revision")
+        records = self._working.chunks.get((document_id, revision_id), ())
+        self._factory.raise_after_if_planned("chunks.list_for_revision")
+        return tuple(records)
+
+
+class FakeRuntimeMetadata:
+    def __init__(self, factory: FakeUnitOfWorkFactory, working: FakeDatabase) -> None:
+        self._factory = factory
+        self._working = working
+
+    async def get(self) -> RuntimeMetadata:
+        self._factory.calls.append("runtime_metadata.get")
+        self._factory.raise_after_if_planned("runtime_metadata.get")
+        return RuntimeMetadata(
+            query_cache_invalidation_required=(
+                self._working.query_cache_invalidation_required
+            )
+        )
+
+    async def set_query_cache_invalidation_required(
+        self, required: bool
+    ) -> RuntimeMetadata:
+        self._factory.calls.append("runtime_metadata.set")
+        self._factory.raise_after_if_planned("runtime_metadata.set")
+        self._working.query_cache_invalidation_required = required
+        return RuntimeMetadata(query_cache_invalidation_required=required)
 
 
 class FakeUnitOfWork:
@@ -229,9 +293,11 @@ class FakeUnitOfWork:
         return self._chunks
 
     @property
-    def runtime_metadata(self) -> None:
+    def runtime_metadata(self) -> FakeRuntimeMetadata:
+        self._guard()
         self._factory.runtime_metadata_accesses += 1
-        raise AssertionError("candidate services must not access runtime metadata")
+        assert self._working is not None
+        return FakeRuntimeMetadata(self._factory, self._working)
 
     async def __aenter__(self) -> FakeUnitOfWork:
         if self._active or self._baseline is not None or self._working is not None:

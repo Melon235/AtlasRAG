@@ -296,6 +296,9 @@ EXPECTED_GRAPH_FILES = frozenset(
         "indexing/contracts.py",
         "indexing/state.py",
         "indexing/document_build.py",
+        "indexing/sync_state.py",
+        "indexing/sync_contracts.py",
+        "indexing/index_graph.py",
     }
 )
 EXPECTED_PRODUCTION_FILES = frozenset(
@@ -409,6 +412,28 @@ STAGE4_PRODUCTION_FILES = frozenset(
         "services/indexing/verification.py",
         "services/indexing/failure.py",
         "services/indexing/publication.py",
+    }
+)
+STAGE5_PRODUCTION_FILES = frozenset(
+    {
+        "application/index_sync.py",
+        "graphs/indexing/sync_state.py",
+        "graphs/indexing/sync_contracts.py",
+        "graphs/indexing/index_graph.py",
+        "services/sync/__init__.py",
+        "services/sync/models.py",
+        "services/sync/failures.py",
+        "services/sync/ports.py",
+        "services/sync/scanner.py",
+        "services/sync/snapshot.py",
+        "services/sync/planner.py",
+        "services/sync/reconciliation.py",
+        "services/sync/recovery.py",
+        "services/sync/current_repair.py",
+        "services/sync/execution.py",
+        "services/sync/deletion.py",
+        "services/sync/verification.py",
+        "services/sync/results.py",
     }
 )
 STAGE2_DRIVER_LAYERS = {
@@ -535,8 +560,12 @@ def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
             if path.is_absolute() and path.is_relative_to(REPOSITORY_ROOT)
             else path
         )
+        approved_paths = {
+            "src/atlasrag/graphs/indexing/document_build.py",
+            "src/atlasrag/graphs/indexing/index_graph.py",
+        }
         return not (
-            relative_path.as_posix() == "src/atlasrag/graphs/indexing/document_build.py"
+            relative_path.as_posix() in approved_paths
             and module_name
             in {
                 "langgraph.graph",
@@ -701,7 +730,10 @@ def _production_manifest_violations(production_root: Path) -> tuple[str, ...]:
     )
     violations: list[str] = []
     allowed_files = (
-        EXPECTED_PRODUCTION_FILES | STAGE3_PRODUCTION_FILES | STAGE4_PRODUCTION_FILES
+        EXPECTED_PRODUCTION_FILES
+        | STAGE3_PRODUCTION_FILES
+        | STAGE4_PRODUCTION_FILES
+        | STAGE5_PRODUCTION_FILES
     )
     if unexpected := sorted(actual_files - allowed_files):
         violations.append(f"unexpected production files: {unexpected}")
@@ -835,6 +867,7 @@ def _stub_package_violations(production_root: Path) -> tuple[str, ...]:
             for path in STAGE2_PRODUCTION_FILES
             | STAGE3_PRODUCTION_FILES
             | STAGE4_PRODUCTION_FILES
+            | STAGE5_PRODUCTION_FILES
             if path.startswith(f"{package_name}/")
         }
         if unexpected := actual_files - allowed_files:
@@ -895,6 +928,8 @@ def test_graph_package_contains_frozen_states_and_exact_part_i_build_modules() -
         if path.relative_to(GRAPH_ROOT).as_posix() in {
             "indexing/contracts.py",
             "indexing/document_build.py",
+            "indexing/sync_contracts.py",
+            "indexing/index_graph.py",
         }:
             # These exact internal Part I modules are executable. Their import
             # and plumbing boundaries are checked by the production checker.
@@ -902,7 +937,10 @@ def test_graph_package_contains_frozen_states_and_exact_part_i_build_modules() -
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative_path)
         is_state_schema = (
             path.parent.name == "state" and path.name != "__init__.py"
-        ) or path.relative_to(GRAPH_ROOT).as_posix() == "indexing/state.py"
+        ) or path.relative_to(GRAPH_ROOT).as_posix() in {
+            "indexing/state.py",
+            "indexing/sync_state.py",
+        }
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -962,6 +1000,7 @@ def test_no_backend_client_provider_or_business_modules_exist() -> None:
             | STAGE2_PRODUCTION_FILES
             | STAGE3_PRODUCTION_FILES
             | STAGE4_PRODUCTION_FILES
+            | STAGE5_PRODUCTION_FILES
         ):
             continue
         tokens = {

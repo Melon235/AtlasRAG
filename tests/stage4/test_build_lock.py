@@ -14,6 +14,7 @@ from atlasrag.domain.errors import (
     ConfigurationError,
     DependencyUnavailableError,
     InvariantViolationError,
+    SourceMutationError,
 )
 from atlasrag.repositories.postgres.records import RuntimeMetadata
 from atlasrag.services.ingestion.identity import content_hash
@@ -605,3 +606,16 @@ async def test_owner_startup_settles_and_closes_preserving_primary(
     assert events[-2:] == ["index.close", "pool.close"]
     await owner.close()
     assert events.count("index.close") == events.count("pool.close") == 1
+
+
+@pytest.mark.asyncio
+async def test_expected_revision_mismatch_rejects_before_candidate_creation(
+    tmp_path: Path,
+) -> None:
+    build, request, pool, factory, _, _ = runner(tmp_path)
+    expected = "rev_" + "a" * 64
+    mismatched = request.model_copy(update={"expected_revision_id": expected})
+    with pytest.raises(SourceMutationError):
+        await build.build(mismatched)
+    assert factory.database.documents == {}
+    assert not pool.held and pool.releases == 1

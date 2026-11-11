@@ -7,6 +7,7 @@ import json
 import math
 import re
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from contextlib import aclosing
 from typing import Protocol, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
@@ -204,6 +205,9 @@ def _revision_filter(document_id: str, revision_id: str) -> str:
 
 def _document_filter(document_id: str) -> str:
     return f"document_id == {_literal(document_id)}"
+
+
+_ALL_RECORDS_FILTER = 'chunk_id != ""'
 
 
 def _expect_none(response: object) -> None:
@@ -531,6 +535,46 @@ class MilvusIndexProvider:
         *,
         batch_size: int = 1_000,
     ) -> AsyncGenerator[MilvusRevisionProjection, None]:
+        """Yield every observed row for one exact document/revision scope."""
+        document_id = _local_identifier(document_id)
+        revision_id = _local_identifier(revision_id)
+        async with aclosing(
+            self._iter_projection(
+                _revision_filter(document_id, revision_id), batch_size=batch_size
+            )
+        ) as rows:
+            async for row in rows:
+                yield row
+
+    async def iter_document_projection(
+        self,
+        document_id: str,
+        *,
+        batch_size: int = 1_000,
+    ) -> AsyncGenerator[MilvusRevisionProjection, None]:
+        """Yield every revision row belonging to one canonical document."""
+        document_id = _local_identifier(document_id)
+        async with aclosing(
+            self._iter_projection(_document_filter(document_id), batch_size=batch_size)
+        ) as rows:
+            async for row in rows:
+                yield row
+
+    async def iter_all_projection(
+        self,
+        *,
+        batch_size: int = 1_000,
+    ) -> AsyncGenerator[MilvusRevisionProjection, None]:
+        """Yield every searchable row in the collection without filtering."""
+        async with aclosing(
+            self._iter_projection(_ALL_RECORDS_FILTER, batch_size=batch_size)
+        ) as rows:
+            async for row in rows:
+                yield row
+
+    async def _iter_projection(
+        self, filter_expression: str, *, batch_size: int
+    ) -> AsyncGenerator[MilvusRevisionProjection, None]:
         """Yield every observed scalar row using bounded Strong pages.
 
         Consumers must call ``aclose`` on early exit (for example using
@@ -538,8 +582,8 @@ class MilvusIndexProvider:
         IDs nor types are filtered or deduplicated before independent comparison.
         """
 
-        document_id = _local_identifier(document_id)
-        revision_id = _local_identifier(revision_id)
+        if not isinstance(filter_expression, str) or not filter_expression:
+            raise InvariantViolationError
         batch_size = _validate_batch_size(batch_size)
         iterator: object | None = None
         primary_error: BaseException | None = None
@@ -549,7 +593,7 @@ class MilvusIndexProvider:
             iterator = await self._call(
                 self._client.query_iterator,
                 collection_name=self._collection_name,
-                filter=_revision_filter(document_id, revision_id),
+                filter=filter_expression,
                 output_fields=list(PROJECTION_FIELDS),
                 batch_size=batch_size,
                 limit=-1,

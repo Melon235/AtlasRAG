@@ -517,6 +517,62 @@ def map_document_from_stored(
         raise _canonical_data_error() from None
 
 
+def map_current_document_from_stored(
+    document: StoredDocument,
+    elements: Iterable[StoredElement],
+    *,
+    revision_id: str,
+) -> DocumentContainer:
+    """Reconstruct the published current slot even when a building R2 exists.
+
+    This is the Stage 5 safety/repair view. It never selects building ownership,
+    never mutates rows, and still validates the current revision triple and slot.
+    """
+    try:
+        stored = StoredDocument.model_validate(document)
+        envelope = load_document_parse_metadata_envelope(stored)
+    except (RecursionError, ValidationError):
+        raise _canonical_data_error() from None
+    if (
+        stored.current_revision_id is None
+        or stored.current_revision_id != revision_id
+        or stored.current_content_hash is None
+        or stored.current_pipeline_fingerprint is None
+        or envelope.current is None
+        or envelope.current.revision_id != revision_id
+    ):
+        raise _canonical_data_error()
+    try:
+        expected_revision = derive_revision_id(
+            stored.document_id,
+            stored.current_content_hash,
+            stored.current_pipeline_fingerprint,
+        )
+    except ValueError:
+        raise _canonical_data_error() from None
+    if expected_revision != revision_id:
+        raise _canonical_data_error()
+    canonical_elements = map_elements_from_stored(elements)
+    try:
+        return DocumentContainer.model_validate(
+            {
+                "schema_version": 1,
+                "document_id": stored.document_id,
+                "revision_id": revision_id,
+                "source": {
+                    "relative_source_path": stored.relative_source_path,
+                    "file_name": stored.file_name,
+                    "source_type": stored.source_type.value,
+                },
+                "metadata": envelope.current.document_metadata,
+                "parse_info": envelope.current.parse_info,
+                "elements": canonical_elements,
+            }
+        )
+    except (RecursionError, ValidationError):
+        raise _canonical_data_error() from None
+
+
 def map_chunk_to_stored(
     chunk: ChunkRecord,
     *,
