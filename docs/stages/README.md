@@ -15,18 +15,17 @@ green remote CI result.
 
 ## Current stage
 
-- **Stage:** Stage 5 — Part I: Sync / Recovery / Maintenance
-- **Status:** Stage 5 COMPLETE — pull request #6 open and unmerged
+- **Stage:** Stage 6 — Part II: Local Evidence
+- **Status:** Stage 6 IN PROGRESS — publication and final remote gates pending
 - **Report:**
-  [stage-05-part-i-sync-recovery-maintenance.md](stage-05-part-i-sync-recovery-maintenance.md)
-- **Next:** Stage 6 — Part II: Local Evidence — NOT STARTED
+  [stage-06-part-ii-local-evidence.md](stage-06-part-ii-local-evidence.md)
+- **Next:** Stage 7 — Part II: Web Evidence & Answer — NOT STARTED
 
-Stage 5 implements complete Knowledge Directory scanning, immutable sync
-planning, bounded whole-directory build execution, durable PARSED/CHUNKED
-recovery, startup reconciliation, exact-set current-index repair, Milvus-first
-missing-source deletion, and global published-knowledge verification with
-separate SyncOutcome/ServingSafety verdicts. Its real PostgreSQL/Milvus
-integration gates are green; all push- and PR-triggered remote gates are green,
-and pull request #6 remains deliberately unmerged. No RuntimeGate, runtime
-lifecycle, Redis invalidation execution, Part II, or benchmark behavior has
+Stage 6 implements the shared published retrieval scope, Dense and BM25
+retrieval, deterministic RRF, pinned BGE reranking with degradation, unique
+evidence selection, canonical PostgreSQL Parent/Table expansion, deterministic
+sufficiency, and the six-node `local_evidence_subgraph`. Its real
+PostgreSQL/Milvus and real Qwen/BGE model gates are green; remote publication is
+pending. No Query Construction, RagCore retry/routing, Web evidence, Answer
+generation, Query Cache, RuntimeGate, Stage 7, or benchmark behavior has
 started.
