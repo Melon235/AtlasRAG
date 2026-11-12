@@ -92,6 +92,8 @@ STAGE3_BOUNDARY_NAMES = {
 BUILD_GRAPH_PATH = "src/atlasrag/graphs/indexing/document_build.py"
 SYNC_GRAPH_PATH = "src/atlasrag/graphs/indexing/index_graph.py"
 LOCAL_EVIDENCE_GRAPH_PATH = "src/atlasrag/graphs/local_evidence/subgraph.py"
+WEB_EVIDENCE_GRAPH_PATH = "src/atlasrag/graphs/web_evidence/subgraph.py"
+ANSWER_GRAPH_PATH = "src/atlasrag/graphs/answer/subgraph.py"
 BUILD_LANGGRAPH_IMPORTS = frozenset(
     {
         "langgraph.graph",
@@ -167,6 +169,36 @@ BUILD_GRAPH_CAPABILITIES = {
             "atlasrag.services.local_evidence.fusion.fuse",
             "atlasrag.services.local_evidence.service",
             "atlasrag.services.local_evidence.service.LocalEvidenceServices",
+        }
+    ),
+    WEB_EVIDENCE_GRAPH_PATH: frozenset(
+        {
+            "atlasrag.services.web_evidence.profile",
+            "atlasrag.services.web_evidence.profile.WebEvidenceProfile",
+            "atlasrag.services.web_evidence.service",
+            "atlasrag.services.web_evidence.service.WebEvidenceStrategy",
+            "atlasrag.services.web_evidence.service.WebPreparationService",
+            "atlasrag.services.web_evidence.service.preparation_degraded",
+            "atlasrag.services.web_evidence.ports",
+            "atlasrag.services.web_evidence.ports.SearchProvider",
+        }
+    ),
+    ANSWER_GRAPH_PATH: frozenset(
+        {
+            "atlasrag.services.answer.citations",
+            "atlasrag.services.answer.citations.CitationResolver",
+            "atlasrag.services.answer.compression",
+            "atlasrag.services.answer.compression.CompressionError",
+            "atlasrag.services.answer.compression.CompressionStrategy",
+            "atlasrag.services.answer.generation_input",
+            "atlasrag.services.answer.generation_input.GenerationInputBuilder",
+            "atlasrag.services.answer.ports",
+            "atlasrag.services.answer.ports.GenerationProtocolError",
+            "atlasrag.services.answer.ports.GenerationProvider",
+            "atlasrag.services.answer.profile",
+            "atlasrag.services.answer.profile.AnswerProfile",
+            "atlasrag.services.answer.review",
+            "atlasrag.services.answer.review.OutputReviewService",
         }
     ),
 }
@@ -313,6 +345,8 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
                             BUILD_GRAPH_PATH,
                             SYNC_GRAPH_PATH,
                             LOCAL_EVIDENCE_GRAPH_PATH,
+                            WEB_EVIDENCE_GRAPH_PATH,
+                            ANSWER_GRAPH_PATH,
                         }
                         or target not in BUILD_LANGGRAPH_IMPORTS
                     ):

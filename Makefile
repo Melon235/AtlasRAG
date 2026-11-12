@@ -107,6 +107,18 @@ stage6-verify:
 stage6-model-smoke:
 	ATLASRAG_RUN_INTEGRATION=1 uv run --frozen --group indexing-embedding pytest tests/integration/test_stage6_model_smoke.py -m integration -q -s
 
+test-stage7:
+	uv run --frozen pytest tests/stage7 -q
+
+test-stage7-integration:
+	ATLASRAG_RUN_INTEGRATION=1 uv run --frozen pytest tests/integration/test_stage7_transport.py -m integration -q
+
+stage7-verify:
+	scripts/stage7_verify.sh
+
+stage7-provider-smoke:
+	ATLASRAG_RUN_INTEGRATION=1 uv run --frozen pytest tests/integration/test_stage7_provider_smoke.py -m integration -q -s
+
 test-stage5-integration:
 	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage5_verify.sh --integration-only
 
