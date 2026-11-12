@@ -212,6 +212,28 @@ sufficiency is intentionally deferred to a future benchmarked comparison; Stage
 | reranker failure | previous ordering/degraded | DEGRADED + evidence status |
 | published/canonical mismatch | fail closed | technical error, not a normal branch |
 
+## 9A. Sufficiency limitation — benchmark-selected, not proof
+
+The deterministic baseline is an **engineering heuristic**, not evidence that an
+answer is sufficient:
+
+- Reranker scores and RRF scores are proxies for local evidence relevance, not
+  proof of answer sufficiency. A high score can still be incomplete, stale, or
+  off-topic for the original query.
+- The middle reranker band returning `AMBIGUOUS` is an unverified proxy for
+  possible query drift. It is not a validated semantic judgment and must not be
+  interpreted as proof that the query or evidence is ambiguous.
+- Stage 9 must formally compare the deterministic strategy with LLM-based
+  sufficiency assessment, not assume either winner.
+- Stage 9 must measure false-SUFFICIENT decisions, AMBIGUOUS/INSUFFICIENT
+  discrimination, incorrect corrective routing, and Web-fallback outcomes.
+- Nonempty whitespace-only canonical Parent/Child content is legal by contract,
+  but legality does not imply semantic relevance, evidence quality, or
+  sufficiency.
+
+No Stage 6 result may be cited as a final quality claim for the sufficiency
+strategy or for reranking.
+
 ## 10. Verification
 
 Final local gates on the Stage 6 tree:
