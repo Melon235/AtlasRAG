@@ -6,25 +6,20 @@ incrementally through independently verified implementation stages.
 The authoritative design is
 [`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md).
 
-**Current implementation stage: Stage 6 — Part II: Local Evidence**
+**Current implementation stage: Stage 7 — Part II: Web Evidence & Answer**
 
-**Status: Stage 6 COMPLETE — pull request #7 open and unmerged**
+**Status: Stage 7 IN PROGRESS — publication and final remote gates pending**
 
-Stage 6 adds one complete local evidence attempt: shared published retrieval
-scope, Dense + BM25 retrieval, deterministic RRF, pinned BGE reranking with
-degradation, unique evidence selection, canonical PostgreSQL Parent/Table
-expansion, deterministic sufficiency, and the six-node
-`local_evidence_subgraph`. The Stage adds no database migration and does not
-implement Query Construction, RagCore retry/routing, Web evidence, Answer
-generation, Query Cache, RuntimeGate, Stage 7, or benchmarks.
+Stage 7 adds independent `web_evidence_subgraph` and `answer_subgraph`
+capabilities: SearXNG JSON search, SSRF-safe fetch/sanitize/budgets, direct and
+batch-summary Web evidence strategies, structured DeepSeek generation,
+identity compression, deterministic output review, bounded regeneration, and
+authoritative citation resolution. It adds no database migration and does not
+implement Query Construction, RagCore orchestration, Query Cache, RuntimeGate,
+Stage 8, or benchmarks.
 
-The evidence-bearing report is
-[`docs/stages/stage-06-part-ii-local-evidence.md`](docs/stages/stage-06-part-ii-local-evidence.md).
-Fresh local offline, Stage 2–5 regression, real PostgreSQL/Milvus, real Qwen
-CUDA, and real BGE reranker gates pass. The branch is published normally,
-push- and PR-triggered CI/Integration checks are green, and
-[pull request #7](https://github.com/Melon235/AtlasRAG/pull/7) remains open and
-deliberately unmerged.
+The authoritative Stage 7 evidence report is
+[`docs/stages/stage-07-part-ii-web-evidence-answer.md`](docs/stages/stage-07-part-ii-web-evidence-answer.md).
 
 ## Setup
 
@@ -135,6 +130,20 @@ make stage6-model-smoke
 - `make stage6-model-smoke` is the separate CUDA gate for real Qwen query
   embedding and the real `BAAI/bge-reranker-v2-m3` baseline; it is intentionally
   absent from ordinary CI.
+
+Stage 7 provides:
+
+```bash
+make test-stage7
+make test-stage7-integration
+make stage7-verify
+make stage7-provider-smoke
+```
+
+`make test-stage7` is offline; `make test-stage7-integration` runs real local
+HTTP transport contracts without Docker or external services;
+`make stage7-verify` composes both; `make stage7-provider-smoke` is the explicit
+live SearXNG/DeepSeek check and requires external credentials/network.
 
 Ordinary `make verify` remains network-free, Docker-free, parser-SDK-free,
 model-free, and independent of PostgreSQL, Redis, Milvus, and SearXNG.
