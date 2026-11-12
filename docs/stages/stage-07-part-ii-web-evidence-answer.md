@@ -2,8 +2,9 @@
 
 ## 1. Status
 
-**IMPLEMENTATION COMPLETE — LOCAL/REGRESSION GATES PASS; REAL EXTERNAL
-PROVIDER ACCEPTANCE PENDING.**
+**COMPLETE — all local/regression gates pass; the branch is published; final-HEAD
+push and pull-request CI/Integration are green; PR #8 is open and unmerged.
+Real external live-provider acceptance remains unverified without credentials.**
 
 Stage 6 was merged and closed at
 `528fcf6eb34bb89058edf5f01fec92c335eeb8d5`. Stage 7 is based on that exact
@@ -156,7 +157,7 @@ and the Stage 9 benchmark harness/comparison are not implemented.
 | T8 deterministic output review | COMPLETE |
 | T9 citation resolver/FinalResponse | COMPLETE |
 | T10 answer_subgraph/regeneration | COMPLETE |
-| T11 integration/review/closeout/PR | IN PROGRESS |
+| T11 integration/review/closeout/PR | COMPLETE — 5994502; PR #8 open and unmerged |
 
 ## 10. Independent audit
 
@@ -197,6 +198,37 @@ credentials/network; it is reported as unverified, not as a fake pass.
 
 ## 11. Publication
 
-_To be completed after commits, normal push, PR creation, and final-HEAD
-remote CI/Integration checks. Stage 7 must remain unmerged; Stage 8 must not
-start._
+```text
+95847f4 feat(stage7): implement web evidence and answer pipelines
+2618641 docs(stage7): add design plan and evidence report
+5994502 fix(stage7): harden fetch and review boundaries
+```
+
+The documentation-only commit containing this publication section supersedes
+`5994502` for the report itself and is verified through the pull-request head.
+
+Publication evidence:
+
+- Verified implementation/docs commit:
+  `59945022deec9168886802f328aaa33292d9624e`
+- Normal push to `origin/stage/07-part-ii-web-evidence-answer`: **PASS**
+- Force push: **NOT USED; PROHIBITED**
+- Push CI `Verify`: **PASS** — run
+  [43236887928](https://github.com/Melon235/AtlasRAG/actions/runs/43236887928)
+  (3m36s)
+- Push `Integration`: **PASS** — run
+  [43236887877](https://github.com/Melon235/AtlasRAG/actions/runs/43236887877)
+  with Stage 2, 3, 4, 5, 6, and 7
+- Pull-request CI: **PASS** — run
+  [43236901417](https://github.com/Melon235/AtlasRAG/actions/runs/43236901417)
+  (2m51s)
+- Pull-request `Integration`: **PASS** — run
+  [43236901412](https://github.com/Melon235/AtlasRAG/actions/runs/43236901412)
+  with Stage 2, 3, 4, 5, 6, and 7
+- Pull request: [#8](https://github.com/Melon235/AtlasRAG/pull/8) — **OPEN,
+  MERGEABLE, UNMERGED**
+- Merge into `main`: **NOT PERFORMED; MUST REMAIN MANUAL**
+- Live provider smoke: **SKIPPED** — `ATLASRAG_SEARXNG_URL` and
+  `DEEPSEEK_API_KEY` were not configured; this is not represented as a real
+  provider pass.
+- Stage 8: **NOT STARTED**
