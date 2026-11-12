@@ -185,9 +185,11 @@ were corrected and retested:
   AnswerInput, retry-count, deadline, source-boundary and snippet tests added.
 - **Final re-audit fixes:** malformed `http.client.HTTPException` responses are
   normalized to a per-source fetch failure (snippet fallback/DEGRADED, never a
-  whole-stage crash); total-budget clipping is DEGRADED; default-port/userinfo
-  URL review normalization; source-boundary regex ignores fenced code; snippet
-  titles are sanitized; summary `max_tokens`/retry/malformed tests added.
+  whole-stage crash); total-budget clipping is DEGRADED; URL comparison strips
+  only the scheme's own default port, rejects userinfo and does not decode
+  reserved path delimiters; source-boundary IDs are checked only in prose
+  (fenced code exempt); snippet titles are sanitized; summary `max_tokens`/
+  retry/malformed tests added; connection timeout follows the per-fetch limit.
 
 **Architecture verdict: READY.** **Security/release verdict: READY after these
 fixes.** The only unresolved acceptance item is external live provider

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 
 from atlasrag.domain.answer import (
     AnswerInput,
@@ -34,10 +34,10 @@ def _normalise_url(url: str) -> tuple[str, str, int | None, str, str]:
         port = parsed.port
     except ValueError:
         return ("invalid", "", -1, "", "")
-    if port in {80, 443}:
+    if (scheme == "https" and port == 443) or (scheme == "http" and port == 80):
         port = None
-    path = unquote(parsed.path or "/").rstrip("/") or "/"
-    query = unquote(parsed.query)
+    path = (parsed.path or "/").rstrip("/") or "/"
+    query = parsed.query
     return scheme, host, port, path, query
 
 
@@ -64,10 +64,6 @@ class OutputReviewService:
         ):
             reasons.append(OutputReviewReasonCode.PROTOCOL_CONTENT)
             block = True
-        if _INTERNAL_ID.search(generation.answer_text):
-            reasons.append(OutputReviewReasonCode.SOURCE_BOUNDARY_VIOLATION)
-            block = True
-
         unknown = (declared | marker_set) - known
         if unknown:
             reasons.append(OutputReviewReasonCode.UNKNOWN_CITATION)

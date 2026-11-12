@@ -100,10 +100,12 @@ async def test_redirect_target_is_revalidated_before_connect(
     fetcher = public_fetcher()
     response = FakeResponse(302, {"location": "http://127.0.0.1/"}, b"")
     connection = FakeConnection(response)
-    calls: list[tuple[str, int, str, str]] = []
+    calls: list[tuple[str, int, str, str, float]] = []
 
-    def connect(address: str, port: int, host: str, scheme: str) -> FakeConnection:
-        calls.append((address, port, host, scheme))
+    def connect(
+        address: str, port: int, host: str, scheme: str, timeout: float
+    ) -> FakeConnection:
+        calls.append((address, port, host, scheme, timeout))
         return connection
 
     monkeypatch.setattr(fetcher, "_connect", connect)
@@ -122,10 +124,12 @@ async def test_connection_is_pinned_to_validated_address(
             200, {"content-type": "text/html; charset=utf-8"}, b"<h1>Hello</h1>"
         )
     )
-    seen: list[tuple[str, int, str, str]] = []
+    seen: list[tuple[str, int, str, str, float]] = []
 
-    def connect(address: str, port: int, host: str, scheme: str) -> FakeConnection:
-        seen.append((address, port, host, scheme))
+    def connect(
+        address: str, port: int, host: str, scheme: str, timeout: float
+    ) -> FakeConnection:
+        seen.append((address, port, host, scheme, timeout))
         return connection
 
     monkeypatch.setattr(fetcher, "_connect", connect)
@@ -143,7 +147,7 @@ async def test_unsupported_content_type_and_oversize_body_are_rejected(
     monkeypatch.setattr(
         fetcher,
         "_connect",
-        lambda address, port, host, scheme: FakeConnection(
+        lambda *args: FakeConnection(
             FakeResponse(200, {"content-type": "application/octet-stream"}, b"data")
         ),
     )
@@ -152,7 +156,7 @@ async def test_unsupported_content_type_and_oversize_body_are_rejected(
     monkeypatch.setattr(
         fetcher,
         "_connect",
-        lambda address, port, host, scheme: FakeConnection(
+        lambda *args: FakeConnection(
             FakeResponse(200, {"content-type": "text/html"}, b"x" * 101)
         ),
     )

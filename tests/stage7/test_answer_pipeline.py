@@ -109,6 +109,10 @@ async def test_control_leakage_and_forged_url_block_but_code_url_is_allowed() ->
         generation("See https://a.example:443/authorized [W1].", ("W1",)), source
     )
     assert default_port.decision is OutputReviewDecision.ACCEPT
+    wrong_port = await review.review(
+        generation("See https://a.example:80/authorized [W1].", ("W1",)), source
+    )
+    assert wrong_port.decision is OutputReviewDecision.BLOCK
     userinfo = await review.review(
         generation("See https://user@a.example/authorized [W1].", ("W1",)), source
     )

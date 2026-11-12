@@ -239,9 +239,9 @@ class SafeHttpFetcher:
         )
 
     def _connect(
-        self, address: str, port: int, host: str, scheme: str
+        self, address: str, port: int, host: str, scheme: str, timeout: float
     ) -> http.client.HTTPConnection:
-        raw_socket = socket.create_connection((address, port), timeout=self._timeout)
+        raw_socket = socket.create_connection((address, port), timeout=timeout)
         if scheme == "https":
             context = ssl.create_default_context()
             tls_socket = context.wrap_socket(raw_socket, server_hostname=host)
@@ -249,7 +249,7 @@ class SafeHttpFetcher:
             connection = http.client.HTTPConnection(host, port, timeout=self._timeout)
             connection.sock = tls_socket
             return connection
-        connection = http.client.HTTPConnection(host, port, timeout=self._timeout)
+        connection = http.client.HTTPConnection(host, port, timeout=timeout)
         connection.sock = raw_socket
         return connection
 
@@ -262,7 +262,7 @@ class SafeHttpFetcher:
     ) -> tuple[int, http.client.HTTPMessage, str]:
         address = validated.addresses[0]
         connection = self._connect(
-            address, validated.port, validated.host, validated.scheme
+            address, validated.port, validated.host, validated.scheme, timeout
         )
         connection.sock.settimeout(timeout)
         with lock:
