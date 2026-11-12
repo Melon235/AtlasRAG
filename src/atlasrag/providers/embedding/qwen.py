@@ -21,6 +21,9 @@ from atlasrag.providers.embedding.profile import EmbeddingExecutionProfile
 QWEN_MODEL_ID = "Qwen/Qwen3-Embedding-0.6B"
 QWEN_REVISION = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
 QWEN_DIMENSION = 1024
+QWEN_QUERY_INSTRUCTION = (
+    "Given a web search query, retrieve relevant passages that answer the query"
+)
 _ASSETS = [
     "config.json",
     "model.safetensors",
@@ -189,6 +192,20 @@ class QwenEmbeddingProvider:
                 device=str(parameters[0].device),
             )
         self._loaded = _Loaded(torch, tokenizer, model, identity)
+
+    async def embed_query(self, query: str) -> tuple[float, ...]:
+        """Embed one query with the official instruction asymmetry, never document text."""
+        if not isinstance(query, str) or not query:
+            raise ValueError("query embedding input must be nonempty text")
+        instructed = f"Instruct: {QWEN_QUERY_INSTRUCTION}\nQuery: {query}"
+        async with self._semaphore:
+            loaded = self._loaded
+            if loaded is None:
+                raise RuntimeError("embedding provider must be initialized explicitly")
+            vector = await _settled_thread(
+                lambda: self._embed_sync(loaded, (instructed,))
+            )
+        return vector[0]
 
     async def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
         """Embed unchanged document text; no query instructions or truncation."""

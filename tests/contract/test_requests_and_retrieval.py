@@ -498,9 +498,9 @@ def test_text_parent_is_not_a_retrieval_candidate_type() -> None:
 
 @pytest.mark.parametrize(
     "field_name",
-    ("chunk_id", "document_id", "revision_id", "retrieval_text"),
+    ("chunk_id", "document_id", "revision_id"),
 )
-def test_retrieval_candidate_rejects_blank_identity_and_text_fields(
+def test_retrieval_candidate_rejects_blank_identity_fields(
     field_name: str,
 ) -> None:
     payload: dict[str, object] = {
@@ -515,6 +515,23 @@ def test_retrieval_candidate_rejects_blank_identity_and_text_fields(
     payload[field_name] = " \t "
 
     with pytest.raises(ValidationError, match=field_name):
+        RetrievalCandidate.model_validate(payload)
+
+
+def test_retrieval_candidate_preserves_nonempty_whitespace_text_exactly() -> None:
+    payload: dict[str, object] = {
+        "chunk_id": "chunk-1",
+        "document_id": "document-1",
+        "revision_id": "revision-1",
+        "chunk_type": RetrievalChunkType.TEXT_CHILD,
+        "parent_id": "parent-1",
+        "retrieval_text": " \n\t ",
+        "scores": CandidateScores(),
+    }
+    candidate = RetrievalCandidate.model_validate(payload)
+    assert candidate.retrieval_text == " \n\t "
+    payload["retrieval_text"] = ""
+    with pytest.raises(ValidationError, match="retrieval_text"):
         RetrievalCandidate.model_validate(payload)
 
 

@@ -91,6 +91,7 @@ STAGE3_BOUNDARY_NAMES = {
 }
 BUILD_GRAPH_PATH = "src/atlasrag/graphs/indexing/document_build.py"
 SYNC_GRAPH_PATH = "src/atlasrag/graphs/indexing/index_graph.py"
+LOCAL_EVIDENCE_GRAPH_PATH = "src/atlasrag/graphs/local_evidence/subgraph.py"
 BUILD_LANGGRAPH_IMPORTS = frozenset(
     {
         "langgraph.graph",
@@ -158,6 +159,14 @@ BUILD_GRAPH_CAPABILITIES = {
             "atlasrag.services.sync.models.ReconciliationOutcome",
             "atlasrag.services.sync.results",
             "atlasrag.services.sync.results.finalize_sync_result",
+        }
+    ),
+    LOCAL_EVIDENCE_GRAPH_PATH: frozenset(
+        {
+            "atlasrag.services.local_evidence.fusion",
+            "atlasrag.services.local_evidence.fusion.fuse",
+            "atlasrag.services.local_evidence.service",
+            "atlasrag.services.local_evidence.service.LocalEvidenceServices",
         }
     ),
 }
@@ -299,7 +308,12 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
             for target in targets:
                 if target == "langgraph" or target.startswith("langgraph."):
                     if (
-                        relative_path not in {BUILD_GRAPH_PATH, SYNC_GRAPH_PATH}
+                        relative_path
+                        not in {
+                            BUILD_GRAPH_PATH,
+                            SYNC_GRAPH_PATH,
+                            LOCAL_EVIDENCE_GRAPH_PATH,
+                        }
                         or target not in BUILD_LANGGRAPH_IMPORTS
                     ):
                         diagnostics.append(
@@ -350,15 +364,15 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
                 ),
                 None,
             )
-            if (
-                embedding_sdk is not None
-                and relative_path != "src/atlasrag/providers/embedding/qwen.py"
-            ):
+            if embedding_sdk is not None and relative_path not in {
+                "src/atlasrag/providers/embedding/qwen.py",
+                "src/atlasrag/providers/reranker/bge.py",
+            }:
                 diagnostics.append(
                     Diagnostic(
                         relative_path,
                         node.lineno,
-                        f"embedding SDK '{embedding_sdk}' is only allowed in the Qwen adapter",
+                        f"embedding SDK '{embedding_sdk}' is only allowed in approved model adapters",
                     )
                 )
                 # Retain the pure-boundary diagnostic below for existing callers.

@@ -49,6 +49,13 @@ def _validate_nonblank(value: str) -> str:
     return value
 
 
+def _validate_nonempty_text(value: str) -> str:
+    """Approved Stage 6 amendment: index text is nonempty, never whitespace-trimmed."""
+    if not value:
+        raise ValueError("retrieval_text must not be empty")
+    return value
+
+
 class CandidateScores(FrozenModel):
     """Optional score slots for the current retrieval candidate."""
 
@@ -70,8 +77,11 @@ class RetrievalCandidate(FrozenModel):
     scores: CandidateScores
 
     _nonblank_required_strings = field_validator(
-        "chunk_id", "document_id", "revision_id", "retrieval_text"
+        "chunk_id", "document_id", "revision_id"
     )(_validate_nonblank)
+    _whitespace_preserving_text = field_validator("retrieval_text")(
+        _validate_nonempty_text
+    )
 
     @field_validator("parent_id")
     @classmethod

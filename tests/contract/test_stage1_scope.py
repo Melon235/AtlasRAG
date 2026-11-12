@@ -299,6 +299,8 @@ EXPECTED_GRAPH_FILES = frozenset(
         "indexing/sync_state.py",
         "indexing/sync_contracts.py",
         "indexing/index_graph.py",
+        "local_evidence/__init__.py",
+        "local_evidence/subgraph.py",
     }
 )
 EXPECTED_PRODUCTION_FILES = frozenset(
@@ -412,6 +414,27 @@ STAGE4_PRODUCTION_FILES = frozenset(
         "services/indexing/verification.py",
         "services/indexing/failure.py",
         "services/indexing/publication.py",
+    }
+)
+STAGE6_PRODUCTION_FILES = frozenset(
+    {
+        "application/local_evidence.py",
+        "graphs/local_evidence/__init__.py",
+        "graphs/local_evidence/subgraph.py",
+        "providers/reranker/__init__.py",
+        "providers/reranker/base.py",
+        "providers/reranker/bge.py",
+        "services/local_evidence/__init__.py",
+        "services/local_evidence/profile.py",
+        "services/local_evidence/ports.py",
+        "services/local_evidence/scope.py",
+        "services/local_evidence/retrieval.py",
+        "services/local_evidence/fusion.py",
+        "services/local_evidence/reranking.py",
+        "services/local_evidence/selection.py",
+        "services/local_evidence/parent_context.py",
+        "services/local_evidence/sufficiency.py",
+        "services/local_evidence/service.py",
     }
 )
 STAGE5_PRODUCTION_FILES = frozenset(
@@ -563,6 +586,7 @@ def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
         approved_paths = {
             "src/atlasrag/graphs/indexing/document_build.py",
             "src/atlasrag/graphs/indexing/index_graph.py",
+            "src/atlasrag/graphs/local_evidence/subgraph.py",
         }
         return not (
             relative_path.as_posix() in approved_paths
@@ -584,7 +608,10 @@ def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
             if path.is_absolute() and path.is_relative_to(REPOSITORY_ROOT)
             else path
         )
-        return relative_path.as_posix() != "src/atlasrag/providers/embedding/qwen.py"
+        return relative_path.as_posix() not in {
+            "src/atlasrag/providers/embedding/qwen.py",
+            "src/atlasrag/providers/reranker/bge.py",
+        }
     driver_layers = STAGE2_DRIVER_LAYERS | STAGE3_DRIVER_LAYERS
     if path is not None and root in driver_layers:
         parts = path.parts
@@ -734,6 +761,7 @@ def _production_manifest_violations(production_root: Path) -> tuple[str, ...]:
         | STAGE3_PRODUCTION_FILES
         | STAGE4_PRODUCTION_FILES
         | STAGE5_PRODUCTION_FILES
+        | STAGE6_PRODUCTION_FILES
     )
     if unexpected := sorted(actual_files - allowed_files):
         violations.append(f"unexpected production files: {unexpected}")
@@ -868,6 +896,7 @@ def _stub_package_violations(production_root: Path) -> tuple[str, ...]:
             | STAGE3_PRODUCTION_FILES
             | STAGE4_PRODUCTION_FILES
             | STAGE5_PRODUCTION_FILES
+            | STAGE6_PRODUCTION_FILES
             if path.startswith(f"{package_name}/")
         }
         if unexpected := actual_files - allowed_files:
@@ -930,6 +959,7 @@ def test_graph_package_contains_frozen_states_and_exact_part_i_build_modules() -
             "indexing/document_build.py",
             "indexing/sync_contracts.py",
             "indexing/index_graph.py",
+            "local_evidence/subgraph.py",
         }:
             # These exact internal Part I modules are executable. Their import
             # and plumbing boundaries are checked by the production checker.
@@ -1001,6 +1031,7 @@ def test_no_backend_client_provider_or_business_modules_exist() -> None:
             | STAGE3_PRODUCTION_FILES
             | STAGE4_PRODUCTION_FILES
             | STAGE5_PRODUCTION_FILES
+            | STAGE6_PRODUCTION_FILES
         ):
             continue
         tokens = {

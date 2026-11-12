@@ -202,6 +202,33 @@ _DenseVector = Annotated[
 ]
 
 
+class MilvusSearchHit(FrozenModel):
+    """Validated scalar search hit; vectors never cross the retrieval boundary."""
+
+    chunk_id: CanonicalId
+    document_id: CanonicalId
+    revision_id: CanonicalId
+    chunk_type: _RetrievalChunkType
+    parent_id: CanonicalId | None = None
+    content: _Content
+    score: StrictReal
+
+    @field_validator("score")
+    @classmethod
+    def _finite_score(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("search score must be finite")
+        return value
+
+    @model_validator(mode="after")
+    def _parent_consistency(self) -> Self:
+        if self.chunk_type is RetrievalChunkType.TEXT_CHILD and self.parent_id is None:
+            raise ValueError("TEXT_CHILD search hits require parent_id")
+        if self.parent_id == self.chunk_id:
+            raise ValueError("a search hit cannot be its own parent")
+        return self
+
+
 class MilvusChunkRecord(FrozenModel):
     """One validated retrievable child/table row for the derived index."""
 
