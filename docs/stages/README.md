@@ -15,18 +15,18 @@ green remote CI result.
 
 ## Current stage
 
-- **Stage:** Stage 6 — Part II: Local Evidence
-- **Status:** Stage 6 COMPLETE — pull request #7 open and unmerged
+- **Stage:** Stage 7 — Part II: Web Evidence & Answer
+- **Status:** Stage 7 COMPLETE — real provider acceptance PASS; pull request #8
+  open and unmerged
 - **Report:**
-  [stage-06-part-ii-local-evidence.md](stage-06-part-ii-local-evidence.md)
-- **Next:** Stage 7 — Part II: Web Evidence & Answer — NOT STARTED
+  [stage-07-part-ii-web-evidence-answer.md](stage-07-part-ii-web-evidence-answer.md)
+- **Next:** Stage 8 — Part II: RagCore / Cache — NOT STARTED
 
-Stage 6 implements the shared published retrieval scope, Dense and BM25
-retrieval, deterministic RRF, pinned BGE reranking with degradation, unique
-evidence selection, canonical PostgreSQL Parent/Table expansion, deterministic
-sufficiency, and the six-node `local_evidence_subgraph`. Its real
-PostgreSQL/Milvus and real Qwen/BGE model gates are green; all push- and
-PR-triggered remote gates are green, and pull request #7 remains deliberately
-unmerged. No Query Construction, RagCore retry/routing, Web evidence, Answer
-generation, Query Cache, RuntimeGate, Stage 7, or benchmark behavior has
-started.
+Stage 7 implements SearXNG JSON search, SSRF-safe fetch/sanitize/budgets,
+direct and batch-summary Web evidence strategies, structured DeepSeek
+generation, identity compression, deterministic output review, bounded
+regeneration, and authoritative citation resolution as two independent
+subgraphs. Local transport and Stage 2–6 regression gates are green; all push/PR remote
+gates are green; real SearXNG and DeepSeek generation/batch-summary acceptance
+also pass, and PR #8 remains deliberately unmerged. No RagCore orchestration,
+Query Cache, RuntimeGate, Stage 8, or benchmark behavior has started.

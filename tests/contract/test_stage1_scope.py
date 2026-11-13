@@ -61,7 +61,7 @@ FORBIDDEN_IMPORT_PREFIXES = (
 )
 EXPECTED_DECLARED_DISTRIBUTIONS = {
     "project.dependencies": frozenset(
-        {"pydantic", "alembic", "psycopg", "redis", "pymilvus", "langgraph"}
+        {"pydantic", "alembic", "psycopg", "redis", "pymilvus", "langgraph", "httpx"}
     ),
     "dependency-groups.dev": frozenset(
         {"mypy", "pytest", "pytest-cov", "pytest-asyncio", "ruff"}
@@ -301,6 +301,10 @@ EXPECTED_GRAPH_FILES = frozenset(
         "indexing/index_graph.py",
         "local_evidence/__init__.py",
         "local_evidence/subgraph.py",
+        "web_evidence/__init__.py",
+        "web_evidence/subgraph.py",
+        "answer/__init__.py",
+        "answer/subgraph.py",
     }
 )
 EXPECTED_PRODUCTION_FILES = frozenset(
@@ -414,6 +418,35 @@ STAGE4_PRODUCTION_FILES = frozenset(
         "services/indexing/verification.py",
         "services/indexing/failure.py",
         "services/indexing/publication.py",
+    }
+)
+STAGE7_PRODUCTION_FILES = frozenset(
+    {
+        "application/answer.py",
+        "application/web_evidence.py",
+        "graphs/answer/__init__.py",
+        "graphs/answer/subgraph.py",
+        "graphs/web_evidence/__init__.py",
+        "graphs/web_evidence/subgraph.py",
+        "providers/generation/__init__.py",
+        "providers/generation/base.py",
+        "providers/generation/deepseek.py",
+        "providers/web/__init__.py",
+        "providers/web/base.py",
+        "providers/web/fetch.py",
+        "providers/web/sanitize.py",
+        "providers/web/searxng.py",
+        "services/answer/__init__.py",
+        "services/answer/ports.py",
+        "services/answer/profile.py",
+        "services/answer/generation_input.py",
+        "services/answer/compression.py",
+        "services/answer/review.py",
+        "services/answer/citations.py",
+        "services/web_evidence/__init__.py",
+        "services/web_evidence/ports.py",
+        "services/web_evidence/profile.py",
+        "services/web_evidence/service.py",
     }
 )
 STAGE6_PRODUCTION_FILES = frozenset(
@@ -587,6 +620,8 @@ def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
             "src/atlasrag/graphs/indexing/document_build.py",
             "src/atlasrag/graphs/indexing/index_graph.py",
             "src/atlasrag/graphs/local_evidence/subgraph.py",
+            "src/atlasrag/graphs/web_evidence/subgraph.py",
+            "src/atlasrag/graphs/answer/subgraph.py",
         }
         return not (
             relative_path.as_posix() in approved_paths
@@ -600,6 +635,36 @@ def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
                 "langgraph.graph.state.CompiledStateGraph",
             }
         )
+    if normalized == "http.client" or normalized.startswith("http.client."):
+        if path is None:
+            return True
+        relative_path = (
+            path.relative_to(REPOSITORY_ROOT)
+            if path.is_absolute() and path.is_relative_to(REPOSITORY_ROOT)
+            else path
+        )
+        return relative_path.as_posix() != "src/atlasrag/providers/web/fetch.py"
+    if root in {"httpx", "socket"}:
+        if path is None:
+            return True
+        relative_path = (
+            path.relative_to(REPOSITORY_ROOT)
+            if path.is_absolute() and path.is_relative_to(REPOSITORY_ROOT)
+            else path
+        )
+        allowed = (
+            {"src/atlasrag/providers/web/fetch.py"}
+            if root
+            in {
+                "http.client",
+                "socket",
+            }
+            else {
+                "src/atlasrag/providers/web/searxng.py",
+                "src/atlasrag/providers/generation/deepseek.py",
+            }
+        )
+        return relative_path.as_posix() not in allowed
     if root in {"torch", "transformers", "huggingface_hub"}:
         if path is None:
             return True
@@ -762,6 +827,7 @@ def _production_manifest_violations(production_root: Path) -> tuple[str, ...]:
         | STAGE4_PRODUCTION_FILES
         | STAGE5_PRODUCTION_FILES
         | STAGE6_PRODUCTION_FILES
+        | STAGE7_PRODUCTION_FILES
     )
     if unexpected := sorted(actual_files - allowed_files):
         violations.append(f"unexpected production files: {unexpected}")
@@ -897,6 +963,7 @@ def _stub_package_violations(production_root: Path) -> tuple[str, ...]:
             | STAGE4_PRODUCTION_FILES
             | STAGE5_PRODUCTION_FILES
             | STAGE6_PRODUCTION_FILES
+            | STAGE7_PRODUCTION_FILES
             if path.startswith(f"{package_name}/")
         }
         if unexpected := actual_files - allowed_files:
@@ -960,6 +1027,8 @@ def test_graph_package_contains_frozen_states_and_exact_part_i_build_modules() -
             "indexing/sync_contracts.py",
             "indexing/index_graph.py",
             "local_evidence/subgraph.py",
+            "web_evidence/subgraph.py",
+            "answer/subgraph.py",
         }:
             # These exact internal Part I modules are executable. Their import
             # and plumbing boundaries are checked by the production checker.
@@ -1032,6 +1101,7 @@ def test_no_backend_client_provider_or_business_modules_exist() -> None:
             | STAGE4_PRODUCTION_FILES
             | STAGE5_PRODUCTION_FILES
             | STAGE6_PRODUCTION_FILES
+            | STAGE7_PRODUCTION_FILES
         ):
             continue
         tokens = {
