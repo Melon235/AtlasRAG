@@ -2,9 +2,9 @@
 
 ## 1. Status
 
-**COMPLETE — all local/regression gates pass; the branch is published; final-HEAD
-push and pull-request CI/Integration are green; PR #8 is open and unmerged.
-Real external live-provider acceptance remains unverified without credentials.**
+**COMPLETE — all local/regression gates pass; real SearXNG search, real DeepSeek
+structured generation with review/citation resolution, and real DeepSeek batch
+summary acceptance pass; PR #8 is open and unmerged pending final publication.**
 
 Stage 6 was merged and closed at
 `528fcf6eb34bb89058edf5f01fec92c335eeb8d5`. Stage 7 is based on that exact
@@ -105,7 +105,7 @@ optional_compression → generate_answer → review_output
 | `make stage4-verify` | **PASS** — 654 focused + 36 real PostgreSQL/Milvus |
 | `make stage5-verify` | **PASS** — 75 focused + 8 real PostgreSQL/Milvus |
 | `make stage6-verify` | **PASS** — 24 focused + 8 real PostgreSQL/Milvus |
-| `make stage7-provider-smoke` | **SKIPPED** — no `ATLASRAG_SEARXNG_URL`/`DEEPSEEK_API_KEY`; real provider acceptance not claimed |
+| `make stage7-provider-smoke` | **PASS** — real SearXNG search, real DeepSeek generation/review/L1 citation, and real DeepSeek batch summary (2026-11-13) |
 | `make architecture-check` / `git diff --check` | PASS |
 
 Real model/Stage 4–6 smokes are rerun in closeout; no fake result is presented
@@ -133,8 +133,35 @@ only-used; duplicate basename/no absolute paths; programming error propagation.
 - **Output Review is protocol/security validation, not proof of factual
   correctness.** It cannot establish that natural-language claims are true.
 - The SearXNG adapter is native HTTP JSON, not MCP, by the approved amendment.
-- Live SearXNG/DeepSeek acceptance remains unverified without external
-  credentials/network; local transport tests are not claimed as live acceptance.
+- Live acceptance was performed on 2026-11-13 with synthetic-only queries and
+  evidence; local transport tests alone are not claimed as live acceptance.
+
+## 7.1 Live provider acceptance — 2026-11-13
+
+Command: `make stage7-provider-smoke` with the approved ignored local environment
+file sourced into the process. No key, authorization header, or sensitive
+request content is recorded.
+
+SearXNG:
+- real isolated service `searxng/searxng:2026.9.25-12f8b6515`, healthy;
+- synthetic public query category;
+- 5 real search results, ranks 1–5, URL/domain validation passed;
+- complete `web_evidence_subgraph`: `DEGRADED`, 5 usable WebEvidence
+  (2 `SANITIZED_CONTENT`, 3 `SEARCH_SNIPPET` due individual fetch failures);
+- isolated service stopped afterward; no user containers/volumes touched.
+
+DeepSeek:
+- configured model `deepseek-chat`, official chat-completions endpoint category,
+  structured JSON mode;
+- synthetic local evidence (30-day maintenance interval) and synthetic query;
+- structured `GenerationResult` validated;
+- deterministic Output Review accepted the reviewed answer;
+- Citation Resolver produced authoritative `L1`;
+- batch summary of two synthetic sources returned structured summaries while
+  preserving source title/URL/domain/rank and `SUMMARY` representation.
+
+The previous SKIP record is historical and is superseded by this actual
+acceptance evidence.
 
 ## 8. Deferred work
 
@@ -193,8 +220,8 @@ were corrected and retested:
   retry/malformed tests added; connection timeout follows the per-fetch limit.
 
 **Architecture verdict: READY.** **Security/release verdict: READY after these
-fixes.** The only unresolved acceptance item is external live provider
-credentials/network; it is reported as unverified, not as a fake pass.
+fixes.** Real SearXNG and DeepSeek generation/batch-summary acceptance now pass;
+the prior skip is superseded by actual evidence.
 
 ## 11. Publication
 

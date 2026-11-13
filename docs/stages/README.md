@@ -16,8 +16,8 @@ green remote CI result.
 ## Current stage
 
 - **Stage:** Stage 7 — Part II: Web Evidence & Answer
-- **Status:** Stage 7 COMPLETE — pull request #8 open and unmerged; live
-  provider acceptance pending credentials
+- **Status:** Stage 7 COMPLETE — real provider acceptance PASS; pull request #8
+  open and unmerged
 - **Report:**
   [stage-07-part-ii-web-evidence-answer.md](stage-07-part-ii-web-evidence-answer.md)
 - **Next:** Stage 8 — Part II: RagCore / Cache — NOT STARTED
@@ -27,7 +27,6 @@ direct and batch-summary Web evidence strategies, structured DeepSeek
 generation, identity compression, deterministic output review, bounded
 regeneration, and authoritative citation resolution as two independent
 subgraphs. Local transport and Stage 2–6 regression gates are green; all push/PR remote
-gates are green; live SearXNG/DeepSeek acceptance remains unverified without
-external credentials, and PR #8 remains deliberately unmerged. No RagCore
-orchestration, Query Cache, RuntimeGate, Stage 8, or benchmark behavior has
-started.
+gates are green; real SearXNG and DeepSeek generation/batch-summary acceptance
+also pass, and PR #8 remains deliberately unmerged. No RagCore orchestration,
+Query Cache, RuntimeGate, Stage 8, or benchmark behavior has started.

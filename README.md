@@ -8,8 +8,8 @@ The authoritative design is
 
 **Current implementation stage: Stage 7 — Part II: Web Evidence & Answer**
 
-**Status: Stage 7 COMPLETE — pull request #8 open and unmerged; live provider
-acceptance pending credentials**
+**Status: Stage 7 COMPLETE — real provider acceptance PASS; pull request #8
+open and unmerged**
 
 Stage 7 adds independent `web_evidence_subgraph` and `answer_subgraph`
 capabilities: SearXNG JSON search, SSRF-safe fetch/sanitize/budgets, direct and
@@ -22,8 +22,7 @@ Stage 8, or benchmarks.
 The evidence-bearing report is
 [`docs/stages/stage-07-part-ii-web-evidence-answer.md`](docs/stages/stage-07-part-ii-web-evidence-answer.md).
 Local, Stage 2–6 regression, real Qwen/MinerU, and local HTTP transport gates
-pass; push/PR CI and Stage 2–7 Integration are green. The explicit live
-SearXNG/DeepSeek smoke is unverified without external credentials.
+pass; real SearXNG and DeepSeek generation/batch-summary acceptance also pass.
 [pull request #8](https://github.com/Melon235/AtlasRAG/pull/8) remains open and
 deliberately unmerged.
 
