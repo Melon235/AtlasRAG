@@ -49,8 +49,12 @@ def build_retrieval_graph(
         result = state.get("rag_result")
         if result is None:
             raise ValueError("cache write requires a RagCoreResult")
-        web_invoked = bool((execution_facts or {}).get("web_invoked", False))
-        await services.cache.store(state["request"], result, web_invoked=web_invoked)
+        if execution_facts is None or "web_invoked" not in execution_facts:
+            # Unknown provenance is not local-only provenance. Skip the write.
+            return {}
+        await services.cache.store(
+            state["request"], result, web_invoked=execution_facts["web_invoked"]
+        )
         return {}
 
     graph = StateGraph(

@@ -38,6 +38,8 @@ class SessionQueryCache:
         self._clock = clock
 
     async def lookup(self, request: UserTurnRequest) -> FinalResponse | None:
+        if not self._policy.request_is_cacheable(request):
+            return None
         if not await self._trusted():
             return None
         try:

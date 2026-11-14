@@ -300,3 +300,27 @@ def test_policy_is_conservative() -> None:
         core_result(),
     ).eligible
     assert not enabled.decide(request(), core_result(), web_invoked=True).eligible
+
+
+@pytest.mark.asyncio
+async def test_time_sensitive_lookup_bypasses_redis() -> None:
+    redis, factory = FakeRedis(), FakeFactory()
+    provider = cache(redis, factory)
+    redis.value = CachedQueryResult(
+        created_at=datetime(2026, 11, 14, tzinfo=UTC),
+        final_response=final_response(),
+    )
+    assert (
+        await provider.lookup(
+            UserTurnRequest(session_id="s1", query="目前的最新维护周期是什么？")
+        )
+        is None
+    )
+    assert redis.gets == 0
+    assert (
+        await provider.lookup(
+            UserTurnRequest(session_id="s1", query="What is the latest status today?")
+        )
+        is None
+    )
+    assert redis.gets == 0

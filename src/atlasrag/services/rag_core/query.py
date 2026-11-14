@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, tzinfo
 from typing import Protocol
 
-from pydantic import StrictStr, field_validator
+from pydantic import StrictStr, ValidationError, field_validator
 
 from atlasrag.domain.base import FrozenModel
 from atlasrag.domain.errors import DependencyError, ProviderResponseError
@@ -78,15 +78,17 @@ class QueryConstructionService:
         now = self._clock()
         if now.tzinfo is None:
             raise ValueError("query construction clock must be timezone-aware")
+        local_now = now.astimezone(self._timezone)
+        timezone_name = local_now.tzname() or "UTC"
         last_recoverable: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
             try:
                 output = await self._provider.rewrite(
                     request.query,
-                    now=now.isoformat(),
-                    timezone_name=self._timezone.tzname(now) or "UTC",
+                    now=local_now.isoformat(),
+                    timezone_name=timezone_name,
                 )
-            except (DependencyError, ProviderResponseError, ValueError) as error:
+            except (DependencyError, ProviderResponseError, ValidationError) as error:
                 last_recoverable = error
                 continue
             rewritten = output.retrieval_query.strip()

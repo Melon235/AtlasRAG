@@ -136,7 +136,9 @@ def build_rag_core_subgraph(
         return {"result": result}
 
     graph = StateGraph(
-        RagCoreState, input_schema=RagCoreInput, output_schema=RagCoreOutput
+        RagCoreState,
+        input_schema=RagCoreInput,
+        output_schema=None if expose_state else RagCoreOutput,
     )
     graph.add_node("construct_query", construct_query)
     graph.add_node("local_evidence", local_evidence)

@@ -119,7 +119,8 @@ async def test_real_stage8_local_answer_and_query_cache(
     )
     redis_url = os.environ["ATLASRAG_TEST_REDIS_URL"]
     client = redis.from_url(redis_url, decode_responses=False)
-    await client.flushdb()
+    async for stale_key in client.scan_iter(match="atlasrag:query:*"):
+        await client.delete(stale_key)
     cache = SessionQueryCache(
         redis=RedisCacheProvider(client),
         uow_factory=postgres_uow_factory,

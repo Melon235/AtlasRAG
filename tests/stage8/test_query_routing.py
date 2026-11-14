@@ -183,3 +183,29 @@ def test_routing_matrix_and_retry_identity_guard() -> None:
         ).action
         is CorrectiveAction.WEB
     )
+
+
+@pytest.mark.asyncio
+async def test_timezone_conversion_crosses_utc_day_boundary() -> None:
+    from zoneinfo import ZoneInfo
+
+    provider = FakeRewrite("rewritten query")
+    result = await QueryConstructionService(
+        provider=provider,
+        clock=lambda: datetime(2026, 11, 14, 23, 30, tzinfo=UTC),
+        timezone=ZoneInfo("Asia/Tokyo"),
+    ).construct(request("maintenance interval"))
+    assert result.request.retrieval_query == "rewritten query"
+    now, timezone_name = provider.calls[0][1], provider.calls[0][2]
+    assert now.startswith("2026-11-15T08:30:00+09:00")
+    assert timezone_name in {"JST", "Asia/Tokyo"}
+
+
+@pytest.mark.asyncio
+async def test_unexpected_value_error_propagates() -> None:
+    provider = FakeRewrite(ValueError("programming bug"))
+    with pytest.raises(ValueError, match="programming bug"):
+        await QueryConstructionService(
+            provider=provider,
+            clock=lambda: datetime(2026, 11, 14, tzinfo=UTC),
+        ).construct(request("maintenance interval"))

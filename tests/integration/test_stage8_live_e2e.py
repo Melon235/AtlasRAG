@@ -16,16 +16,19 @@ from stage4.candidate_fakes import config
 
 from atlasrag.application.answer import AnswerRunner
 from atlasrag.application.document_build import DocumentBuildRunner
+from atlasrag.application.hashing import request_hash
 from atlasrag.application.local_evidence import LocalEvidenceRunner
 from atlasrag.application.rag_core import RagCoreRunner
 from atlasrag.application.retrieval import RetrievalRunner
-from atlasrag.config.fingerprint import pipeline_fingerprint
+from atlasrag.config.fingerprint import pipeline_fingerprint, runtime_fingerprint
 from atlasrag.config.models import RuntimeConfig
+from atlasrag.domain.answer import GenerationResult
 from atlasrag.domain.enums import WebExecutionStatus
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.domain.web import WebEvidenceResult
 from atlasrag.graphs.rag_core.subgraph import RagCoreServices
 from atlasrag.graphs.retrieval.graph import RetrievalGraphServices
+from atlasrag.providers.cache.keys import query_cache_key
 from atlasrag.providers.cache.redis import RedisCacheProvider
 from atlasrag.providers.embedding.qwen import (
     QWEN_MODEL_ID,
@@ -76,7 +79,10 @@ from atlasrag.services.local_evidence.sufficiency import (
 )
 from atlasrag.services.rag_core.boundary import AnswerInputBuilder
 from atlasrag.services.rag_core.completion import CompletionAssessor
-from atlasrag.services.rag_core.query import QueryConstructionService
+from atlasrag.services.rag_core.query import (
+    QueryConstructionService,
+    QueryRewriteOutput,
+)
 from atlasrag.services.rag_core.routing import CorrectiveRoutingService
 from integration.test_milvus import isolated_milvus as isolated_milvus
 
@@ -84,8 +90,32 @@ pytestmark = pytest.mark.integration
 
 
 class FakeWeb:
+    """Fixture-only Web runner; this is a local RAG E2E, not live Web."""
+
     async def run(self, request: object) -> WebEvidenceResult:
         return WebEvidenceResult(execution_status=WebExecutionStatus.EMPTY, evidence=())
+
+
+class CountingQueryProvider:
+    def __init__(self, provider: DeepSeekQueryRewriteProvider) -> None:
+        self.provider = provider
+        self.calls = 0
+
+    async def rewrite(
+        self, query: str, *, now: str, timezone_name: str
+    ) -> QueryRewriteOutput:
+        self.calls += 1
+        return await self.provider.rewrite(query, now=now, timezone_name=timezone_name)
+
+
+class CountingGenerationProvider:
+    def __init__(self, provider: DeepSeekGenerationProvider) -> None:
+        self.provider = provider
+        self.calls = 0
+
+    async def generate(self, input: object) -> GenerationResult:
+        self.calls += 1
+        return await self.provider.generate(input)  # type: ignore[arg-type]
 
 
 def runtime_config() -> RuntimeConfig:
@@ -177,11 +207,15 @@ async def test_live_stage8_e2e_real_qwen_bge_deepseek_pg_milvus_redis(
     async with httpx.AsyncClient(trust_env=False) as client:
         api_key = os.environ["DEEPSEEK_API_KEY"]
         model = os.environ.get("DEEPSEEK_MODEL_ID", "deepseek-chat")
-        query_provider = DeepSeekQueryRewriteProvider(
-            model_id=model, api_key=SecretStr(api_key), client=client
+        query_provider = CountingQueryProvider(
+            DeepSeekQueryRewriteProvider(
+                model_id=model, api_key=SecretStr(api_key), client=client
+            )
         )
-        generation = DeepSeekGenerationProvider(
-            model_id=model, api_key=SecretStr(api_key), client=client
+        generation = CountingGenerationProvider(
+            DeepSeekGenerationProvider(
+                model_id=model, api_key=SecretStr(api_key), client=client
+            )
         )
         answer = AnswerRunner(
             __import__(
@@ -209,14 +243,15 @@ async def test_live_stage8_e2e_real_qwen_bge_deepseek_pg_milvus_redis(
                 completion=CompletionAssessor(),
             )
         )
-        redis_client = redis.from_url(
-            os.environ["ATLASRAG_TEST_REDIS_URL"], decode_responses=False
-        )
-        await redis_client.flushdb()
+        redis_url = os.environ["ATLASRAG_TEST_REDIS_URL"]
+        redis_client = redis.from_url(redis_url, decode_responses=False)
+        async for stale_key in redis_client.scan_iter(match="atlasrag:query:*"):
+            await redis_client.delete(stale_key)
+        fingerprint = runtime_fingerprint(runtime)
         cache = SessionQueryCache(
             redis=RedisCacheProvider(redis_client),
             uow_factory=postgres_uow_factory,
-            runtime_fingerprint="stage8-live-runtime",
+            runtime_fingerprint=fingerprint,
             ttl_seconds=60,
             policy=QueryCachePolicy(enabled=True),
             clock=lambda: datetime(2026, 11, 14, tzinfo=UTC),
@@ -230,6 +265,34 @@ async def test_live_stage8_e2e_real_qwen_bge_deepseek_pg_milvus_redis(
         assert first.answer_text.strip()
         assert first.citations
         assert first.citations[0].citation_id == "L1"
+        expected_key = query_cache_key(
+            request.session_id, fingerprint, request_hash(request)
+        )
+        assert await redis_client.exists(expected_key) == 1
+        query_calls = query_provider.calls
+        generation_calls = generation.calls
+        assert query_calls == 1 and generation_calls == 1
         second = await graph.run(request)
         assert second == first
+        assert query_provider.calls == query_calls
+        assert generation.calls == generation_calls
+
+        alternate_runtime = runtime.model_copy(
+            update={
+                "models": runtime.models.model_copy(
+                    update={"generation_model_revision": "alternate-revision"}
+                )
+            }
+        )
+        alternate_fingerprint = runtime_fingerprint(alternate_runtime)
+        assert alternate_fingerprint != fingerprint
+        alternate_cache = SessionQueryCache(
+            redis=RedisCacheProvider(redis_client),
+            uow_factory=postgres_uow_factory,
+            runtime_fingerprint=alternate_fingerprint,
+            ttl_seconds=60,
+            policy=QueryCachePolicy(enabled=True),
+            clock=lambda: datetime(2026, 11, 14, tzinfo=UTC),
+        )
+        assert await alternate_cache.lookup(request) is None
         await redis_client.aclose()
