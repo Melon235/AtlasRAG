@@ -2,8 +2,8 @@
 
 ## 1. Status
 
-**IMPLEMENTATION COMPLETE — LOCAL/REAL-STORAGE GATES PASS; FULL REAL-MODEL
-END-TO-END LIVE ACCEPTANCE PENDING.**
+**COMPLETE — local, real-storage, and real-model end-to-end acceptance pass;
+PR open and unmerged.**
 
 Base: `cc5f0d454de52e63675e1bc5373bae61996806b8` (Stage 7 merge).
 Branch: `stage/08-part-ii-rag-core-cache`.
@@ -49,15 +49,16 @@ citation, and real DeepSeek batch summary passed; PR #8 merged at `cc5f0d4`.
 - `make test-stage8-integration`: PASS — real PostgreSQL/Milvus/Redis,
   Stage 3–5 ingestion/publication, local evidence/answer/cache HIT and
   freshness-marker bypass.
-- `make stage8-provider-smoke`: **PASS for real DeepSeek Query Construction**
-  (`deepseek-chat`, synthetic Chinese identifier query; ERR-104 and
-  manual-v2.3.pdf preserved).
+- `make stage8-provider-smoke`: **PASS** — real DeepSeek Query Construction
+  (`deepseek-chat`, ERR-104 and manual-v2.3.pdf preserved) and real end-to-end
+  Qwen/BGE/DeepSeek/PostgreSQL/Milvus/Redis synthetic flow.
 - `make stage7-provider-smoke`: PASS earlier (real SearXNG, DeepSeek
   generation/review/citations and batch summary).
 - Stage 2–7 regression gates: to be recorded in final closeout.
-- Full real model/storage end-to-end (real DeepSeek rewrite + Qwen/BGE retrieval
-  + real generation in one Stage 8 invocation): **PENDING**; not claimed as
-  passed.
+- Full real model/storage end-to-end: **PASS** — synthetic corpus ingested with
+  real Qwen3-Embedding-0.6B, retrieved through real Milvus, reranked with real
+  BGE, rewritten/generated with real DeepSeek, cached in real Redis, and
+  revalidated through a second cache HIT.
 
 ## 4. Safety/limits
 

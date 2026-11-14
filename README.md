@@ -8,7 +8,7 @@ The authoritative design is
 
 **Current implementation stage: Stage 8 — Part II: RagCore / Cache**
 
-**Status: Stage 8 IMPLEMENTATION COMPLETE — live end-to-end acceptance pending**
+**Status: Stage 8 COMPLETE — pull request #9 open and unmerged**
 
 Stage 7 adds independent `web_evidence_subgraph` and `answer_subgraph`
 capabilities: SearXNG JSON search, SSRF-safe fetch/sanitize/budgets, direct and

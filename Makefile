@@ -129,7 +129,7 @@ stage8-verify:
 	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage8_verify.sh
 
 stage8-provider-smoke:
-	ATLASRAG_RUN_INTEGRATION=1 uv run --frozen pytest tests/integration/test_stage8_provider_smoke.py -m integration -q -s
+	ATLASRAG_RUN_INTEGRATION=1 uv run --frozen pytest tests/integration/test_stage8_provider_smoke.py tests/integration/test_stage8_live_e2e.py -m integration -q -s
 
 test-stage5-integration:
 	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage5_verify.sh --integration-only

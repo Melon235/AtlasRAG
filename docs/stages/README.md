@@ -16,7 +16,7 @@ green remote CI result.
 ## Current stage
 
 - **Stage:** Stage 8 — Part II: RagCore / Cache
-- **Status:** Stage 8 IMPLEMENTATION COMPLETE — live end-to-end acceptance pending
+- **Status:** Stage 8 COMPLETE — pull request #9 open and unmerged
 - **Report:**
   [stage-08-part-ii-rag-core-cache.md](stage-08-part-ii-rag-core-cache.md)
 - **Next:** Stage 9 — Part III: Benchmark — NOT STARTED
