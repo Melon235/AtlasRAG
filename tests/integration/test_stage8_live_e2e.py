@@ -11,9 +11,8 @@ import httpx
 import pytest
 import redis.asyncio as redis
 from pydantic import SecretStr
-from stage4.candidate_fakes import config
 from stage3.test_candidate_services import NOW
-from stage4.indexing_fixtures import retrieval_record
+from stage4.candidate_fakes import config
 
 from atlasrag.application.answer import AnswerRunner
 from atlasrag.application.document_build import DocumentBuildRunner
@@ -22,9 +21,8 @@ from atlasrag.application.rag_core import RagCoreRunner
 from atlasrag.application.retrieval import RetrievalRunner
 from atlasrag.config.fingerprint import pipeline_fingerprint
 from atlasrag.config.models import RuntimeConfig
-from atlasrag.domain.enums import AnswerExecutionOutcome, WebExecutionStatus
+from atlasrag.domain.enums import WebExecutionStatus
 from atlasrag.domain.requests import UserTurnRequest
-from atlasrag.domain.requests import LocalRetrievalRequest
 from atlasrag.domain.web import WebEvidenceResult
 from atlasrag.graphs.rag_core.subgraph import RagCoreServices
 from atlasrag.graphs.retrieval.graph import RetrievalGraphServices
@@ -39,10 +37,10 @@ from atlasrag.providers.generation.deepseek import (
     DeepSeekQueryRewriteProvider,
 )
 from atlasrag.providers.index.milvus import MilvusIndexProvider
-from atlasrag.providers.parsing.routing import ParserRouter
 from atlasrag.providers.parsing.docling import DoclingParser
 from atlasrag.providers.parsing.markdown import MarkdownParser
 from atlasrag.providers.parsing.mineru import MinerUParser
+from atlasrag.providers.parsing.routing import ParserRouter
 from atlasrag.providers.parsing.text import TextParser
 from atlasrag.providers.reranker.bge import BgeRerankerProvider
 from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
