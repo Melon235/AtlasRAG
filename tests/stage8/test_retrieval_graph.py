@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 
+from atlasrag.application.rag_core import RagCoreExecution
 from atlasrag.application.retrieval import RetrievalRunner
 from atlasrag.domain.enums import RagCompletionStatus
 from atlasrag.domain.requests import UserTurnRequest
@@ -23,7 +24,13 @@ class FakeCache:
         self.lookups += 1
         return self.hit
 
-    async def store(self, request: UserTurnRequest, result: RagCoreResult) -> bool:
+    async def store(
+        self,
+        request: UserTurnRequest,
+        result: RagCoreResult,
+        *,
+        web_invoked: bool = False,
+    ) -> bool:
         self.stores += 1
         return True
 
@@ -38,6 +45,9 @@ class FakeRagCore:
             final_response=FinalResponse(answer_text="generated", citations=()),
             completion_status=RagCompletionStatus.SAFE_FAILURE,
         )
+
+    async def run_with_facts(self, request: UserTurnRequest) -> RagCoreExecution:
+        return RagCoreExecution(result=await self.run(request), web_invoked=False)
 
 
 @pytest.mark.asyncio

@@ -272,6 +272,10 @@ async def test_marker_becomes_true_before_write_and_redis_failure_is_soft() -> N
     redis.error = DependencyUnavailableError()
     assert await provider.lookup(request()) is None
     assert await provider.store(request(), core_result()) is False
+    from atlasrag.domain.errors import ProviderResponseError
+
+    redis.error = ProviderResponseError()
+    assert await provider.store(request(), core_result()) is False
 
 
 def test_policy_is_conservative() -> None:
@@ -295,3 +299,4 @@ def test_policy_is_conservative() -> None:
         UserTurnRequest(session_id="s1", query="latest status today"),
         core_result(),
     ).eligible
+    assert not enabled.decide(request(), core_result(), web_invoked=True).eligible

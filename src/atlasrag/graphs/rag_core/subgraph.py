@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -38,8 +39,8 @@ class RagCoreServices:
 
 
 def build_rag_core_subgraph(
-    services: RagCoreServices,
-) -> CompiledStateGraph[RagCoreState, None, RagCoreInput, RagCoreOutput]:
+    services: RagCoreServices, *, expose_state: bool = False
+) -> CompiledStateGraph[RagCoreState, None, RagCoreInput, RagCoreOutput | RagCoreState]:
     async def construct_query(state: RagCoreState) -> dict[str, object]:
         request = UserTurnRequest.model_validate(state["request"])
         constructed = await services.query_construction.construct(request)
@@ -168,4 +169,9 @@ def build_rag_core_subgraph(
     graph.add_edge("answer", "finalize_result")
     graph.add_edge("safe_failure", "finalize_result")
     graph.add_edge("finalize_result", END)
-    return graph.compile()
+    return cast(
+        CompiledStateGraph[
+            RagCoreState, None, RagCoreInput, RagCoreOutput | RagCoreState
+        ],
+        graph.compile(),
+    )

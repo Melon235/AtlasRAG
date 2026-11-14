@@ -23,7 +23,7 @@ class RetrievalGraphServices:
 
 
 def build_retrieval_graph(
-    services: RetrievalGraphServices,
+    services: RetrievalGraphServices, *, execution_facts: dict[str, bool] | None = None
 ) -> CompiledStateGraph[
     RetrievalGraphState, None, RetrievalGraphInput, RetrievalGraphOutput
 ]:
@@ -37,17 +37,20 @@ def build_retrieval_graph(
         return "hit" if "final_response" in state else "miss"
 
     async def rag_core(state: RetrievalGraphState) -> dict[str, object]:
-        result = await services.rag_core.run(state["request"])
+        execution = await services.rag_core.run_with_facts(state["request"])
+        if execution_facts is not None:
+            execution_facts["web_invoked"] = execution.web_invoked
         return {
-            "rag_result": result,
-            "final_response": result.final_response,
+            "rag_result": execution.result,
+            "final_response": execution.result.final_response,
         }
 
     async def cache_write(state: RetrievalGraphState) -> dict[str, object]:
         result = state.get("rag_result")
         if result is None:
             raise ValueError("cache write requires a RagCoreResult")
-        await services.cache.store(state["request"], result)
+        web_invoked = bool((execution_facts or {}).get("web_invoked", False))
+        await services.cache.store(state["request"], result, web_invoked=web_invoked)
         return {}
 
     graph = StateGraph(

@@ -52,8 +52,14 @@ class SessionQueryCache:
             return None
         return cached.final_response
 
-    async def store(self, request: UserTurnRequest, result: RagCoreResult) -> bool:
-        decision = self._policy.decide(request, result)
+    async def store(
+        self,
+        request: UserTurnRequest,
+        result: RagCoreResult,
+        *,
+        web_invoked: bool = False,
+    ) -> bool:
+        decision = self._policy.decide(request, result, web_invoked=web_invoked)
         if not decision.eligible:
             return False
         if not await self._trusted():
@@ -75,7 +81,7 @@ class SessionQueryCache:
                 payload,
                 ttl_seconds=self._ttl_seconds,
             )
-        except DependencyError:
+        except (DependencyError, ProviderResponseError):
             return False
         return True
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime, tzinfo
 from typing import Protocol
 
 from pydantic import StrictStr, field_validator
@@ -62,7 +62,7 @@ class QueryConstructionService:
         *,
         provider: QueryRewriteProvider,
         clock: Callable[[], datetime],
-        timezone: timezone = UTC,
+        timezone: tzinfo = UTC,
         max_attempts: int = _MAX_REWRITE_ATTEMPTS,
     ) -> None:
         if type(max_attempts) is not int or not 1 <= max_attempts <= 3:

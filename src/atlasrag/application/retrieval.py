@@ -12,9 +12,11 @@ from atlasrag.graphs.retrieval.graph import (
 
 class RetrievalRunner:
     def __init__(self, services: RetrievalGraphServices) -> None:
-        self._graph = build_retrieval_graph(services)
+        self._services = services
 
     async def run(self, request: UserTurnRequest) -> FinalResponse:
         request = UserTurnRequest.model_validate(request)
-        output = await self._graph.ainvoke({"request": request})
+        facts: dict[str, bool] = {}
+        graph = build_retrieval_graph(self._services, execution_facts=facts)
+        output = await graph.ainvoke({"request": request})
         return FinalResponse.model_validate(output["final_response"])

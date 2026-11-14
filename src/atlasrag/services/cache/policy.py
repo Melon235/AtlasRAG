@@ -37,9 +37,17 @@ class QueryCachePolicy:
     def max_entry_bytes(self) -> int:
         return self._max_entry_bytes
 
-    def decide(self, request: UserTurnRequest, result: RagCoreResult) -> CacheDecision:
+    def decide(
+        self,
+        request: UserTurnRequest,
+        result: RagCoreResult,
+        *,
+        web_invoked: bool = False,
+    ) -> CacheDecision:
         if not self._enabled:
             return CacheDecision(False, "CACHE_DISABLED")
+        if web_invoked:
+            return CacheDecision(False, "WEB_INVOKED")
         if result.completion_status is RagCompletionStatus.SAFE_FAILURE:
             return CacheDecision(False, "SAFE_FAILURE")
         if result.completion_status is RagCompletionStatus.DEGRADED_SUCCESS:
