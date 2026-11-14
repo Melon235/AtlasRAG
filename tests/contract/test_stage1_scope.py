@@ -305,6 +305,10 @@ EXPECTED_GRAPH_FILES = frozenset(
         "web_evidence/subgraph.py",
         "answer/__init__.py",
         "answer/subgraph.py",
+        "rag_core/__init__.py",
+        "rag_core/subgraph.py",
+        "retrieval/__init__.py",
+        "retrieval/graph.py",
     }
 )
 EXPECTED_PRODUCTION_FILES = frozenset(
@@ -418,6 +422,24 @@ STAGE4_PRODUCTION_FILES = frozenset(
         "services/indexing/verification.py",
         "services/indexing/failure.py",
         "services/indexing/publication.py",
+    }
+)
+STAGE8_PRODUCTION_FILES = frozenset(
+    {
+        "application/rag_core.py",
+        "application/retrieval.py",
+        "graphs/rag_core/__init__.py",
+        "graphs/rag_core/subgraph.py",
+        "graphs/retrieval/__init__.py",
+        "graphs/retrieval/graph.py",
+        "services/cache/__init__.py",
+        "services/cache/policy.py",
+        "services/cache/session.py",
+        "services/rag_core/__init__.py",
+        "services/rag_core/query.py",
+        "services/rag_core/routing.py",
+        "services/rag_core/boundary.py",
+        "services/rag_core/completion.py",
     }
 )
 STAGE7_PRODUCTION_FILES = frozenset(
@@ -622,6 +644,8 @@ def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
             "src/atlasrag/graphs/local_evidence/subgraph.py",
             "src/atlasrag/graphs/web_evidence/subgraph.py",
             "src/atlasrag/graphs/answer/subgraph.py",
+            "src/atlasrag/graphs/rag_core/subgraph.py",
+            "src/atlasrag/graphs/retrieval/graph.py",
         }
         return not (
             relative_path.as_posix() in approved_paths
@@ -828,6 +852,7 @@ def _production_manifest_violations(production_root: Path) -> tuple[str, ...]:
         | STAGE5_PRODUCTION_FILES
         | STAGE6_PRODUCTION_FILES
         | STAGE7_PRODUCTION_FILES
+        | STAGE8_PRODUCTION_FILES
     )
     if unexpected := sorted(actual_files - allowed_files):
         violations.append(f"unexpected production files: {unexpected}")
@@ -964,6 +989,7 @@ def _stub_package_violations(production_root: Path) -> tuple[str, ...]:
             | STAGE5_PRODUCTION_FILES
             | STAGE6_PRODUCTION_FILES
             | STAGE7_PRODUCTION_FILES
+            | STAGE8_PRODUCTION_FILES
             if path.startswith(f"{package_name}/")
         }
         if unexpected := actual_files - allowed_files:
@@ -1029,6 +1055,8 @@ def test_graph_package_contains_frozen_states_and_exact_part_i_build_modules() -
             "local_evidence/subgraph.py",
             "web_evidence/subgraph.py",
             "answer/subgraph.py",
+            "rag_core/subgraph.py",
+            "retrieval/graph.py",
         }:
             # These exact internal Part I modules are executable. Their import
             # and plumbing boundaries are checked by the production checker.
@@ -1102,6 +1130,7 @@ def test_no_backend_client_provider_or_business_modules_exist() -> None:
             | STAGE5_PRODUCTION_FILES
             | STAGE6_PRODUCTION_FILES
             | STAGE7_PRODUCTION_FILES
+            | STAGE8_PRODUCTION_FILES
         ):
             continue
         tokens = {
