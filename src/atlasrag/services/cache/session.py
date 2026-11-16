@@ -59,8 +59,12 @@ class SessionQueryCache:
         request: UserTurnRequest,
         result: RagCoreResult,
         *,
-        web_invoked: bool = False,
+        web_invoked: bool | None = None,
     ) -> bool:
+        if web_invoked is None:
+            return False
+        if type(web_invoked) is not bool:
+            raise ValueError("web_invoked must be boolean")
         decision = self._policy.decide(request, result, web_invoked=web_invoked)
         if not decision.eligible:
             return False

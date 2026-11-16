@@ -12,8 +12,11 @@ from atlasrag.domain.results import RagCoreResult
 _LOCAL_ID = re.compile(r"^L[1-9][0-9]*$")
 _TIME_SENSITIVE = re.compile(
     r"(?:\b(?:today|yesterday|tomorrow|current|currently|now|latest|recent|"
-    r"last\s+(?:year|month|week)|this\s+(?:year|month|week)|\d{4})\b)|"
-    r"(?:今天|昨天|明天|当前|目前|现在|最近|最新|实时|本月|今年|上周|下周|去年)",
+    r"last\s+(?:year|month|week)|this\s+(?:year|month|week))\b)|"
+    r"(?:(?<!\d)\d{4}(?!\d)|\d{4}\s*年)|"
+    r"(?:今天|昨天|明天|当前|目前|现在|最近|最新|实时|本月|今年|去年|"
+    r"上个月|这个月|上季度|本季度|上周|下周|本周|这周|近期|近来|"
+    r"近一周|近一个月|三天前|前两天)",
     re.IGNORECASE,
 )
 
@@ -50,8 +53,12 @@ class QueryCachePolicy:
         request: UserTurnRequest,
         result: RagCoreResult,
         *,
-        web_invoked: bool = False,
+        web_invoked: bool | None = None,
     ) -> CacheDecision:
+        if web_invoked is None:
+            return CacheDecision(False, "UNKNOWN_WEB_PROVENANCE")
+        if type(web_invoked) is not bool:
+            raise ValueError("web_invoked must be boolean or None")
         if not self.request_is_cacheable(request):
             return CacheDecision(
                 False, "CACHE_DISABLED" if not self._enabled else "TIME_SENSITIVE"

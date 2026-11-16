@@ -45,7 +45,11 @@ from atlasrag.providers.parsing.markdown import MarkdownParser
 from atlasrag.providers.parsing.mineru import MinerUParser
 from atlasrag.providers.parsing.routing import ParserRouter
 from atlasrag.providers.parsing.text import TextParser
-from atlasrag.providers.reranker.bge import BgeRerankerProvider
+from atlasrag.providers.reranker.bge import (
+    BGE_RERANKER_MODEL_ID,
+    BGE_RERANKER_REVISION,
+    BgeRerankerProvider,
+)
 from atlasrag.repositories.postgres.locks import PostgresAdvisoryLockManager
 from atlasrag.repositories.postgres.runtime_metadata import RuntimeMetadataRepository
 from atlasrag.services.answer.citations import CitationResolver
@@ -125,6 +129,13 @@ def runtime_config() -> RuntimeConfig:
     values["models"]["embedding_model_revision"] = QWEN_REVISION
     values["models"]["embedding_tokenizer_id"] = QWEN_MODEL_ID
     values["models"]["embedding_tokenizer_revision"] = QWEN_REVISION
+    values["models"]["reranker_model_id"] = BGE_RERANKER_MODEL_ID
+    values["models"]["reranker_model_revision"] = BGE_RERANKER_REVISION
+    deepseek_model = os.environ.get("DEEPSEEK_MODEL_ID", "deepseek-chat")
+    values["models"]["query_model_id"] = deepseek_model
+    values["models"]["query_model_revision"] = deepseek_model
+    values["models"]["generation_model_id"] = deepseek_model
+    values["models"]["generation_model_revision"] = deepseek_model
     return RuntimeConfig.model_validate(values)
 
 

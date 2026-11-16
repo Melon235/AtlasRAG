@@ -239,7 +239,7 @@ async def test_cache_hit_and_store() -> None:
     redis, factory = FakeRedis(), FakeFactory()
     provider = cache(redis, factory)
     assert await provider.lookup(request()) is None
-    assert await provider.store(request(), core_result()) is True
+    assert await provider.store(request(), core_result(), web_invoked=False) is True
     hit = await provider.lookup(request())
     assert hit is not None and hit.answer_text == "Answer [L1]."
     assert redis.puts == 1
@@ -255,7 +255,7 @@ async def test_freshness_marker_bypasses_lookup_and_write() -> None:
     )
     assert await provider.lookup(request()) is None
     assert redis.gets == 0
-    assert await provider.store(request(), core_result()) is False
+    assert await provider.store(request(), core_result(), web_invoked=False) is False
     assert redis.puts == 0
 
 
@@ -263,24 +263,24 @@ async def test_freshness_marker_bypasses_lookup_and_write() -> None:
 async def test_marker_becomes_true_before_write_and_redis_failure_is_soft() -> None:
     redis, factory = FakeRedis(), FakeFactory()
     provider = cache(redis, factory)
-    assert await provider.store(request(), core_result()) is True
+    assert await provider.store(request(), core_result(), web_invoked=False) is True
     factory.marker = True
-    assert await provider.store(request(), core_result()) is False
+    assert await provider.store(request(), core_result(), web_invoked=False) is False
     assert redis.puts == 1
     from atlasrag.domain.errors import DependencyUnavailableError
 
     redis.error = DependencyUnavailableError()
     assert await provider.lookup(request()) is None
-    assert await provider.store(request(), core_result()) is False
+    assert await provider.store(request(), core_result(), web_invoked=False) is False
     from atlasrag.domain.errors import ProviderResponseError
 
     redis.error = ProviderResponseError()
-    assert await provider.store(request(), core_result()) is False
+    assert await provider.store(request(), core_result(), web_invoked=False) is False
 
 
 def test_policy_is_conservative() -> None:
     enabled = QueryCachePolicy(enabled=True)
-    assert enabled.decide(request(), core_result()).eligible
+    assert enabled.decide(request(), core_result(), web_invoked=False).eligible
     assert not enabled.decide(
         request(),
         RagCoreResult(
@@ -300,6 +300,7 @@ def test_policy_is_conservative() -> None:
         core_result(),
     ).eligible
     assert not enabled.decide(request(), core_result(), web_invoked=True).eligible
+    assert not enabled.decide(request(), core_result()).eligible
 
 
 @pytest.mark.asyncio
@@ -324,3 +325,43 @@ async def test_time_sensitive_lookup_bypasses_redis() -> None:
         is None
     )
     assert redis.gets == 0
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "2024年的维护周期是什么？",
+        "上个月的维护周期是什么？",
+        "这个月的维护周期是什么？",
+        "本周的维护周期是什么？",
+        "这周的维护周期是什么？",
+        "近期的维护周期是什么？",
+        "近一周的维护周期是什么？",
+        "三天前的维护周期是什么？",
+    ),
+)
+@pytest.mark.asyncio
+async def test_common_chinese_temporal_queries_bypass_lookup_and_store(
+    query: str,
+) -> None:
+    redis, factory = FakeRedis(), FakeFactory()
+    provider = cache(redis, factory)
+    redis.value = CachedQueryResult(
+        created_at=datetime(2026, 11, 14, tzinfo=UTC),
+        final_response=final_response(),
+    )
+    req = UserTurnRequest(session_id="s1", query=query)
+    assert await provider.lookup(req) is None
+    assert await provider.store(req, core_result(), web_invoked=False) is False
+    assert redis.gets == 0
+    assert redis.puts == 0
+
+
+@pytest.mark.asyncio
+async def test_unknown_web_provenance_cannot_write() -> None:
+    redis, factory = FakeRedis(), FakeFactory()
+    provider = cache(redis, factory)
+    assert await provider.store(request(), core_result()) is False
+    assert await provider.store(request(), core_result(), web_invoked=None) is False
+    assert redis.puts == 0
+    assert not QueryCachePolicy(enabled=True).decide(request(), core_result()).eligible
