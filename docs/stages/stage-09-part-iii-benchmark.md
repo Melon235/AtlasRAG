@@ -115,7 +115,21 @@ conditions. No benchmark quality/latency numbers are claimed.
 - No Stage 10 RuntimeGate/MaintenanceCoordinator implementation.
 - Stage 9 PR remains open and unmerged.
 
-## 7. Next acceptance
+## 7. Publication and CI
+
+- Implementation HEAD: `a0b42351d3649d78b46afaa494e0cccbdc6f3c91`
+- Push CI `43872167757`: PASS
+- Push Integration `43872167780`: PASS
+- PR CI `43872177961`: PASS
+- PR Integration `43872177950`: PASS
+- PR: open / unmerged.
+- This report is a documentation-only successor; its final HEAD checks are
+  recorded in the PR/final delivery.
+- Independent read-only review found no production-coupling or Stage-scope
+  blocker; its snapshot/comparison/isolation/validity/metrics findings were
+  fixed or the claims were corrected to partial.
+
+## 8. Next acceptance
 
 1. Approve or provide the frozen 400/600 corpus reference (or explicitly accept
    396/604 as the corrected official snapshot identity).
