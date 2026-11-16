@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import httpx
 from pydantic import SecretStr, ValidationError
@@ -23,6 +24,9 @@ from atlasrag.providers.generation.base import (
     GenerationProvider,
 )
 from atlasrag.services.answer.generation_input import GenerationInput
+
+if TYPE_CHECKING:
+    from atlasrag.services.rag_core.query import QueryRewriteOutput
 
 _ENDPOINT = "https://api.deepseek.com/chat/completions"
 
@@ -253,4 +257,100 @@ class DeepSeekSummaryProvider:
             IndexError,
             json.JSONDecodeError,
         ):
+            raise ProviderResponseError from None
+
+
+class DeepSeekQueryRewriteProvider:
+    """Structured retrieval-query rewrite; never emits metadata filters."""
+
+    _SYSTEM = (
+        "Rewrite the user's query for retrieval. Preserve user intent and every "
+        "identifier, filename, version, error code, and proper noun. Resolve "
+        "relative dates using the supplied current time. Do not answer the "
+        "question, add constraints, tools, filters, IDs, or citations. Return "
+        'JSON only: {"retrieval_query": string}.'
+    )
+
+    def __init__(
+        self,
+        *,
+        model_id: str,
+        api_key: SecretStr,
+        client: httpx.AsyncClient,
+        max_retries: int = 1,
+        endpoint: str = _ENDPOINT,
+    ) -> None:
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ValueError("query rewrite model_id must be nonempty")
+        if not isinstance(api_key, SecretStr) or not api_key.get_secret_value().strip():
+            raise ValueError("query rewrite API key must be configured")
+        if type(max_retries) is not int or not 0 <= max_retries <= 3:
+            raise ValueError("query rewrite retries must be within [0, 3]")
+        self._model_id = model_id.strip()
+        self._api_key = api_key
+        self._client = client
+        self._max_retries = max_retries
+        self._endpoint = endpoint
+
+    async def rewrite(
+        self, query: str, *, now: str, timezone_name: str
+    ) -> QueryRewriteOutput:
+        from atlasrag.services.rag_core.query import QueryRewriteOutput
+
+        payload = {
+            "model": self._model_id,
+            "messages": [
+                {"role": "system", "content": self._SYSTEM},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "query": query,
+                            "current_time": now,
+                            "timezone": timezone_name,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                },
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.0,
+            "max_tokens": 256,
+            "stream": False,
+        }
+        response: httpx.Response | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = await self._client.post(
+                    self._endpoint,
+                    json=payload,
+                    headers={
+                        "Authorization": "Bearer " + self._api_key.get_secret_value(),
+                        "Content-Type": "application/json",
+                    },
+                    timeout=httpx.Timeout(30.0, connect=10.0),
+                )
+            except (httpx.TimeoutException, httpx.TransportError):
+                if attempt < self._max_retries:
+                    await asyncio.sleep(min(0.5 * (attempt + 1), 2.0))
+                    continue
+                raise DependencyUnavailableError from None
+            if response.status_code in {401, 403}:
+                raise ConfigurationError
+            if response.status_code in {429, 500, 502, 503, 504}:
+                if attempt < self._max_retries:
+                    await asyncio.sleep(min(0.5 * (attempt + 1), 2.0))
+                    continue
+                raise DependencyUnavailableError
+            if response.status_code >= 400:
+                raise DependencyUnavailableError
+            break
+        if response is None:
+            raise DependencyUnavailableError
+        try:
+            content = response.json()["choices"][0]["message"]["content"]
+            parsed = json.loads(content)
+            return QueryRewriteOutput.model_validate(parsed)
+        except (ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError):
             raise ProviderResponseError from None

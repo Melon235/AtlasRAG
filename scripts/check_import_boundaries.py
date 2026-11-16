@@ -94,6 +94,8 @@ SYNC_GRAPH_PATH = "src/atlasrag/graphs/indexing/index_graph.py"
 LOCAL_EVIDENCE_GRAPH_PATH = "src/atlasrag/graphs/local_evidence/subgraph.py"
 WEB_EVIDENCE_GRAPH_PATH = "src/atlasrag/graphs/web_evidence/subgraph.py"
 ANSWER_GRAPH_PATH = "src/atlasrag/graphs/answer/subgraph.py"
+RAG_CORE_GRAPH_PATH = "src/atlasrag/graphs/rag_core/subgraph.py"
+RETRIEVAL_GRAPH_PATH = "src/atlasrag/graphs/retrieval/graph.py"
 BUILD_LANGGRAPH_IMPORTS = frozenset(
     {
         "langgraph.graph",
@@ -181,6 +183,25 @@ BUILD_GRAPH_CAPABILITIES = {
             "atlasrag.services.web_evidence.service.preparation_degraded",
             "atlasrag.services.web_evidence.ports",
             "atlasrag.services.web_evidence.ports.SearchProvider",
+        }
+    ),
+    RAG_CORE_GRAPH_PATH: frozenset(
+        {
+            "atlasrag.services.rag_core.boundary",
+            "atlasrag.services.rag_core.boundary.AnswerInputBuilder",
+            "atlasrag.services.rag_core.completion",
+            "atlasrag.services.rag_core.completion.CompletionAssessor",
+            "atlasrag.services.rag_core.query",
+            "atlasrag.services.rag_core.query.QueryConstructionService",
+            "atlasrag.services.rag_core.routing",
+            "atlasrag.services.rag_core.routing.CorrectiveAction",
+            "atlasrag.services.rag_core.routing.CorrectiveRoutingService",
+        }
+    ),
+    RETRIEVAL_GRAPH_PATH: frozenset(
+        {
+            "atlasrag.services.cache.session",
+            "atlasrag.services.cache.session.SessionQueryCache",
         }
     ),
     ANSWER_GRAPH_PATH: frozenset(
@@ -347,6 +368,8 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
                             LOCAL_EVIDENCE_GRAPH_PATH,
                             WEB_EVIDENCE_GRAPH_PATH,
                             ANSWER_GRAPH_PATH,
+                            RAG_CORE_GRAPH_PATH,
+                            RETRIEVAL_GRAPH_PATH,
                         }
                         or target not in BUILD_LANGGRAPH_IMPORTS
                     ):

@@ -6,10 +6,9 @@ incrementally through independently verified implementation stages.
 The authoritative design is
 [`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md).
 
-**Current implementation stage: Stage 7 — Part II: Web Evidence & Answer**
+**Current implementation stage: Stage 8 — Part II: RagCore / Cache**
 
-**Status: Stage 7 COMPLETE — real provider acceptance PASS; pull request #8
-open and unmerged**
+**Status: Stage 8 COMPLETE — pull request #9 open and unmerged**
 
 Stage 7 adds independent `web_evidence_subgraph` and `answer_subgraph`
 capabilities: SearXNG JSON search, SSRF-safe fetch/sanitize/budgets, direct and
