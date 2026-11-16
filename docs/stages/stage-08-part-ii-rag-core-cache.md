@@ -3,7 +3,8 @@
 ## 1. Status
 
 **COMPLETE — local, real-storage, and real-model end-to-end acceptance pass;
-independent review findings addressed; PR open and unmerged.**
+independent review and published-source reconciliation complete; PR open and
+unmerged.**
 
 Base: `cc5f0d454de52e63675e1bc5373bae61996806b8` (Stage 7 merge).
 Branch: `stage/08-part-ii-rag-core-cache`.
@@ -36,7 +37,9 @@ citation, and real DeepSeek batch summary passed; PR #8 merged at `cc5f0d4`.
 - `QueryCachePolicy`: local-only SUCCESS eligibility; rejects
   DEGRADED_SUCCESS/SAFE_FAILURE/Web-derived/no-citation, cache-disabled,
   unknown-provenance, and multilingual current/relative-time requests; size bound.
-- `SessionQueryCache`: frozen query-cache key (session, runtime fingerprint,
+  Omitted/`None` provenance returns `UNKNOWN_WEB_PROVENANCE` and writes nothing.
+- `SessionQueryCache`: requires explicit boolean `web_invoked` for store;
+  omitted/`None` provenance performs zero writes. Frozen query-cache key (session, runtime fingerprint,
   request hash), Redis get/put, payload FinalResponse validation, TTL, Redis
   soft-failure bypass/skip for dependency and provider-response errors, persisted
   freshness marker trust check before lookup and recheck before write; marker true
@@ -83,15 +86,24 @@ direct retrieval graph without provenance → no cache write
 concurrent independent local/Web invocations → correct per-request provenance
 ```
 
-`SessionQueryCache.store()` now requires authoritative boolean provenance;
-`web_invoked=None` writes nothing. The direct policy API also rejects unknown
-provenance. No shared mutable facts dict is held on a runner; each
-`RetrievalRunner.run()` creates a fresh per-invocation facts object.
+`SessionQueryCache.store()` requires authoritative boolean provenance;
+omitted or `web_invoked=None` writes nothing. The direct policy API returns
+`UNKNOWN_WEB_PROVENANCE` and rejects it. No shared mutable facts dict is held on
+a runner; each `RetrievalRunner.run()` creates a fresh per-invocation facts
+object.
+
+### Published-source reconciliation
+
+The earlier published report HEAD `31ed190` contained the completed report but
+the post-audit policy/session/temporal fixes were still local and uncommitted.
+The actual source was reconciled in commit
+`7399a702b81c4b27e0b6072bad8f3aed0cea91ae`; this report and the tests now
+describe that published source, not an unpublished worktree state.
 
 ## 4. Verification
 
-- `make verify`: PASS — **3219 passed, 106 deselected**.
-- `make test-stage8`: PASS — **26 focused tests**.
+- `make verify`: PASS — **3226 passed, 106 deselected**.
+- `make test-stage8`: PASS — **33 focused tests**.
 - `make stage8-verify`: PASS — full verify, focused tests, and real
   PostgreSQL/Milvus/Redis integration.
 - `make test-stage8-integration`: PASS — real PostgreSQL/Milvus/Redis,
@@ -103,9 +115,9 @@ provenance. No shared mutable facts dict is held on a runner; each
 - `make stage7-provider-smoke`: PASS earlier (real SearXNG, DeepSeek
   generation/review/citations and batch summary); retained separately.
 - `make architecture-check`, `git diff --check`, mypy, Ruff: PASS.
-- Stage 2–7 regression suites: PASS on the final implementation HEAD
-  `5602963ba1c6d4caf5934a9c6f5ee0b4e127bc91` (push CI `43597242251`, push
-  Integration `43597242258`; PR CI `43597245730`, PR Integration `43597245744`).
+- Stage 2–7 regression suites: PASS on the published implementation HEAD
+  `7399a702b81c4b27e0b6072bad8f3aed0cea91ae` (push CI `43858573110`, push
+  Integration `43858573032`; PR CI `43858582227`, PR Integration `43858582347`).
 - Final documentation HEAD checks are recorded in the final delivery/PR.
 
 ## 5. Real E2E precision (I5)
@@ -136,9 +148,13 @@ The strengthened live test:
 - The injected aware clock is converted with `astimezone(configured_timezone)`
   before provider time context; UTC/JST day-boundary tests cover the conversion.
 - English current/relative terms and common Chinese expressions are bypassed at
-  both lookup and write (`今天/昨天/明天/当前/目前/现在/最近/最新/实时/本月/今年/去年/
-  上个月/这个月/上季度/本季度/上周/下周/本周/这周/近期/近来/近一周/近一个月/三天前/
-  前两天`), plus 4-digit years including `2024年`.
+  both lookup and write. Verified cases include `上个月`, `这个月`, `本周`, `这周`,
+  `近期`, `近一周`, `三天前`, and `2024年`, in addition to the broader conservative
+  expression set (`今天/昨天/明天/当前/目前/现在/最近/最新/实时/本月/今年/去年/
+  上季度/本季度/上周/下周/近来/近一个月/前两天`).
+- Parameterized regressions cover every required Chinese case against a
+  pre-existing cache entry: zero Redis GET and zero Redis SET, with explicit
+  known-local provenance on the write path.
 - This is conservative heuristic coverage, not complete natural-language
   time-sensitivity detection; benchmark tuning remains Stage 9 work. The frozen
   request hash and cache-key projection were not changed.
