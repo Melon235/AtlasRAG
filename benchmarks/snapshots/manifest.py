@@ -80,10 +80,29 @@ def load_manifest(root: Path) -> SnapshotManifest:
         raise SnapshotError("invalid snapshot manifest") from error
 
 
+REQUIRED_SNAPSHOT_FILES = frozenset({"queries.json", "qrels.json", "answers.json"})
+
+
 def validate_snapshot(root: Path) -> SnapshotManifest:
     manifest = load_manifest(root)
+    expected = {item.relative_path for item in manifest.files}
+    missing_required = REQUIRED_SNAPSHOT_FILES - expected
+    if missing_required:
+        raise SnapshotError(
+            f"required snapshot files not declared: {sorted(missing_required)}"
+        )
+    actual = {
+        str(path.relative_to(root).as_posix())
+        for path in root.rglob("*")
+        if path.is_file() and path.name != "manifest.json"
+    }
+    unexpected = actual - expected
+    if unexpected:
+        raise SnapshotError(f"unexpected snapshot files: {sorted(unexpected)}")
     for item in manifest.files:
         path = _safe_path(root, item.relative_path)
+        if path.is_symlink():
+            raise SnapshotError(f"symlink not allowed: {item.relative_path}")
         if not path.is_file():
             raise SnapshotError(f"missing snapshot file: {item.relative_path}")
         if path.stat().st_size != item.size_bytes:

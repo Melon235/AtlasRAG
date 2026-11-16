@@ -26,9 +26,13 @@ Primary dataset: Vectara Open RAGBench, arXiv PDF collection.
   `answers.json` is reference-answer data.
 - Dataset files are not redistributed; snapshot/artifacts stay ignored.
 
-Actual supported count is verified by the adapter from the frozen snapshot, not
-assumed from this plan. Any release/count mismatch is a dataset identity conflict
-and blocks a formal scorecard.
+Actual values verified from the official metadata: 3,045 total, 2,062 supported,
+396 qrel-positive documents, and 604 negative documents. The plan's earlier
+400/600 profile assumption conflicts with this; the Architecture Manual itself
+states 1000 documents and 2062 supported queries. The 396/604 profile conflict
+blocks a formal FULL_CORPUS scorecard until explicitly accepted. The
+supported-query count does match 2,062. Any further release/count mismatch is
+also a blocking identity conflict.
 
 ## 3. Directory layout
 

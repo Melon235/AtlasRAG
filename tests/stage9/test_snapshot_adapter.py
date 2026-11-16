@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from benchmarks.contracts.models import SnapshotManifest
-from benchmarks.datasets.open_ragbench import OpenRagBenchAdapter
+from benchmarks.datasets.open_ragbench import DatasetAdapterError, OpenRagBenchAdapter
 from benchmarks.snapshots.manifest import (
     SnapshotError,
     build_manifest,
@@ -107,3 +107,27 @@ def test_invalid_qrel_mapping_rejected(tmp_path: Path) -> None:
     (tmp_path / "qrels.json").write_text(json.dumps(qrels), encoding="utf-8")
     with pytest.raises(SnapshotError, match="size mismatch|checksum mismatch"):
         OpenRagBenchAdapter(tmp_path)
+
+
+def test_unexpected_file_and_manifest_count_mismatch(tmp_path: Path) -> None:
+    snapshot(tmp_path)
+    (tmp_path / "unexpected.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(SnapshotError, match="unexpected snapshot files"):
+        validate_snapshot(tmp_path)
+    (tmp_path / "unexpected.json").unlink()
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    manifest["total_queries"] = 999
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(DatasetAdapterError, match="total_queries mismatch"):
+        OpenRagBenchAdapter(tmp_path)
+
+
+def test_manifest_must_cover_all_consumed_files(tmp_path: Path) -> None:
+    snapshot(tmp_path)
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    manifest["files"] = [
+        item for item in manifest["files"] if item["relative_path"] != "qrels.json"
+    ]
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(SnapshotError, match="required snapshot files"):
+        validate_snapshot(tmp_path)

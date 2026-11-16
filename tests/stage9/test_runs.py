@@ -107,3 +107,28 @@ async def test_quality_case_uses_isolated_session_and_never_gold() -> None:
     request = seen[0]
     assert request.session_id == "benchmark:run:q1:0"
     assert not hasattr(request, "reference_answer")
+
+
+def test_zero_planned_is_invalid_and_manifest_rejects_zero() -> None:
+    from pydantic import ValidationError
+
+    result = assess_validity(0, [])
+    assert result.validity == "INVALID"
+    with pytest.raises(ValidationError):
+        manifest(planned_queries=0)
+
+
+def test_comparison_rejects_confounds_and_identical_factor() -> None:
+    left = manifest()
+    pipeline_changed = manifest(
+        run_id="run-2",
+        pipeline_fingerprint="pipeline-b",
+        runtime_fingerprint="runtime-b",
+    )
+    assert not validate_comparison(
+        left, pipeline_changed, declared_factor="pipeline_fingerprint"
+    ).accepted
+    same = manifest(run_id="run-3")
+    assert not validate_comparison(
+        left, same, declared_factor="runtime_fingerprint"
+    ).accepted

@@ -9,7 +9,12 @@ from benchmarks.contracts.models import (
     GoldSection,
     RankedUnit,
 )
-from benchmarks.metrics.retrieval import document_ranking, evaluate_ranking
+from benchmarks.metrics.retrieval import (
+    document_ranking,
+    evaluate_ranking,
+    evaluate_relaxed_document,
+    evaluate_strict_evidence,
+)
 
 
 def ranked(*values: tuple[str, str]) -> list[RankedUnit]:
@@ -102,3 +107,12 @@ def test_alignment_one_to_many_medium_unresolved_and_coverage() -> None:
     coverage = alignment_coverage((high, medium, unresolved))
     assert coverage["HIGH"] == 1 and coverage["UNRESOLVED"] == 1
     assert coverage["HIGH_rate"] == pytest.approx(1 / 3)
+
+
+def test_strict_and_relaxed_are_separate_and_zero_grade_rejected() -> None:
+    evidence = ranked(("e1", "d1"), ("e2", "d1"))
+    strict = evaluate_strict_evidence(evidence, {"e1": 1}, k=2)
+    relaxed = evaluate_relaxed_document(evidence, {"d1": 1}, k=1)
+    assert strict.recall == 1.0 and relaxed.recall == 1.0
+    with pytest.raises(ValueError, match="positive relevant unit"):
+        evaluate_ranking(evidence, {"e1": 0}, k=2)

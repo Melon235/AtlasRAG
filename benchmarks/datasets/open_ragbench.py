@@ -32,6 +32,8 @@ class OpenRagBenchAdapter:
         self._validate()
 
     def _load_object(self, name: str) -> dict[str, Any]:
+        if name not in {item.relative_path for item in self.manifest.files}:
+            raise DatasetAdapterError(f"{name} is not covered by the snapshot manifest")
         path = self.root / name
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
@@ -69,6 +71,26 @@ class OpenRagBenchAdapter:
             raise DatasetAdapterError("qrel/query identity mismatch")
         if set(self._answers) != set(self._queries):
             raise DatasetAdapterError("answer/query identity mismatch")
+        counts = self.counts()
+        if self.manifest.total_queries != counts["total"]:
+            raise DatasetAdapterError("manifest total_queries mismatch")
+        if (
+            self.manifest.supported_queries
+            and self.manifest.supported_queries != counts["supported"]
+        ):
+            raise DatasetAdapterError("manifest supported_queries mismatch")
+        if self.manifest.modality_counts:
+            by_modality = counts["by_modality"]
+            if not isinstance(by_modality, dict):
+                raise DatasetAdapterError("invalid modality counts")
+            actual = {key: value for key, value in by_modality.items() if value}
+            expected = {
+                key: value
+                for key, value in self.manifest.modality_counts.items()
+                if value
+            }
+            if actual != expected:
+                raise DatasetAdapterError("manifest modality_counts mismatch")
 
     @property
     def queries(self) -> tuple[BenchmarkQuery, ...]:

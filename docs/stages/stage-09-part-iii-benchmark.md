@@ -2,8 +2,8 @@
 
 ## 1. Status
 
-**HARNESS IMPLEMENTATION: COMPLETE (core static/snapshot/alignment/metrics/run
-harness). FORMAL EXTERNAL BENCHMARK: BLOCKED.**
+**PARTIAL — core dataset, snapshot, alignment, metric, manifest, and quality
+adapter scaffolding implemented and tested. FORMAL EXTERNAL BENCHMARK: BLOCKED.**
 
 Base: `bda75fefb70fb1dc61a527d988e3b362bd329d01` (Stage 8 merge).
 
@@ -25,11 +25,13 @@ Verified from the official metadata at HF revision
 - `qrels` unique positive documents: **396**
 - Negative documents implied by 1,000-document corpus: **604**
 
-The Architecture Manual reference profile states 400 positive and 600 hard
-negative documents. The actual frozen metadata yields 396/604. This is a
-dataset-identity conflict, not a result to round or hide. Until the user accepts
-this reference correction or supplies the original 400/600 snapshot, a formal
-`FULL_CORPUS` scorecard is blocked.
+The Architecture Manual itself states 1000 documents and 2062 supported
+queries; it does not state 400/600. The 400/600 split appears in the Stage 9
+design plan and must be treated as a profile assumption. The actual frozen
+metadata yields 396/604. This is a dataset-identity conflict against that
+assumption, not a result to round or hide. Until the user accepts the corrected
+profile or supplies the original snapshot, a formal `FULL_CORPUS` scorecard is
+blocked.
 
 The dataset is licensed CC-BY-NC-4.0. Dataset files, corpus content, PDFs, and
 restricted reference answers are not committed or redistributed by this
@@ -44,20 +46,25 @@ started.
 - Benchmark-only contracts: documents, queries, qrels, modalities, corpus
   profiles, alignment, ranked units, snapshot manifest.
 - Open RAGBench adapter with strict query/qrel/answer identity checks and
-  modality filtering; corpus profiles retain all reference documents and derive
-  negative-only membership from qrels.
+  modality filtering; profile counts are derived from qrels and the manifest.
+  It does not yet materialize a complete document identity/membership set.
 - Immutable snapshot manifest: SHA256/size per file, dataset revision, license,
   counts; rejects missing/extra files, checksum/size mismatch, duplicate paths,
-  unsafe paths, and invalid qrel mappings.
+  unsafe paths, unexpected/symlinked files, manifest count mismatches, and
+  invalid qrel mappings.
 - Deterministic metrics: Hit@K, Recall@K, MRR@K, nDCG@K, binary/graded
   relevance, deduplicated ranked identity, document-level collapsing.
 - Gold evidence alignment: document identity gate, deterministic token-overlap
   score, HIGH/MEDIUM/UNRESOLVED, one-to-many Parent/Table alignment, coverage.
-- Physical-isolation checks: benchmark database/collection naming, Redis DB not
-  0, ownership markers, production knowledge-path overlap rejection, port
-  availability helper.
-- Quality-case adapter around an injected real production `retrieval_graph`
-  callable, with independent benchmark sessions and no gold in production input.
+- Static physical-isolation checks: benchmark database/collection naming,
+  Redis DB not 0, production knowledge/artifact path overlap rejection, and port
+  availability helper. These are preflight checks only; actual database,
+  collection, Compose ownership, and no-concurrent-mutation checks are not yet
+  implemented or verified.
+- Quality-case adapter around an injected retrieval callable, with independent
+  benchmark sessions and no gold in production input. It is not yet wired to the
+  real `retrieval_graph`, Web/cache policy enforcement, or production trace
+  observation; tests use an injected fake callable.
 - Append-only case ledger, validity assessment, run manifest, run comparison
   validation with declared-factor checks.
 - Minimal report renderer and non-interactive CLI:
@@ -66,12 +73,15 @@ started.
 ## 4. Verification
 
 - Baseline before Stage 9 implementation: 3226 passed / 106 deselected.
-- `make verify`: **3236 passed, 106 deselected**.
-- `make test-stage9`: **10 passed**.
-- Actual metadata snapshot: checksum-validated; CLI output:
+- `make verify`: **3243 passed, 106 deselected**.
+- `make test-stage9`: **17 passed**.
+- Local metadata snapshot (not committed; CC-BY-NC-4.0) was checksum-validated
+  locally. CLI output:
   - revision `63f6b052ff83508b08e242db42263ee708815c26`
   - 1000 documents, 3045 queries, 2062 supported
   - positive documents 396, negative documents 604
+  - This local snapshot is not independently reproducible from the repository
+    without downloading the licensed data.
 - `make architecture-check`, Ruff, mypy, git diff checks: PASS.
 - Stage 9 CI job added for synthetic harness tests; no dataset/API/model download
   in ordinary CI.

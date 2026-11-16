@@ -52,10 +52,18 @@ def validate_isolation(
     for marker in production_markers:
         if not marker:
             continue
+        protected = Path(marker).resolve()
         if (
-            knowledge == Path(marker).resolve()
-            or Path(marker).resolve() in knowledge.parents
+            knowledge == protected
+            or protected in knowledge.parents
+            or knowledge in protected.parents
         ):
             raise IsolationError("benchmark knowledge directory overlaps production")
+        if (
+            artifacts == protected
+            or protected in artifacts.parents
+            or artifacts in protected.parents
+        ):
+            raise IsolationError("benchmark artifact root overlaps production")
     if not config.owned_compose_project.casefold().startswith("atlasrag-stage9"):
         raise IsolationError("Compose project is not Stage 9 owned")

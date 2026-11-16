@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import fcntl
 from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
+
+from benchmarks.contracts.models import RunValidity
 
 
 class _Frozen(BaseModel):
@@ -26,7 +29,7 @@ class RunManifest(_Frozen):
     snapshot_sha256: StrictStr
     corpus_profile: StrictStr
     query_profile: StrictStr
-    planned_queries: int = Field(ge=0)
+    planned_queries: int = Field(ge=1)
     code_commit: StrictStr
     dirty_tree: bool
     pipeline_fingerprint: StrictStr
@@ -50,7 +53,7 @@ class CaseObservation(_Frozen):
 
 
 class RunValidityResult(_Frozen):
-    validity: StrictStr
+    validity: RunValidity
     planned: int
     attempted: int
     completed: int
@@ -77,12 +80,18 @@ def assess_validity(
     duplicate_keys = len(
         {(item.query_id, item.repetition_index) for item in observations}
     ) != len(observations)
-    if duplicate_keys or technical_failures or unfinished or attempted != planned:
-        validity = "INVALID"
+    if (
+        planned <= 0
+        or duplicate_keys
+        or technical_failures
+        or unfinished
+        or attempted != planned
+    ):
+        validity = RunValidity.INVALID
     elif completed != planned:
-        validity = "PARTIAL"
+        validity = RunValidity.PARTIAL
     else:
-        validity = "VALID"
+        validity = RunValidity.VALID
     return RunValidityResult(
         validity=validity,
         planned=planned,
@@ -114,8 +123,24 @@ class RunLedger:
         key = (observation.query_id, observation.repetition_index)
         if any((item.query_id, item.repetition_index) == key for item in self.read()):
             raise ValueError("observation already exists")
-        with self.path.open("a", encoding="utf-8") as stream:
-            stream.write(observation.model_dump_json() + "\n")
+        with self.path.open("a+", encoding="utf-8") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                stream.seek(0)
+                existing = [
+                    CaseObservation.model_validate_json(line)
+                    for line in stream.read().splitlines()
+                    if line.strip()
+                ]
+                if any(
+                    (item.query_id, item.repetition_index) == key for item in existing
+                ):
+                    raise ValueError("observation already exists")
+                stream.seek(0, 2)
+                stream.write(observation.model_dump_json() + "\n")
+                stream.flush()
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 class ComparisonResult(_Frozen):
@@ -150,4 +175,20 @@ def validate_comparison(
             reasons.append("runtime-only comparison changed pipeline fingerprint")
         if left.corpus_profile != right.corpus_profile:
             reasons.append("runtime-only comparison changed corpus profile")
+        if left.runtime_fingerprint == right.runtime_fingerprint:
+            reasons.append("declared runtime factor did not differ")
+    elif declared_factor == "pipeline_fingerprint":
+        if left.runtime_fingerprint != right.runtime_fingerprint:
+            reasons.append("index-affecting comparison changed runtime fingerprint")
+        if left.corpus_profile != right.corpus_profile:
+            reasons.append("index-affecting comparison changed corpus profile")
+        if left.pipeline_fingerprint == right.pipeline_fingerprint:
+            reasons.append("declared pipeline factor did not differ")
+    elif declared_factor == "corpus_profile":
+        if left.pipeline_fingerprint != right.pipeline_fingerprint:
+            reasons.append("corpus comparison changed pipeline fingerprint")
+        if left.runtime_fingerprint != right.runtime_fingerprint:
+            reasons.append("corpus comparison changed runtime fingerprint")
+        if left.corpus_profile == right.corpus_profile:
+            reasons.append("declared corpus factor did not differ")
     return ComparisonResult(accepted=not reasons, reasons=tuple(reasons))

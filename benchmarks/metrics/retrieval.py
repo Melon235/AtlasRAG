@@ -40,6 +40,8 @@ def evaluate_ranking(
         raise ValueError("relevant mapping must not be empty")
     ordered = _dedupe(ranked)[:k]
     relevant_ids = {identity for identity, grade in relevant.items() if grade > 0}
+    if not relevant_ids:
+        raise ValueError("at least one positive relevant unit is required")
     hit = 1.0 if any(item.identity in relevant_ids for item in ordered) else 0.0
     found = {item.identity for item in ordered if item.identity in relevant_ids}
     recall = len(found) / len(relevant_ids)
@@ -90,3 +92,17 @@ def aggregate(metrics: Sequence[RetrievalMetrics]) -> RetrievalMetrics:
         mrr=sum(item.mrr for item in metrics) / count,
         ndcg=sum(item.ndcg for item in metrics) / count,
     )
+
+
+def evaluate_strict_evidence(
+    ranked: Sequence[RankedUnit], aligned_relevant: Mapping[str, int], *, k: int
+) -> RetrievalMetrics:
+    """Strict metrics over HIGH-aligned canonical evidence identities."""
+    return evaluate_ranking(ranked, aligned_relevant, k=k)
+
+
+def evaluate_relaxed_document(
+    ranked: Sequence[RankedUnit], relevant_documents: Mapping[str, int], *, k: int
+) -> RetrievalMetrics:
+    """Relaxed metrics over unique document identities, never mixed with strict."""
+    return evaluate_ranking(document_ranking(ranked), relevant_documents, k=k)
