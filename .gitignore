@@ -48,3 +48,6 @@ htmlcov/
 # Local Git worktrees
 .worktrees/
 worktrees/
+
+benchmark_data/
+benchmark_runs/
