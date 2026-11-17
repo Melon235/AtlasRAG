@@ -35,10 +35,17 @@ def snapshot(root: Path) -> SnapshotManifest:
         "q3": {"doc_id": "doc-c", "section_id": 3},
     }
     answers = {"q1": "answer one", "q2": "answer two", "q3": "answer three"}
+    corpus = {
+        "doc-a": "https://example.test/a",
+        "doc-b": "https://example.test/b",
+        "doc-c": "https://example.test/c",
+        "doc-d": "https://example.test/d",
+    }
     for name, value in (
         ("queries.json", queries),
         ("qrels.json", qrels),
         ("answers.json", answers),
+        ("pdf_urls.json", corpus),
     ):
         (root / name).write_text(json.dumps(value), encoding="utf-8")
     manifest = build_manifest(
@@ -46,8 +53,9 @@ def snapshot(root: Path) -> SnapshotManifest:
         dataset_revision="rev-1",
         license="CC-BY-NC-4.0",
         source_url="fixture",
-        relative_files=("queries.json", "qrels.json", "answers.json"),
+        relative_files=("queries.json", "qrels.json", "answers.json", "pdf_urls.json"),
         total_documents=4,
+        corpus_document_ids=tuple(corpus),
         total_queries=3,
         supported_queries=2,
         modality_counts={"text": 1, "text-table": 1, "text-image": 1},
@@ -74,13 +82,18 @@ def test_valid_snapshot_and_supported_profile(tmp_path: Path) -> None:
     assert adapter.supported_profiles()["FULL_CORPUS"] == {
         "documents": 4,
         "queries": 2,
-        "positive_documents": 3,
-        "hard_negative_documents": 1,
+        "qrel_referenced_documents": 3,
+        "unreferenced_documents": 1,
+        "verified_hard_negative_documents": None,
+        "partition_status": "UNVERIFIED",
     }
     assert adapter.supported_profiles()["NEGATIVE_ONLY_CORPUS"] == {
-        "documents": 1,
+        "status": "BLOCKED_UNVERIFIED_PARTITION",
+        "observed_unreferenced_documents": 1,
+        "verified_hard_negative_documents": None,
         "queries": 2,
     }
+    assert adapter.document_partition().verified_hard_negative_ids is None
 
 
 def test_checksum_mismatch_and_path_traversal(tmp_path: Path) -> None:
@@ -131,3 +144,46 @@ def test_manifest_must_cover_all_consumed_files(tmp_path: Path) -> None:
     (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(SnapshotError, match="required snapshot files"):
         validate_snapshot(tmp_path)
+
+
+def test_four_unreferenced_documents_cannot_be_certified_hard_negatives(
+    tmp_path: Path,
+) -> None:
+    queries = {
+        f"q{i}": {"query": f"question {i}", "type": "extractive", "source": "text"}
+        for i in range(1, 5)
+    }
+    qrels = {f"q{i}": {"doc_id": f"positive-{i}", "section_id": 0} for i in range(1, 5)}
+    answers = {f"q{i}": f"answer {i}" for i in range(1, 5)}
+    corpus = {
+        **{f"positive-{i}": f"https://example.test/positive-{i}" for i in range(1, 5)},
+        **{
+            f"unreferenced-{i}": f"https://example.test/unreferenced-{i}"
+            for i in range(1, 5)
+        },
+    }
+    for name, value in (
+        ("queries.json", queries),
+        ("qrels.json", qrels),
+        ("answers.json", answers),
+        ("pdf_urls.json", corpus),
+    ):
+        (tmp_path / name).write_text(json.dumps(value), encoding="utf-8")
+    manifest = build_manifest(
+        tmp_path,
+        dataset_revision="fixture",
+        license="CC-BY-NC-4.0",
+        source_url="fixture",
+        relative_files=("queries.json", "qrels.json", "answers.json", "pdf_urls.json"),
+        total_documents=8,
+        total_queries=4,
+        supported_queries=4,
+        corpus_document_ids=tuple(corpus),
+    )
+    write_manifest(tmp_path, manifest)
+    adapter = OpenRagBenchAdapter(tmp_path)
+    partition = adapter.document_partition()
+    assert len(partition.qrel_referenced_ids) == 4
+    assert len(partition.unreferenced_ids) == 4
+    assert partition.verified_hard_negative_ids is None
+    assert adapter.negative_only_profile()["status"] == "BLOCKED_UNVERIFIED_PARTITION"

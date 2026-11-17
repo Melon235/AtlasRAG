@@ -27,12 +27,12 @@ Primary dataset: Vectara Open RAGBench, arXiv PDF collection.
 - Dataset files are not redistributed; snapshot/artifacts stay ignored.
 
 Actual values verified from the official metadata: 3,045 total, 2,062 supported,
-396 qrel-positive documents, and 604 negative documents. The plan's earlier
-400/600 profile assumption conflicts with this; the Architecture Manual itself
-states 1000 documents and 2062 supported queries. The 396/604 profile conflict
-blocks a formal FULL_CORPUS scorecard until explicitly accepted. The
-supported-query count does match 2,062. Any further release/count mismatch is
-also a blocking identity conflict.
+396 qrel-referenced documents and 604 unreferenced documents. The upstream
+documentation claims 400 positive/600 hard-negative documents, but the pinned
+release has no authoritative partition file. The 604 unreferenced IDs are not
+certified hard negatives, and the four-document difference is unresolved. The
+official NEGATIVE_ONLY profile fails closed; formal FULL/NEGATIVE scorecards are
+blocked until authoritative IDs are supplied or explicitly approved.
 
 ## 3. Directory layout
 

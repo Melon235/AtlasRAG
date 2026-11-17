@@ -33,6 +33,12 @@ class AlignmentConfidence(StrEnum):
     UNRESOLVED = "UNRESOLVED"
 
 
+class PartitionStatus(StrEnum):
+    VERIFIED = "VERIFIED"
+    UNVERIFIED = "UNVERIFIED"
+    CONFLICT = "CONFLICT"
+
+
 class RunValidity(StrEnum):
     VALID = "VALID"
     PARTIAL = "PARTIAL"
@@ -73,6 +79,16 @@ class BenchmarkQrel(_Frozen):
         if not value.strip():
             raise ValueError("must not be blank")
         return value
+
+
+class DocumentPartition(_Frozen):
+    """Observed document references are not automatically hard negatives."""
+
+    qrel_referenced_ids: tuple[StrictStr, ...]
+    unreferenced_ids: tuple[StrictStr, ...]
+    verified_hard_negative_ids: tuple[StrictStr, ...] | None = None
+    status: PartitionStatus
+    evidence: StrictStr
 
 
 class GoldSection(_Frozen):
@@ -119,6 +135,7 @@ class SnapshotManifest(_Frozen):
     source_url: StrictStr
     files: tuple[SnapshotFile, ...]
     total_documents: int = Field(ge=0)
+    corpus_document_ids: tuple[StrictStr, ...] = ()
     total_queries: int = Field(ge=0)
     supported_queries: int = Field(default=0, ge=0)
     modality_counts: dict[StrictStr, int] = Field(default_factory=dict)

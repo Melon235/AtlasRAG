@@ -43,6 +43,7 @@ def build_manifest(
     total_queries: int,
     supported_queries: int = 0,
     modality_counts: dict[str, int] | None = None,
+    corpus_document_ids: tuple[str, ...] = (),
 ) -> SnapshotManifest:
     files = tuple(
         SnapshotFile(
@@ -58,6 +59,7 @@ def build_manifest(
         source_url=source_url,
         files=files,
         total_documents=total_documents,
+        corpus_document_ids=corpus_document_ids,
         total_queries=total_queries,
         supported_queries=supported_queries,
         modality_counts=modality_counts or {},
@@ -80,7 +82,9 @@ def load_manifest(root: Path) -> SnapshotManifest:
         raise SnapshotError("invalid snapshot manifest") from error
 
 
-REQUIRED_SNAPSHOT_FILES = frozenset({"queries.json", "qrels.json", "answers.json"})
+REQUIRED_SNAPSHOT_FILES = frozenset(
+    {"queries.json", "qrels.json", "answers.json", "pdf_urls.json"}
+)
 
 
 def validate_snapshot(root: Path) -> SnapshotManifest:

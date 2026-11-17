@@ -10,7 +10,9 @@ from benchmarks.contracts.models import (
     SUPPORTED_MODALITIES,
     BenchmarkQrel,
     BenchmarkQuery,
+    DocumentPartition,
     Modality,
+    PartitionStatus,
     SnapshotManifest,
 )
 from benchmarks.snapshots.manifest import validate_snapshot
@@ -29,6 +31,7 @@ class OpenRagBenchAdapter:
         self._queries = self._load_object("queries.json")
         self._qrels = self._load_object("qrels.json")
         self._answers = self._load_object("answers.json")
+        self._urls = self._load_object("pdf_urls.json")
         self._validate()
 
     def _load_object(self, name: str) -> dict[str, Any]:
@@ -79,6 +82,15 @@ class OpenRagBenchAdapter:
             and self.manifest.supported_queries != counts["supported"]
         ):
             raise DatasetAdapterError("manifest supported_queries mismatch")
+        if not self._urls:
+            raise DatasetAdapterError("pdf_urls.json is empty")
+        if set(self._urls) != set(self.manifest.corpus_document_ids):
+            raise DatasetAdapterError("pdf_urls/corpus identity mismatch")
+        for doc_id, url in self._urls.items():
+            if not isinstance(doc_id, str) or not doc_id.strip():
+                raise DatasetAdapterError("invalid corpus document identity")
+            if not isinstance(url, str) or not url.strip():
+                raise DatasetAdapterError(f"missing source URL for {doc_id}")
         if self.manifest.modality_counts:
             by_modality = counts["by_modality"]
             if not isinstance(by_modality, dict):
@@ -134,22 +146,54 @@ class OpenRagBenchAdapter:
             "by_modality": counts,
         }
 
-    def positive_document_ids(self) -> tuple[str, ...]:
+    def qrel_referenced_document_ids(self) -> tuple[str, ...]:
         return tuple(sorted({qrel.doc_id for qrel in self.qrels}))
 
+    def corpus_document_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._urls))
+
+    def document_partition(self) -> DocumentPartition:
+        referenced = set(self.qrel_referenced_document_ids())
+        corpus = set(self.corpus_document_ids())
+        unreferenced = corpus - referenced
+        return DocumentPartition(
+            qrel_referenced_ids=tuple(sorted(referenced)),
+            unreferenced_ids=tuple(sorted(unreferenced)),
+            verified_hard_negative_ids=None,
+            status=PartitionStatus.UNVERIFIED,
+            evidence=(
+                "qrels reference 396 of 1000 documents; the pinned release has "
+                "no authoritative positive/hard-negative partition file. "
+                "Unreferenced documents are not certified negatives."
+            ),
+        )
+
+    def negative_only_profile(self) -> dict[str, object]:
+        partition = self.document_partition()
+        if partition.verified_hard_negative_ids is None:
+            return {
+                "status": "BLOCKED_UNVERIFIED_PARTITION",
+                "observed_unreferenced_documents": len(partition.unreferenced_ids),
+                "verified_hard_negative_documents": None,
+                "queries": len(self.supported_queries()),
+            }
+        return {
+            "status": "VERIFIED",
+            "documents": len(partition.verified_hard_negative_ids),
+            "queries": len(self.supported_queries()),
+        }
+
     def supported_profiles(self) -> dict[str, object]:
+        partition = self.document_partition()
         return {
             "FULL_CORPUS": {
-                "documents": self.manifest.total_documents,
+                "documents": len(self.corpus_document_ids()),
                 "queries": len(self.supported_queries()),
-                "positive_documents": len(self.positive_document_ids()),
-                "hard_negative_documents": self.manifest.total_documents
-                - len(self.positive_document_ids()),
+                "qrel_referenced_documents": len(partition.qrel_referenced_ids),
+                "unreferenced_documents": len(partition.unreferenced_ids),
+                "verified_hard_negative_documents": None,
+                "partition_status": partition.status.value,
             },
-            "NEGATIVE_ONLY_CORPUS": {
-                "documents": self.manifest.total_documents
-                - len(self.positive_document_ids()),
-                "queries": len(self.supported_queries()),
-            },
+            "NEGATIVE_ONLY_CORPUS": self.negative_only_profile(),
             "PILOT": {"status": "declared separately; never an official scorecard"},
         }

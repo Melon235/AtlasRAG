@@ -22,16 +22,19 @@ Verified from the official metadata at HF revision
 - Total queries: 3,045
 - Supported `text` + `text-table`: **2,062**
 - Excluded `text-image` + `text-table-image`: 983
-- `qrels` unique positive documents: **396**
-- Negative documents implied by 1,000-document corpus: **604**
+- Exact corpus identities in `pdf_urls.json`: **1,000 unique**
+- `qrels` distinct referenced document IDs: **396**
+- Corpus documents not referenced by qrels: **604**
+- Verified hard-negative IDs: **UNRESOLVED / NOT AVAILABLE**
 
-The Architecture Manual itself states 1000 documents and 2062 supported
-queries; it does not state 400/600. The 400/600 split appears in the Stage 9
-design plan and must be treated as a profile assumption. The actual frozen
-metadata yields 396/604. This is a dataset-identity conflict against that
-assumption, not a result to round or hide. Until the user accepts the corrected
-profile or supplies the original snapshot, a formal `FULL_CORPUS` scorecard is
-blocked.
+The upstream documentation describes **400 positive and 600 hard-negative
+documents**. The pinned release contains no authoritative positive/
+hard-negative partition file. It is therefore not established that the 604
+unreferenced documents are exactly the 600 documented hard negatives, nor which
+four documents account for the difference. The official NEGATIVE_ONLY_CORPUS
+profile fails closed instead of treating unreferenced documents as certified
+negatives. This conflict remains unresolved; no formal FULL_CORPUS or
+NEGATIVE_ONLY scorecard is claimed.
 
 The dataset is licensed CC-BY-NC-4.0. Dataset files, corpus content, PDFs, and
 restricted reference answers are not committed or redistributed by this
@@ -45,9 +48,11 @@ started.
 
 - Benchmark-only contracts: documents, queries, qrels, modalities, corpus
   profiles, alignment, ranked units, snapshot manifest.
-- Open RAGBench adapter with strict query/qrel/answer identity checks and
-  modality filtering; profile counts are derived from qrels and the manifest.
-  It does not yet materialize a complete document identity/membership set.
+- Open RAGBench adapter with strict query/qrel/answer identity checks,
+  exact 1,000-document `pdf_urls.json` identity validation, and modality
+  filtering. `DocumentPartition` explicitly separates qrel-referenced IDs,
+  unreferenced IDs, and verified hard-negative IDs; the last is unavailable and
+  NEGATIVE_ONLY is blocked.
 - Immutable snapshot manifest: SHA256/size per file, dataset revision, license,
   counts; rejects missing/extra files, checksum/size mismatch, duplicate paths,
   unsafe paths, unexpected/symlinked files, manifest count mismatches, and
@@ -73,13 +78,14 @@ started.
 ## 4. Verification
 
 - Baseline before Stage 9 implementation: 3226 passed / 106 deselected.
-- `make verify`: **3243 passed, 106 deselected**.
-- `make test-stage9`: **17 passed**.
+- `make verify`: **3244 passed, 106 deselected**.
+- `make test-stage9`: **18 passed**.
 - Local metadata snapshot (not committed; CC-BY-NC-4.0) was checksum-validated
   locally. CLI output:
   - revision `63f6b052ff83508b08e242db42263ee708815c26`
-  - 1000 documents, 3045 queries, 2062 supported
-  - positive documents 396, negative documents 604
+  - 1,000 exact corpus identities, 3,045 queries, 2,062 supported
+  - 396 qrel-referenced documents, 604 unreferenced documents
+  - verified hard-negative IDs: unavailable
   - This local snapshot is not independently reproducible from the repository
     without downloading the licensed data.
 - `make architecture-check`, Ruff, mypy, git diff checks: PASS.
@@ -102,8 +108,8 @@ formal Stage 9 benchmark claim:
   strategy comparisons.
 - Approved baseline/regression thresholds.
 
-The 396/604 dataset conflict and uncapped full-corpus resource cost are stop
-conditions. No benchmark quality/latency numbers are claimed.
+The 396/604 unreferenced partition conflict and uncapped full-corpus resource
+cost are stop conditions. No benchmark quality/latency numbers are claimed.
 
 ## 6. Safety
 
@@ -131,8 +137,9 @@ conditions. No benchmark quality/latency numbers are claimed.
 
 ## 8. Next acceptance
 
-1. Approve or provide the frozen 400/600 corpus reference (or explicitly accept
-   396/604 as the corrected official snapshot identity).
+1. Provide the authoritative 400/600 positive/hard-negative ID partition, or
+   explicitly approve a different profile derived and documented from the
+   pinned release. Do not silently relabel the 604 unreferenced IDs.
 2. Approve resource budget for pilot ingestion and LLM-backed evaluation.
 3. Implement/run real Part I ingestion and readiness gate.
 4. Build the full observation adapter and quality/negative/performance runners.

@@ -44,7 +44,13 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "counts": adapter.counts(),
                         "profiles": adapter.supported_profiles(),
-                        "positive_documents": len(adapter.positive_document_ids()),
+                        "qrel_referenced_documents": len(
+                            adapter.qrel_referenced_document_ids()
+                        ),
+                        "unreferenced_documents": len(
+                            adapter.document_partition().unreferenced_ids
+                        ),
+                        "verified_hard_negative_documents": adapter.document_partition().verified_hard_negative_ids,
                     },
                     sort_keys=True,
                 )
