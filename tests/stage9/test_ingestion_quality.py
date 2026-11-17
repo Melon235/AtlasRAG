@@ -124,3 +124,76 @@ async def test_observation_sink_records_generic_events(tmp_path: Path) -> None:
     lines = (tmp_path / "trace.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     assert "RETRIEVAL_REQUEST" in lines[0] and "FINAL_RESPONSE" in lines[1]
+
+
+@pytest.mark.asyncio
+async def test_ingestion_failure_accounting_and_source_set(tmp_path: Path) -> None:
+    (tmp_path / "a.md").write_text("a", encoding="utf-8")
+
+    class Broken:
+        async def build(self, request: BuildRequest) -> BuildResult:
+            raise RuntimeError("boom")
+
+    summary = await BenchmarkIngestionRunner(Broken()).ingest(
+        tmp_path, ("a.md",), expected_pipeline_fingerprint="a" * 64
+    )
+    assert not summary.complete
+    assert summary.records[0].outcome == "TECHNICAL_FAILURE"
+    assert summary.records[0].failure_reason == "RuntimeError"
+    mismatch = await BenchmarkIngestionRunner(FakeBuild()).ingest(
+        tmp_path, ("a.md", "missing.md"), expected_pipeline_fingerprint="a" * 64
+    )
+    assert mismatch.failure_reasons == ("SOURCE_SET_MISMATCH",)
+
+
+@pytest.mark.asyncio
+async def test_readiness_collector_uses_real_records_and_pipeline() -> None:
+    from types import SimpleNamespace
+    from typing import Any, cast
+
+    from stage4.candidate_fakes import config
+
+    from atlasrag.config.fingerprint import pipeline_fingerprint
+    from atlasrag.services.sync.models import ServingSafety, SyncOutcome, SyncResult
+    from benchmarks.ingestion.readiness_collector import collect_production_readiness
+
+    class Documents:
+        async def list(self) -> list[SimpleNamespace]:
+            return await _documents()
+
+    class Unit:
+        documents = Documents()
+
+        async def __aenter__(self) -> Unit:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    async def _documents() -> list[SimpleNamespace]:
+        return [
+            SimpleNamespace(relative_source_path="a.md", current_revision_id="rev"),
+        ]
+
+    runtime = config()
+    result = SyncResult(
+        outcome=SyncOutcome.SUCCESS,
+        serving_safety=ServingSafety.SAFE_TO_SERVE,
+        verified_documents=1,
+    )
+    evidence = await collect_production_readiness(
+        cast(Any, lambda: Unit()),
+        runtime=runtime,
+        sync_result=result,
+        expected_source_paths=("a.md",),
+        expected_pipeline_fingerprint=pipeline_fingerprint(runtime),
+    )
+    assert evidence.canonical_lineage_verified
+    assert evidence.pipeline_fingerprint_compatible
+    assert evidence.serving_safety == "SAFE_TO_SERVE"
+    gate = CorpusReadinessGate().assess(
+        type("S", (), {"complete": True, "failure_reasons": (), "records": (1,)})(),
+        evidence,
+        expected_source_paths=("a.md",),
+    )
+    assert gate.status is ReadinessStatus.READY

@@ -73,12 +73,24 @@ started.
 - Benchmark-owned ingestion orchestration over an injected production
   `BuildRequest -> BuildResult` backend; it preserves Part I parsing/persistence/
   indexing/publication by delegation and never inserts gold/vectors directly.
+  It validates the exact on-disk source set, accounts for per-document
+  `READY`/failure/technical-failure outcomes, and never retries silently.
+- A production composition helper creates the real `DocumentBuildRunner` with
+  caller-supplied initialized Part I resources; the actual synthetic test
+  executes the real Stage 5 sync/build entrypoint against PostgreSQL/Milvus.
 - Corpus Readiness Gate requiring exact source sets, complete ingestion,
-  canonical lineage, Milvus exact-set verification, and Stage 5
-  `SAFE_TO_SERVE`; no real corpus run has been accepted.
+  canonical lineage, Milvus exact-set verification, Stage 5 `SAFE_TO_SERVE`,
+  and compatible pipeline fingerprint. A production readiness collector reads
+  actual PostgreSQL document records and the real Stage 5 result instead of
+  accepting caller-supplied booleans.
 - Benchmark observation event sink for request/final/failure events. Dense/BM25/
   fusion/rerank/evidence/sufficiency/routing production trace hooks are **not**
   implemented; the current production source exposes no such generic hooks.
+- Synthetic real-storage integration (`SYNTHETIC_INTEGRATION`, not Open
+  RAGBench): real PostgreSQL/Milvus/Redis, real Stage 5 sync/readiness, real
+  local retrieval and `retrieval_graph`, disabled Query Cache with zero GET/SET,
+  fake Web with zero calls, fake generation, gold alignment, deterministic
+  metrics, and case/trace artifacts. PASS.
 - Append-only case ledger, validity assessment, run manifest, run comparison
   validation with declared-factor checks.
 - Minimal report renderer and non-interactive CLI:
@@ -87,8 +99,8 @@ started.
 ## 4. Verification
 
 - Baseline before Stage 9 implementation: 3226 passed / 106 deselected.
-- `make verify`: **3252 passed, 106 deselected**.
-- `make test-stage9`: **26 passed**.
+- `make verify`: **3254 passed, 107 deselected**.
+- `make test-stage9`: **28 passed**.
 - Local metadata snapshot (not committed; CC-BY-NC-4.0) was checksum-validated
   locally. CLI output:
   - revision `63f6b052ff83508b08e242db42263ee708815c26`
@@ -98,8 +110,35 @@ started.
   - This local snapshot is not independently reproducible from the repository
     without downloading the licensed data.
 - `make architecture-check`, Ruff, mypy, git diff checks: PASS.
+- Synthetic isolated storage integration: **1 passed** (real PostgreSQL/Milvus/
+  Redis; labeled SYNTHETIC_INTEGRATION).
 - Stage 9 CI job added for synthetic harness tests; no dataset/API/model download
   in ordinary CI.
+
+## 4A. Resource/cost preflight proposal
+
+No Open RAGBench ingestion or paid evaluation has started. A bounded pilot would
+be selected deterministically from the pinned metadata: the first five sorted
+qrel-positive document/query pairs and five sorted unreferenced documents, with
+the associated supported queries only; this is a pilot, never a scorecard.
+
+Planning caps to require approval before execution:
+
+```text
+documents: <= 10 PDFs
+queries:   <= 10 supported queries
+DeepSeek:  <= 40 total calls (rewrite + generation + bounded review)
+tokens:    <= 100,000 input+output combined
+wall time: <= 2 hours
+storage:   measured after pilot, not assumed
+```
+
+Model/device proposal: existing pinned Qwen3-Embedding-0.6B, BGE reranker, and
+DeepSeek provider on the local RTX 3070 8GB profile; no challenger downloads.
+Estimated disk, VRAM, and provider cost must be measured from this pilot before
+any full-corpus or paid run. Isolated alternate host ports, dedicated
+PostgreSQL/Milvus/Redis identities, and benchmark-only directories are required.
+Full 1,000-PDF and 2,062-query execution is explicitly not approved.
 
 ## 5. Not completed / blocked
 

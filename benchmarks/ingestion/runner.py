@@ -19,8 +19,9 @@ class BuildBackend(Protocol):
 class IngestionRecord:
     relative_source_path: str
     outcome: str
-    document_id: str
-    revision_id: str
+    document_id: str | None = None
+    revision_id: str | None = None
+    failure_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,18 +49,43 @@ class BenchmarkIngestionRunner:
         if not expected or len(set(expected)) != len(expected):
             raise ValueError("expected source paths must be nonempty and unique")
         root = knowledge_directory.resolve()
+        actual = tuple(
+            sorted(
+                path.relative_to(root).as_posix()
+                for path in root.rglob("*")
+                if path.is_file()
+            )
+        )
+        if actual != expected:
+            return IngestionSummary(
+                records=(),
+                expected_count=len(expected),
+                complete=False,
+                failure_reasons=("SOURCE_SET_MISMATCH",),
+            )
         reasons: list[str] = []
         records: list[IngestionRecord] = []
         for relative in expected:
             source = SourceFile.from_knowledge_directory(root, relative)
             if source.relative_source_path != relative:
                 raise ValueError("source path canonicalization mismatch")
-            result = await self._backend.build(
-                BuildRequest(
-                    source=source,
-                    expected_pipeline_fingerprint=expected_pipeline_fingerprint,
+            try:
+                result = await self._backend.build(
+                    BuildRequest(
+                        source=source,
+                        expected_pipeline_fingerprint=expected_pipeline_fingerprint,
+                    )
                 )
-            )
+            except Exception as error:
+                records.append(
+                    IngestionRecord(
+                        relative_source_path=relative,
+                        outcome="TECHNICAL_FAILURE",
+                        failure_reason=type(error).__name__,
+                    )
+                )
+                reasons.append(f"{relative}:TECHNICAL_FAILURE")
+                continue
             records.append(
                 IngestionRecord(
                     relative_source_path=relative,
