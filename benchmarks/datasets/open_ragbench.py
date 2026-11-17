@@ -86,6 +86,9 @@ class OpenRagBenchAdapter:
             raise DatasetAdapterError("pdf_urls.json is empty")
         if set(self._urls) != set(self.manifest.corpus_document_ids):
             raise DatasetAdapterError("pdf_urls/corpus identity mismatch")
+        referenced = {item.doc_id for item in self.qrels}
+        if not referenced <= set(self._urls):
+            raise DatasetAdapterError("qrel document is not in the corpus identity set")
         for doc_id, url in self._urls.items():
             if not isinstance(doc_id, str) or not doc_id.strip():
                 raise DatasetAdapterError("invalid corpus document identity")

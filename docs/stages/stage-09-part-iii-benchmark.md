@@ -61,15 +61,24 @@ started.
   relevance, deduplicated ranked identity, document-level collapsing.
 - Gold evidence alignment: document identity gate, deterministic token-overlap
   score, HIGH/MEDIUM/UNRESOLVED, one-to-many Parent/Table alignment, coverage.
-- Static physical-isolation checks: benchmark database/collection naming,
-  Redis DB not 0, production knowledge/artifact path overlap rejection, and port
-  availability helper. These are preflight checks only; actual database,
-  collection, Compose ownership, and no-concurrent-mutation checks are not yet
-  implemented or verified.
-- Quality-case adapter around an injected retrieval callable, with independent
-  benchmark sessions and no gold in production input. It is not yet wired to the
-  real `retrieval_graph`, Web/cache policy enforcement, or production trace
-  observation; tests use an injected fake callable.
+- Static physical-isolation checks plus PostgreSQL/Redis/Milvus identity probes:
+  benchmark database/collection naming, Redis DB not 0, production knowledge/
+  artifact overlap rejection, port availability, and live identity comparison
+  helpers. These are preflight checks only; Compose-volume ownership and
+  no-concurrent-mutation guarantees are not yet implemented or verified.
+- Quality-case/run adapters around an injected retrieval callable, independent
+  benchmark sessions, repetitions, and enforced Web/Query Cache/Parent Cache
+  OFF policy flags. They are not yet composed by a production wiring factory;
+  tests use an injected fake callable.
+- Benchmark-owned ingestion orchestration over an injected production
+  `BuildRequest -> BuildResult` backend; it preserves Part I parsing/persistence/
+  indexing/publication by delegation and never inserts gold/vectors directly.
+- Corpus Readiness Gate requiring exact source sets, complete ingestion,
+  canonical lineage, Milvus exact-set verification, and Stage 5
+  `SAFE_TO_SERVE`; no real corpus run has been accepted.
+- Benchmark observation event sink for request/final/failure events. Dense/BM25/
+  fusion/rerank/evidence/sufficiency/routing production trace hooks are **not**
+  implemented; the current production source exposes no such generic hooks.
 - Append-only case ledger, validity assessment, run manifest, run comparison
   validation with declared-factor checks.
 - Minimal report renderer and non-interactive CLI:
@@ -78,8 +87,8 @@ started.
 ## 4. Verification
 
 - Baseline before Stage 9 implementation: 3226 passed / 106 deselected.
-- `make verify`: **3244 passed, 106 deselected**.
-- `make test-stage9`: **18 passed**.
+- `make verify`: **3252 passed, 106 deselected**.
+- `make test-stage9`: **26 passed**.
 - Local metadata snapshot (not committed; CC-BY-NC-4.0) was checksum-validated
   locally. CLI output:
   - revision `63f6b052ff83508b08e242db42263ee708815c26`

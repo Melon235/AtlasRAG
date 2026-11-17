@@ -47,3 +47,23 @@ def test_production_paths_and_redis_zero_rejected(tmp_path: Path) -> None:
         validate_isolation(
             config(tmp_path, milvus_collection="atlas_chunks"), production_markers=()
         )
+
+
+@pytest.mark.asyncio
+async def test_live_identity_mismatch_rejected(tmp_path: Path) -> None:
+    from benchmarks.environment.isolation import verify_live_resource_identity
+
+    cfg = config(tmp_path)
+    await verify_live_resource_identity(
+        cfg,
+        postgres_database=cfg.postgres_database,
+        redis_database=cfg.redis_database,
+        milvus_collection=cfg.milvus_collection,
+    )
+    with pytest.raises(IsolationError, match="PostgreSQL"):
+        await verify_live_resource_identity(
+            cfg,
+            postgres_database="production",
+            redis_database=cfg.redis_database,
+            milvus_collection=cfg.milvus_collection,
+        )

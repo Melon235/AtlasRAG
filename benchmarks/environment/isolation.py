@@ -67,3 +67,19 @@ def validate_isolation(
             raise IsolationError("benchmark artifact root overlaps production")
     if not config.owned_compose_project.casefold().startswith("atlasrag-stage9"):
         raise IsolationError("Compose project is not Stage 9 owned")
+
+
+async def verify_live_resource_identity(
+    config: IsolationConfig,
+    *,
+    postgres_database: str,
+    redis_database: int,
+    milvus_collection: str,
+) -> None:
+    """Compare live probe values with the declared isolated resources."""
+    if postgres_database != config.postgres_database:
+        raise IsolationError("live PostgreSQL database identity mismatch")
+    if redis_database != config.redis_database:
+        raise IsolationError("live Redis database identity mismatch")
+    if milvus_collection != config.milvus_collection:
+        raise IsolationError("live Milvus collection identity mismatch")

@@ -187,3 +187,56 @@ def test_four_unreferenced_documents_cannot_be_certified_hard_negatives(
     assert len(partition.unreferenced_ids) == 4
     assert partition.verified_hard_negative_ids is None
     assert adapter.negative_only_profile()["status"] == "BLOCKED_UNVERIFIED_PARTITION"
+
+
+def test_in_directory_symlink_rejected_before_resolution(tmp_path: Path) -> None:
+    snapshot(tmp_path)
+    target = tmp_path / "queries.json"
+    link = tmp_path / "linked-queries.json"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlink creation unsupported")
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    manifest["files"].append(
+        {
+            "relative_path": "linked-queries.json",
+            "sha256": "0" * 64,
+            "size_bytes": 0,
+        }
+    )
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(SnapshotError, match="symlink"):
+        validate_snapshot(tmp_path)
+
+
+def test_duplicate_corpus_identity_and_qrel_membership_rejected(tmp_path: Path) -> None:
+    snapshot(tmp_path)
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    manifest["corpus_document_ids"] = ["doc-a", "doc-a", "doc-b", "doc-c", "doc-d"]
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(SnapshotError, match="invalid snapshot manifest"):
+        validate_snapshot(tmp_path)
+    # restore and remove a qrel-referenced corpus identity
+    snapshot(tmp_path)
+    qrels = json.loads((tmp_path / "qrels.json").read_text(encoding="utf-8"))
+    qrels["q1"]["doc_id"] = "not-in-corpus"
+    (tmp_path / "qrels.json").write_text(json.dumps(qrels), encoding="utf-8")
+    # rebuild checksums after the intentional mutation, then test semantic rejection
+    from benchmarks.snapshots.manifest import build_manifest, write_manifest
+
+    corpus = json.loads((tmp_path / "pdf_urls.json").read_text(encoding="utf-8"))
+    manifest_obj = build_manifest(
+        tmp_path,
+        dataset_revision="rev-1",
+        license="CC-BY-NC-4.0",
+        source_url="fixture",
+        relative_files=("queries.json", "qrels.json", "answers.json", "pdf_urls.json"),
+        total_documents=4,
+        total_queries=3,
+        supported_queries=2,
+        corpus_document_ids=tuple(corpus),
+    )
+    write_manifest(tmp_path, manifest_obj)
+    with pytest.raises(DatasetAdapterError, match="qrel document"):
+        OpenRagBenchAdapter(tmp_path)

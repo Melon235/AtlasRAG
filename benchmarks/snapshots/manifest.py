@@ -24,7 +24,13 @@ def _safe_path(root: Path, relative_path: str) -> Path:
     pure = PurePosixPath(relative_path)
     if pure.is_absolute() or ".." in pure.parts or not pure.parts:
         raise SnapshotError("unsafe snapshot path")
-    candidate = (root / pure).resolve()
+    # Inspect the raw path components before resolve() can follow a link.
+    candidate = root
+    for part in pure.parts:
+        candidate = candidate / part
+        if candidate.is_symlink():
+            raise SnapshotError("symlink not allowed in snapshot path")
+    candidate = candidate.resolve()
     try:
         candidate.relative_to(root.resolve())
     except ValueError as error:

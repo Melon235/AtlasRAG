@@ -147,3 +147,10 @@ class SnapshotManifest(_Frozen):
         if len(paths) != len(set(paths)):
             raise ValueError("duplicate snapshot file path")
         return value
+
+    @field_validator("corpus_document_ids")
+    @classmethod
+    def _unique_corpus_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate corpus document identity")
+        return value
