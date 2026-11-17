@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from hashlib import sha256
 from typing import Any, Protocol
 
 from atlasrag.config.fingerprint import pipeline_fingerprint
 from atlasrag.config.models import RuntimeConfig
 from atlasrag.domain.ingestion.source import derive_document_id, derive_revision_id
 from atlasrag.repositories.postgres.records import IngestionStatus, StoredDocument
-from atlasrag.services.sync.models import ServingSafety, SyncResult
+from atlasrag.services.sync.models import GlobalSafetyResult, ServingSafety
 from benchmarks.ingestion.readiness import ProductionReadinessEvidence
 
 
@@ -29,13 +30,14 @@ async def collect_production_readiness(
     uow_factory: Callable[[], ReadinessUnit],
     *,
     runtime: RuntimeConfig,
-    sync_result: SyncResult,
+    verifier: Callable[[], Awaitable[GlobalSafetyResult]],
     expected_source_paths: tuple[str, ...],
     expected_pipeline_fingerprint: str,
 ) -> ProductionReadinessEvidence:
     expected = tuple(sorted(expected_source_paths))
     if not expected or len(set(expected)) != len(expected):
         raise ValueError("expected source paths must be nonempty and unique")
+    verification = await verifier()
     published: list[str] = []
     lineage_ok = True
     async with uow_factory() as unit:
@@ -64,15 +66,24 @@ async def collect_production_readiness(
         stored.current_pipeline_fingerprint == expected_pipeline_fingerprint
         for stored in by_path.values()
     )
-    stage5_safe = sync_result.serving_safety is ServingSafety.SAFE_TO_SERVE
+    stage5_safe = verification.serving_safety is ServingSafety.SAFE_TO_SERVE
     stage5_consistent = (
-        sync_result.verified_documents == len(expected)
-        and sync_result.failed_builds == 0
-        and sync_result.technical_build_failures == 0
-        and sync_result.source_mutated_builds == 0
-        and sync_result.failed_deletions == 0
-        and sync_result.unsafe_reasons == ()
+        verification.verified_documents == len(expected)
+        and not verification.unsafe_reasons
+        and verification.required_deletion_failures == 0
     )
+    verification_id = sha256(
+        repr(
+            (
+                expected,
+                expected_pipeline_fingerprint,
+                verification.serving_safety.value,
+                verification.verified_documents,
+                verification.verified_records,
+                verification.unsafe_reasons,
+            )
+        ).encode("utf-8")
+    ).hexdigest()
     return ProductionReadinessEvidence(
         canonical_lineage_verified=lineage_ok,
         milvus_exact_set_verified=stage5_safe and stage5_consistent,
@@ -81,7 +92,8 @@ async def collect_production_readiness(
         ),
         published_source_paths=tuple(sorted(published)),
         pipeline_fingerprint_compatible=pipeline_compatible,
-        stage5_verified_documents=sync_result.verified_documents,
+        stage5_verified_documents=verification.verified_documents,
+        verification_id=verification_id,
     )
 
 

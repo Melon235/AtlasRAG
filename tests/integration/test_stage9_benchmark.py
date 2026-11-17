@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,10 +15,11 @@ from atlasrag.application.answer import AnswerRunner
 from atlasrag.application.local_evidence import LocalEvidenceRunner
 from atlasrag.application.rag_core import RagCoreRunner
 from atlasrag.application.retrieval import RetrievalRunner
-from atlasrag.config.fingerprint import pipeline_fingerprint
+from atlasrag.config.fingerprint import pipeline_fingerprint, runtime_fingerprint
 from atlasrag.domain.answer import GenerationResult
 from atlasrag.domain.enums import LocalEvidenceStatus, WebExecutionStatus
 from atlasrag.domain.evidence import LocalEvidenceResult
+from atlasrag.domain.observation import ObservationStage, ProductionObservation
 from atlasrag.domain.requests import LocalRetrievalRequest, UserTurnRequest
 from atlasrag.domain.web import WebEvidenceResult
 from atlasrag.graphs.rag_core.subgraph import RagCoreServices
@@ -29,6 +31,12 @@ from atlasrag.services.rag_core.boundary import AnswerInputBuilder
 from atlasrag.services.rag_core.completion import CompletionAssessor
 from atlasrag.services.rag_core.query import QueryConstructionResult
 from atlasrag.services.rag_core.routing import CorrectiveRoutingService
+from atlasrag.services.sync.models import (
+    BuildExecutionSummary,
+    DeletionSummary,
+    GlobalSafetyResult,
+)
+from atlasrag.services.sync.verification import GlobalKnowledgeVerificationService
 from benchmarks.alignment.gold import align_gold_section
 from benchmarks.contracts.models import (
     BenchmarkQuery,
@@ -37,14 +45,14 @@ from benchmarks.contracts.models import (
     Modality,
     RankedUnit,
 )
-from benchmarks.ingestion.accounting import ingestion_summary_from_sync_result
 from benchmarks.ingestion.readiness import CorpusReadinessGate, ReadinessStatus
 from benchmarks.ingestion.readiness_collector import collect_production_readiness
+from benchmarks.ingestion.runner import BenchmarkIngestionRunner
 from benchmarks.metrics.retrieval import evaluate_relaxed_document
 from benchmarks.observation.events import JsonlObservationSink
 from benchmarks.runners.quality_run import QualityPolicies, run_quality
-from integration.stage5_helpers import application as sync_application
-from integration.stage5_helpers import request as sync_request
+from integration.stage4_helpers import resources as build_resources
+from integration.stage4_helpers import runner as build_runner
 from integration.stage5_helpers import runtime_config
 from integration.test_milvus import isolated_milvus as isolated_milvus
 
@@ -73,6 +81,14 @@ class FakeWeb:
     async def run(self, request: object) -> WebEvidenceResult:
         self.calls += 1
         return WebEvidenceResult(execution_status=WebExecutionStatus.EMPTY, evidence=())
+
+
+class CaptureObserver:
+    def __init__(self) -> None:
+        self.events: list[ProductionObservation] = []
+
+    def observe(self, event: ProductionObservation) -> None:
+        self.events.append(event)
 
 
 class CapturingLocal:
@@ -118,19 +134,33 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
 ) -> None:
     (tmp_path / "guide.md").write_text(MARKDOWN, encoding="utf-8")
     runtime = runtime_config()
-    app = sync_application(
-        postgres_uow_factory, postgres_pool, isolated_milvus.provider, tmp_path
+    index = isolated_milvus.provider
+    await index.initialize()
+    bundle = build_resources(postgres_uow_factory, index)
+    backend = build_runner(bundle, postgres_pool)
+    ingestion = await BenchmarkIngestionRunner(backend).ingest(
+        tmp_path,
+        ("guide.md",),
+        expected_pipeline_fingerprint=pipeline_fingerprint(runtime),
     )
-    sync_result = await app.run(sync_request(tmp_path))
-    assert sync_result.serving_safety.value == "SAFE_TO_SERVE"
+    assert ingestion.complete
+    verification_service = GlobalKnowledgeVerificationService(
+        postgres_uow_factory, index, runtime
+    )
+
+    async def fresh_verification() -> GlobalSafetyResult:
+        return await verification_service.verify(
+            deletion_summary=DeletionSummary(),
+            build_summary=BuildExecutionSummary(),
+        )
+
     evidence = await collect_production_readiness(
         postgres_uow_factory,
         runtime=runtime,
-        sync_result=sync_result,
+        verifier=fresh_verification,
         expected_source_paths=("guide.md",),
         expected_pipeline_fingerprint=pipeline_fingerprint(runtime),
     )
-    ingestion = ingestion_summary_from_sync_result(sync_result, ("guide.md",))
     readiness = CorpusReadinessGate().assess(
         ingestion, evidence, expected_source_paths=("guide.md",)
     )
@@ -139,6 +169,8 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
     from integration.test_stage6_local_evidence import services as local_services
 
     local_bundle, _, _ = local_services(postgres_uow_factory, isolated_milvus.provider)
+    capture = CaptureObserver()
+    local_bundle = replace(local_bundle, observer=capture)
     local = CapturingLocal(LocalEvidenceRunner(local_bundle))
 
     generation = FakeGeneration()
@@ -153,6 +185,7 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
             answer_input=AnswerInputBuilder(),
             answer=answer,
             completion=CompletionAssessor(),
+            observer=capture,
         )
     )
     redis_client = redis.from_url(
@@ -162,7 +195,7 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
     cache = SessionQueryCache(
         redis=cast(Any, provider),
         uow_factory=postgres_uow_factory,
-        runtime_fingerprint=pipeline_fingerprint(runtime),
+        runtime_fingerprint=runtime_fingerprint(runtime),
         ttl_seconds=60,
         policy=QueryCachePolicy(enabled=False),
         clock=__import__("datetime").datetime.now(__import__("datetime").UTC),
@@ -191,11 +224,33 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
 
     assert local.last is not None
     assert local.last.evidence_status is LocalEvidenceStatus.SUFFICIENT
+    assert local.last is not None
     selected = local.last.selected_evidence[0]
-    unit = RankedUnit(
-        identity=selected.context_id, document_id=selected.document_id, rank=1
+    reranker_event = next(
+        event for event in capture.events if event.stage is ObservationStage.RERANKER
     )
-    metrics = evaluate_relaxed_document([unit], {selected.document_id: 1}, k=1)
+    ranked = [
+        RankedUnit(
+            identity=item.identity,
+            document_id=item.document_id or "",
+            rank=item.rank,
+            score=item.score,
+        )
+        for item in reranker_event.candidates
+        if item.document_id
+    ]
+    metrics = evaluate_relaxed_document(ranked, {selected.document_id: 1}, k=5)
+    observed_stages = {event.stage for event in capture.events}
+    assert {
+        ObservationStage.DENSE,
+        ObservationStage.BM25,
+        ObservationStage.FUSION,
+        ObservationStage.RERANKER,
+        ObservationStage.EVIDENCE,
+        ObservationStage.SUFFICIENCY,
+        ObservationStage.ROUTING,
+        ObservationStage.ANSWER,
+    } <= observed_stages
     gold = GoldSection(
         gold_section_id="s1",
         doc_id=selected.document_id,
@@ -220,10 +275,11 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
         "metrics": {"hit@1": metrics.hit, "recall@1": metrics.recall},
         "ranked_units": [
             {
-                "identity": unit.identity,
-                "document_id": unit.document_id,
-                "rank": unit.rank,
+                "identity": item.identity,
+                "document_id": item.document_id,
+                "rank": item.rank,
             }
+            for item in ranked
         ],
         "gold_documents": [selected.document_id],
         "alignment": alignment.model_dump(mode="json"),
@@ -233,9 +289,9 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
         json.dumps(artifact, indent=2), encoding="utf-8"
     )
     replay = json.loads((tmp_path / "synthetic" / "cases.json").read_text())
-    replay_unit = RankedUnit(**replay["ranked_units"][0])
+    replay_units = [RankedUnit(**item) for item in replay["ranked_units"]]
     replay_metrics = evaluate_relaxed_document(
-        [replay_unit], {replay["gold_documents"][0]: 1}, k=1
+        replay_units, {replay["gold_documents"][0]: 1}, k=5
     )
     assert replay_metrics.hit == metrics.hit
     await redis_client.aclose()

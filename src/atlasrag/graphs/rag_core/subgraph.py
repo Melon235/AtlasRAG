@@ -12,6 +12,12 @@ from atlasrag.application.answer import AnswerRunner
 from atlasrag.application.local_evidence import LocalEvidenceRunner
 from atlasrag.application.web_evidence import WebEvidenceRunner
 from atlasrag.domain.enums import AnswerExecutionOutcome
+from atlasrag.domain.observation import (
+    NULL_OBSERVER,
+    ObservationStage,
+    ProductionObservation,
+    ProductionObserver,
+)
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.domain.results import FinalResponse, RagCoreResult
 from atlasrag.domain.web import WebEvidenceRequest
@@ -36,6 +42,7 @@ class RagCoreServices:
     answer_input: AnswerInputBuilder
     answer: AnswerRunner
     completion: CompletionAssessor
+    observer: ProductionObserver = NULL_OBSERVER
 
 
 def build_rag_core_subgraph(
@@ -60,7 +67,19 @@ def build_rag_core_subgraph(
         }
 
     async def route_local_evidence(state: RagCoreState) -> dict[str, object]:
-        # The conditional edge owns the decision; keep this node a thin marker.
+        decision = services.routing.decide(
+            base=state["base_local_request"],
+            current=state["current_local_request"],
+            result=state["local_result"],
+            attempt_index=state["local_attempt_index"],
+        )
+        services.observer.observe(
+            ProductionObservation(
+                stage=ObservationStage.ROUTING,
+                status=decision.action.value,
+                degraded=state["local_result"].execution_status.value != "OK",
+            )
+        )
         return {}
 
     def after_route(state: RagCoreState) -> str:
@@ -108,6 +127,16 @@ def build_rag_core_subgraph(
 
     async def answer(state: RagCoreState) -> dict[str, object]:
         final_response, outcome = await services.answer.run(state["answer_input"])
+        services.observer.observe(
+            ProductionObservation(
+                stage=ObservationStage.ANSWER,
+                status=outcome.value,
+                selected_identities=tuple(
+                    citation.citation_id for citation in final_response.citations
+                ),
+                degraded=outcome is AnswerExecutionOutcome.SAFE_FAILURE,
+            )
+        )
         return {
             "final_response": final_response,
             "answer_outcome": outcome,

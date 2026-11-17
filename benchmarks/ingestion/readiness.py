@@ -22,6 +22,7 @@ class ProductionReadinessEvidence:
     published_source_paths: tuple[str, ...]
     pipeline_fingerprint_compatible: bool
     stage5_verified_documents: int
+    verification_id: str
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,8 @@ class CorpusReadinessGate:
             reasons.append("PIPELINE_FINGERPRINT_MISMATCH")
         if evidence.stage5_verified_documents != len(expected):
             reasons.append("STAGE5_CORPUS_COUNT_MISMATCH")
+        if not evidence.verification_id:
+            reasons.append("STAGE5_VERIFICATION_UNBOUND")
         status = (
             ReadinessStatus.READY
             if not reasons

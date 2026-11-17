@@ -84,11 +84,16 @@ started.
   validates each expected document's READY state, current revision identity,
   current content/pipeline fingerprints, and exact source set, and requires the
   real Stage 5 `verified_documents` count to match the expected corpus.
-- Benchmark observation event sink for request/final/failure events. Dense/BM25/
-  fusion/rerank/evidence/sufficiency/routing production trace hooks are **not**
-  implemented; the current production source exposes no such generic hooks.
-  A forced Web-fallback regression exercises the disabled Web boundary and
+- Optional generic production observer boundary with a no-op default:
+  Dense/BM25 candidate identities/ranks/scores, RRF fusion ordering, reranker
+  ordering, selected Parent/Table identities, sufficiency status, corrective
+  routing, answer outcome/citations, latency and degradation. Production events
+  contain no benchmark IDs, qrels, gold labels, or reference answers.
+- A forced Web-fallback regression exercises the disabled Web boundary and
   disabled Query Cache with zero external HTTP and zero Redis cache calls.
+- Synthetic integration derives relaxed-document metrics from captured reranker
+  observations, stores ranked units in the artifact, and replays metrics from
+  the artifact without rerunning generation.
 - Synthetic real-storage integration (`SYNTHETIC_INTEGRATION`, not Open
   RAGBench): real PostgreSQL/Milvus/Redis, real Stage 5 sync/readiness, real
   local retrieval and `retrieval_graph`, disabled Query Cache with zero GET/SET,
