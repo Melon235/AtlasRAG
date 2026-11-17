@@ -123,11 +123,11 @@ cost are stop conditions. No benchmark quality/latency numbers are claimed.
 
 ## 7. Publication and CI
 
-- Implementation HEAD: `a0b42351d3649d78b46afaa494e0cccbdc6f3c91`
-- Push CI `43872167757`: PASS
-- Push Integration `43872167780`: PASS
-- PR CI `43872177961`: PASS
-- PR Integration `43872177950`: PASS
+- Implementation HEAD: `36d1f0f45481a05ef2d6a8711ba21fd3ff29257e`
+- Push CI `44069058171`: PASS
+- Push Integration `44069058185`: PASS
+- PR CI `44069065725`: PASS
+- PR Integration `44069065746`: PASS
 - PR: open / unmerged.
 - This report is a documentation-only successor; its final HEAD checks are
   recorded in the PR/final delivery.
