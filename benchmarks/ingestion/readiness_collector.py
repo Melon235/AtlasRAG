@@ -7,6 +7,8 @@ from typing import Any, Protocol
 
 from atlasrag.config.fingerprint import pipeline_fingerprint
 from atlasrag.config.models import RuntimeConfig
+from atlasrag.domain.ingestion.source import derive_document_id, derive_revision_id
+from atlasrag.repositories.postgres.records import IngestionStatus, StoredDocument
 from atlasrag.services.sync.models import ServingSafety, SyncResult
 from benchmarks.ingestion.readiness import ProductionReadinessEvidence
 
@@ -32,32 +34,83 @@ async def collect_production_readiness(
     expected_pipeline_fingerprint: str,
 ) -> ProductionReadinessEvidence:
     expected = tuple(sorted(expected_source_paths))
+    if not expected or len(set(expected)) != len(expected):
+        raise ValueError("expected source paths must be nonempty and unique")
     published: list[str] = []
     lineage_ok = True
     async with uow_factory() as unit:
         documents = await unit.documents.list()
+        by_path = {stored.relative_source_path: stored for stored in documents}
+        if set(by_path) != set(expected):
+            lineage_ok = False
         for stored in documents:
-            if stored.current_revision_id is None:
+            if stored.current_revision_id is not None:
+                published.append(stored.relative_source_path)
+            if stored.relative_source_path not in set(expected):
+                lineage_ok = False
+        for relative in expected:
+            stored = by_path.get(relative)
+            if stored is None:
                 lineage_ok = False
                 continue
-            published.append(stored.relative_source_path)
-    canonical = lineage_ok and tuple(sorted(published)) == expected
-    milvus_exact = sync_result.serving_safety is ServingSafety.SAFE_TO_SERVE
-    serving = (
-        "SAFE_TO_SERVE"
-        if sync_result.serving_safety is ServingSafety.SAFE_TO_SERVE
-        else "UNSAFE_TO_SERVE"
+            if not _canonical_current(
+                stored,
+                expected_pipeline_fingerprint=expected_pipeline_fingerprint,
+            ):
+                lineage_ok = False
+    pipeline_compatible = pipeline_fingerprint(
+        runtime
+    ) == expected_pipeline_fingerprint and all(
+        stored.current_pipeline_fingerprint == expected_pipeline_fingerprint
+        for stored in by_path.values()
     )
-    if (
-        sync_result.serving_safety is ServingSafety.SAFE_TO_SERVE
-        and pipeline_fingerprint(runtime) != sync_result.unsafe_reasons
-        if False
-        else False
-    ):
-        raise AssertionError
+    stage5_safe = sync_result.serving_safety is ServingSafety.SAFE_TO_SERVE
+    stage5_consistent = (
+        sync_result.verified_documents == len(expected)
+        and sync_result.failed_builds == 0
+        and sync_result.technical_build_failures == 0
+        and sync_result.source_mutated_builds == 0
+        and sync_result.failed_deletions == 0
+        and sync_result.unsafe_reasons == ()
+    )
     return ProductionReadinessEvidence(
-        canonical_lineage_verified=canonical,
-        milvus_exact_set_verified=milvus_exact,
-        serving_safety=serving,
+        canonical_lineage_verified=lineage_ok,
+        milvus_exact_set_verified=stage5_safe and stage5_consistent,
+        serving_safety=(
+            "SAFE_TO_SERVE" if stage5_safe and stage5_consistent else "UNSAFE_TO_SERVE"
+        ),
         published_source_paths=tuple(sorted(published)),
+        pipeline_fingerprint_compatible=pipeline_compatible,
+        stage5_verified_documents=sync_result.verified_documents,
+    )
+
+
+def _canonical_current(
+    stored: StoredDocument, *, expected_pipeline_fingerprint: str
+) -> bool:
+    if stored.current_revision_id is None:
+        return False
+    if (
+        stored.current_content_hash is None
+        or stored.current_pipeline_fingerprint is None
+    ):
+        return False
+    if stored.current_pipeline_fingerprint != expected_pipeline_fingerprint:
+        return False
+    if stored.building_revision_id is not None:
+        return False
+    if stored.ingestion_status is not IngestionStatus.READY:
+        return False
+    if stored.failed_stage is not None:
+        return False
+    document_id = derive_document_id(stored.relative_source_path)
+    if stored.document_id != document_id:
+        return False
+    return (
+        derive_revision_id(
+            document_id,
+            stored.current_content_hash,
+            stored.current_pipeline_fingerprint,
+        )
+        == stored.current_revision_id
     )

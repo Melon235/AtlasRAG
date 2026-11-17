@@ -14,7 +14,11 @@ from benchmarks.ingestion.readiness import (
     ProductionReadinessEvidence,
     ReadinessStatus,
 )
-from benchmarks.ingestion.runner import BenchmarkIngestionRunner
+from benchmarks.ingestion.runner import (
+    BenchmarkIngestionRunner,
+    IngestionRecord,
+    IngestionSummary,
+)
 from benchmarks.runners.quality_run import QualityPolicies, run_quality
 
 
@@ -52,6 +56,8 @@ async def test_ingestion_exact_set_and_readiness_gate(tmp_path: Path) -> None:
         milvus_exact_set_verified=True,
         serving_safety="SAFE_TO_SERVE",
         published_source_paths=("a.md", "b.md"),
+        pipeline_fingerprint_compatible=True,
+        stage5_verified_documents=2,
     )
     gate = CorpusReadinessGate()
     ready = gate.assess(summary, evidence, expected_source_paths=("a.md", "b.md"))
@@ -63,6 +69,8 @@ async def test_ingestion_exact_set_and_readiness_gate(tmp_path: Path) -> None:
             milvus_exact_set_verified=False,
             serving_safety="UNSAFE_TO_SERVE",
             published_source_paths=("a.md",),
+            pipeline_fingerprint_compatible=True,
+            stage5_verified_documents=2,
         ),
         expected_source_paths=("a.md", "b.md"),
     )
@@ -154,12 +162,32 @@ async def test_readiness_collector_uses_real_records_and_pipeline() -> None:
     from stage4.candidate_fakes import config
 
     from atlasrag.config.fingerprint import pipeline_fingerprint
+    from atlasrag.domain.ingestion.source import derive_document_id, derive_revision_id
+    from atlasrag.repositories.postgres.records import IngestionStatus
     from atlasrag.services.sync.models import ServingSafety, SyncOutcome, SyncResult
     from benchmarks.ingestion.readiness_collector import collect_production_readiness
 
+    runtime = config()
+    pipeline = pipeline_fingerprint(runtime)
+    document_id = derive_document_id("a.md")
+    content_hash = "a" * 64
+
     class Documents:
         async def list(self) -> list[SimpleNamespace]:
-            return await _documents()
+            return [
+                SimpleNamespace(
+                    relative_source_path="a.md",
+                    document_id=document_id,
+                    current_revision_id=derive_revision_id(
+                        document_id, content_hash, pipeline
+                    ),
+                    current_content_hash=content_hash,
+                    current_pipeline_fingerprint=pipeline,
+                    building_revision_id=None,
+                    ingestion_status=IngestionStatus.READY,
+                    failed_stage=None,
+                ),
+            ]
 
     class Unit:
         documents = Documents()
@@ -170,15 +198,10 @@ async def test_readiness_collector_uses_real_records_and_pipeline() -> None:
         async def __aexit__(self, *args: object) -> None:
             return None
 
-    async def _documents() -> list[SimpleNamespace]:
-        return [
-            SimpleNamespace(relative_source_path="a.md", current_revision_id="rev"),
-        ]
-
-    runtime = config()
     result = SyncResult(
         outcome=SyncOutcome.SUCCESS,
         serving_safety=ServingSafety.SAFE_TO_SERVE,
+        checked_documents=1,
         verified_documents=1,
     )
     evidence = await collect_production_readiness(
@@ -186,14 +209,120 @@ async def test_readiness_collector_uses_real_records_and_pipeline() -> None:
         runtime=runtime,
         sync_result=result,
         expected_source_paths=("a.md",),
-        expected_pipeline_fingerprint=pipeline_fingerprint(runtime),
+        expected_pipeline_fingerprint=pipeline,
     )
     assert evidence.canonical_lineage_verified
     assert evidence.pipeline_fingerprint_compatible
     assert evidence.serving_safety == "SAFE_TO_SERVE"
+    assert evidence.stage5_verified_documents == 1
     gate = CorpusReadinessGate().assess(
-        type("S", (), {"complete": True, "failure_reasons": (), "records": (1,)})(),
+        IngestionSummary(
+            records=(IngestionRecord("a.md", "READY"),),
+            expected_count=1,
+            complete=True,
+            failure_reasons=(),
+        ),
         evidence,
         expected_source_paths=("a.md",),
     )
     assert gate.status is ReadinessStatus.READY
+
+
+@pytest.mark.asyncio
+async def test_readiness_negative_cases_and_accounting() -> None:
+    from types import SimpleNamespace
+    from typing import Any, cast
+
+    from stage4.candidate_fakes import config
+
+    from atlasrag.config.fingerprint import pipeline_fingerprint
+    from atlasrag.domain.ingestion.source import derive_document_id, derive_revision_id
+    from atlasrag.repositories.postgres.records import IngestionStatus
+    from atlasrag.services.sync.models import (
+        ServingSafety,
+        SyncOutcome,
+        SyncResult,
+    )
+    from benchmarks.ingestion.accounting import ingestion_summary_from_sync_result
+    from benchmarks.ingestion.readiness_collector import collect_production_readiness
+
+    runtime = config()
+    pipeline = pipeline_fingerprint(runtime)
+
+    def doc(
+        path: str, *, fingerprint: str = pipeline, content: str = "a" * 64
+    ) -> SimpleNamespace:
+        document_id = derive_document_id(path)
+        return SimpleNamespace(
+            relative_source_path=path,
+            document_id=document_id,
+            current_revision_id=derive_revision_id(document_id, content, fingerprint),
+            current_content_hash=content,
+            current_pipeline_fingerprint=fingerprint,
+            building_revision_id=None,
+            ingestion_status=IngestionStatus.READY,
+            failed_stage=None,
+        )
+
+    class Documents:
+        def __init__(self, docs: list[SimpleNamespace]) -> None:
+            self.docs = docs
+
+        async def list(self) -> list[SimpleNamespace]:
+            return self.docs
+
+    class Unit:
+        def __init__(self, docs: list[SimpleNamespace]) -> None:
+            self.documents = Documents(docs)
+
+        async def __aenter__(self) -> Unit:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    safe = SyncResult(
+        outcome=SyncOutcome.SUCCESS,
+        serving_safety=ServingSafety.SAFE_TO_SERVE,
+        checked_documents=1,
+        verified_documents=1,
+    )
+    for docs, expected, sync_result, reason in (
+        (
+            [doc("a.md", fingerprint="b" * 64)],
+            ("a.md",),
+            safe,
+            "PIPELINE_FINGERPRINT_MISMATCH",
+        ),
+        (
+            [doc("a.md"), doc("extra.md")],
+            ("a.md",),
+            safe,
+            "PUBLISHED_SOURCE_SET_MISMATCH",
+        ),
+        ([], ("a.md",), safe, "PUBLISHED_SOURCE_SET_MISMATCH"),
+        (
+            [doc("a.md")],
+            ("a.md",),
+            SyncResult(
+                outcome=SyncOutcome.SUCCESS,
+                serving_safety=ServingSafety.SAFE_TO_SERVE,
+                checked_documents=0,
+            ),
+            "STAGE5_CORPUS_COUNT_MISMATCH",
+        ),
+    ):
+        evidence = await collect_production_readiness(
+            cast(Any, lambda d=docs: Unit(d)),
+            runtime=runtime,
+            sync_result=sync_result,
+            expected_source_paths=expected,
+            expected_pipeline_fingerprint=pipeline,
+        )
+        gate = CorpusReadinessGate().assess(
+            ingestion_summary_from_sync_result(safe, expected),
+            evidence,
+            expected_source_paths=expected,
+        )
+        assert gate.status is not ReadinessStatus.READY
+        assert reason in gate.reasons, (reason, gate.reasons, evidence)

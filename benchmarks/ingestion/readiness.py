@@ -20,7 +20,8 @@ class ProductionReadinessEvidence:
     milvus_exact_set_verified: bool
     serving_safety: str
     published_source_paths: tuple[str, ...]
-    pipeline_fingerprint_compatible: bool = True
+    pipeline_fingerprint_compatible: bool
+    stage5_verified_documents: int
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,8 @@ class CorpusReadinessGate:
             reasons.append("STAGE5_NOT_SAFE_TO_SERVE")
         if not evidence.pipeline_fingerprint_compatible:
             reasons.append("PIPELINE_FINGERPRINT_MISMATCH")
+        if evidence.stage5_verified_documents != len(expected):
+            reasons.append("STAGE5_CORPUS_COUNT_MISMATCH")
         status = (
             ReadinessStatus.READY
             if not reasons

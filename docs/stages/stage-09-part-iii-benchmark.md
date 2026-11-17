@@ -80,12 +80,15 @@ started.
   executes the real Stage 5 sync/build entrypoint against PostgreSQL/Milvus.
 - Corpus Readiness Gate requiring exact source sets, complete ingestion,
   canonical lineage, Milvus exact-set verification, Stage 5 `SAFE_TO_SERVE`,
-  and compatible pipeline fingerprint. A production readiness collector reads
-  actual PostgreSQL document records and the real Stage 5 result instead of
-  accepting caller-supplied booleans.
+  and compatible pipeline fingerprint. The production readiness collector
+  validates each expected document's READY state, current revision identity,
+  current content/pipeline fingerprints, and exact source set, and requires the
+  real Stage 5 `verified_documents` count to match the expected corpus.
 - Benchmark observation event sink for request/final/failure events. Dense/BM25/
   fusion/rerank/evidence/sufficiency/routing production trace hooks are **not**
   implemented; the current production source exposes no such generic hooks.
+  A forced Web-fallback regression exercises the disabled Web boundary and
+  disabled Query Cache with zero external HTTP and zero Redis cache calls.
 - Synthetic real-storage integration (`SYNTHETIC_INTEGRATION`, not Open
   RAGBench): real PostgreSQL/Milvus/Redis, real Stage 5 sync/readiness, real
   local retrieval and `retrieval_graph`, disabled Query Cache with zero GET/SET,
@@ -99,8 +102,8 @@ started.
 ## 4. Verification
 
 - Baseline before Stage 9 implementation: 3226 passed / 106 deselected.
-- `make verify`: **3254 passed, 107 deselected**.
-- `make test-stage9`: **28 passed**.
+- `make verify`: **3256 passed, 107 deselected**.
+- `make test-stage9`: **30 passed**.
 - Local metadata snapshot (not committed; CC-BY-NC-4.0) was checksum-validated
   locally. CLI output:
   - revision `63f6b052ff83508b08e242db42263ee708815c26`
@@ -111,7 +114,8 @@ started.
     without downloading the licensed data.
 - `make architecture-check`, Ruff, mypy, git diff checks: PASS.
 - Synthetic isolated storage integration: **1 passed** (real PostgreSQL/Milvus/
-  Redis; labeled SYNTHETIC_INTEGRATION).
+  Redis; labeled SYNTHETIC_INTEGRATION), including metric replay from stored
+  ranked observations.
 - Stage 9 CI job added for synthetic harness tests; no dataset/API/model download
   in ordinary CI.
 
@@ -171,11 +175,8 @@ cost are stop conditions. No benchmark quality/latency numbers are claimed.
 
 ## 7. Publication and CI
 
-- Implementation HEAD: `33345301a3c8cd789c9fe2a5ca9e71af473749af`
-- Push CI `44113538655`: PASS
-- Push Integration `44113538696`: PASS
-- PR CI `44113555522`: PASS
-- PR Integration `44113554866`: PASS
+- Final implementation source and its CI/Integration run IDs are recorded in
+  PR #10 and the final delivery. No formal Open RAGBench run is claimed.
 - PR: open / unmerged.
 - This report is a documentation-only successor; its final HEAD checks are
   recorded in the PR/final delivery.

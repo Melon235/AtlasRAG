@@ -37,9 +37,9 @@ from benchmarks.contracts.models import (
     Modality,
     RankedUnit,
 )
+from benchmarks.ingestion.accounting import ingestion_summary_from_sync_result
 from benchmarks.ingestion.readiness import CorpusReadinessGate, ReadinessStatus
 from benchmarks.ingestion.readiness_collector import collect_production_readiness
-from benchmarks.ingestion.runner import IngestionRecord, IngestionSummary
 from benchmarks.metrics.retrieval import evaluate_relaxed_document
 from benchmarks.observation.events import JsonlObservationSink
 from benchmarks.runners.quality_run import QualityPolicies, run_quality
@@ -73,6 +73,16 @@ class FakeWeb:
     async def run(self, request: object) -> WebEvidenceResult:
         self.calls += 1
         return WebEvidenceResult(execution_status=WebExecutionStatus.EMPTY, evidence=())
+
+
+class CapturingLocal:
+    def __init__(self, runner: LocalEvidenceRunner) -> None:
+        self.runner = runner
+        self.last: LocalEvidenceResult | None = None
+
+    async def run(self, request: LocalRetrievalRequest) -> LocalEvidenceResult:
+        self.last = await self.runner.run(request)
+        return self.last
 
 
 class FakeGeneration:
@@ -120,12 +130,7 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
         expected_source_paths=("guide.md",),
         expected_pipeline_fingerprint=pipeline_fingerprint(runtime),
     )
-    ingestion = IngestionSummary(
-        records=(IngestionRecord("guide.md", "READY"),),
-        expected_count=1,
-        complete=True,
-        failure_reasons=(),
-    )
+    ingestion = ingestion_summary_from_sync_result(sync_result, ("guide.md",))
     readiness = CorpusReadinessGate().assess(
         ingestion, evidence, expected_source_paths=("guide.md",)
     )
@@ -134,14 +139,7 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
     from integration.test_stage6_local_evidence import services as local_services
 
     local_bundle, _, _ = local_services(postgres_uow_factory, isolated_milvus.provider)
-    local = LocalEvidenceRunner(local_bundle)
-    local_result: LocalEvidenceResult = await local.run(
-        LocalRetrievalRequest(
-            original_query="What is the maintenance interval?",
-            retrieval_query="What is the maintenance interval?",
-        )
-    )
-    assert local_result.evidence_status is LocalEvidenceStatus.SUFFICIENT
+    local = CapturingLocal(LocalEvidenceRunner(local_bundle))
 
     generation = FakeGeneration()
     answer = AnswerRunner(answer_services(generation))
@@ -149,7 +147,7 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
     core = RagCoreRunner(
         RagCoreServices(
             query_construction=cast(Any, FakeQuery()),
-            local_evidence=local,
+            local_evidence=cast(Any, local),
             routing=CorrectiveRoutingService(max_retries=1),
             web_evidence=cast(Any, web),
             answer_input=AnswerInputBuilder(),
@@ -191,7 +189,9 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
     assert web.calls == 0 and generation.calls == 2
     assert (tmp_path / "synthetic" / "trace.jsonl").is_file()
 
-    selected = local_result.selected_evidence[0]
+    assert local.last is not None
+    assert local.last.evidence_status is LocalEvidenceStatus.SUFFICIENT
+    selected = local.last.selected_evidence[0]
     unit = RankedUnit(
         identity=selected.context_id, document_id=selected.document_id, rank=1
     )
@@ -218,10 +218,24 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
         "label": "SYNTHETIC_INTEGRATION",
         "readiness": readiness.status.value,
         "metrics": {"hit@1": metrics.hit, "recall@1": metrics.recall},
+        "ranked_units": [
+            {
+                "identity": unit.identity,
+                "document_id": unit.document_id,
+                "rank": unit.rank,
+            }
+        ],
+        "gold_documents": [selected.document_id],
         "alignment": alignment.model_dump(mode="json"),
         "cases": [item.observation.model_dump(mode="json") for item in result.cases],
     }
     (tmp_path / "synthetic" / "cases.json").write_text(
         json.dumps(artifact, indent=2), encoding="utf-8"
     )
+    replay = json.loads((tmp_path / "synthetic" / "cases.json").read_text())
+    replay_unit = RankedUnit(**replay["ranked_units"][0])
+    replay_metrics = evaluate_relaxed_document(
+        [replay_unit], {replay["gold_documents"][0]: 1}, k=1
+    )
+    assert replay_metrics.hit == metrics.hit
     await redis_client.aclose()
