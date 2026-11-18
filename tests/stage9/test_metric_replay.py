@@ -31,7 +31,10 @@ def observation(stage: ObservationStage, *, status: str = "OK") -> StoredObserva
 
 def artifact() -> CaseObservationArtifact:
     events = tuple(
-        observation(stage)
+        observation(
+            stage,
+            status="ANSWER" if stage is ObservationStage.ROUTING else "OK",
+        )
         for stage in (
             ObservationStage.DENSE,
             ObservationStage.BM25,
@@ -93,7 +96,13 @@ def _attempt_artifact() -> CaseObservationArtifact:
             events.append(
                 StoredObservation(
                     stage=stage,
-                    status="OK",
+                    status=(
+                        "RETRY_LOCAL"
+                        if stage is ObservationStage.ROUTING and attempt == 1
+                        else "ANSWER"
+                        if stage is ObservationStage.ROUTING
+                        else "OK"
+                    ),
                     candidates=(
                         StoredCandidate(
                             identity=f"c{attempt}", document_id="d1", rank=1, score=0.9

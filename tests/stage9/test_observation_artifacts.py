@@ -35,7 +35,10 @@ def observation(
 
 def full_events() -> tuple[StoredObservation, ...]:
     return tuple(
-        observation(stage)
+        observation(
+            stage,
+            status="ANSWER" if stage is ObservationStage.ROUTING else "OK",
+        )
         for stage in (
             ObservationStage.DENSE,
             ObservationStage.BM25,
@@ -44,9 +47,8 @@ def full_events() -> tuple[StoredObservation, ...]:
             ObservationStage.EVIDENCE,
             ObservationStage.SUFFICIENCY,
             ObservationStage.ROUTING,
-            ObservationStage.ANSWER,
         )
-    )[:-1] + (observation(ObservationStage.ANSWER, status="SUCCESS"),)
+    ) + (observation(ObservationStage.ANSWER, status="SUCCESS"),)
 
 
 def artifact(*events: StoredObservation) -> CaseObservationArtifact:
@@ -123,3 +125,32 @@ def test_causal_order_and_terminal_attempt_are_enforced() -> None:
     )
     with pytest.raises(ObservationArtifactError, match="causal stage order"):
         validate_case_artifact(unordered)
+
+
+def _writer_worker(path: str, queue: object) -> None:
+    try:
+        write_case_artifact(Path(path), artifact(*full_events()))
+        queue.put("ok")  # type: ignore[attr-defined]
+    except ObservationArtifactError:
+        queue.put("duplicate")  # type: ignore[attr-defined]
+
+
+def test_concurrent_writers_commit_exactly_one_case(tmp_path: Path) -> None:
+    import multiprocessing
+
+    context = multiprocessing.get_context("fork")
+    queue = context.Queue()
+    path = tmp_path / "cases.jsonl"
+    processes = [
+        context.Process(target=_writer_worker, args=(str(path), queue))
+        for _ in range(2)
+    ]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=10)
+    results = [queue.get(timeout=5) for _ in processes]
+    assert sorted(results) == ["duplicate", "ok"]
+    records = read_case_artifacts(path)
+    assert len(records) == 1
+    validate_case_artifact(records[0])

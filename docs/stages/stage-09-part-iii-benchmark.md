@@ -99,13 +99,20 @@ started.
 - A forced Web-fallback regression exercises the disabled Web boundary and
   disabled Query Cache with zero external HTTP and zero Redis cache calls.
 - Synthetic integration now binds each `run_quality()` case by its returned
-  invocation ID, writes sealed per-case artifacts under exclusive file locking,
+  invocation ID, writes sealed per-case artifacts under true exclusive
+  `flock` check-and-append (with a multiprocessing same-key regression),
   rejects duplicate case keys, validates causal stage order and terminal attempt
   consistency, and replays Dense/BM25/Fusion/Reranker document metrics from
   reloaded artifacts without production calls.
 - Replay supports FIRST_LOCAL_ATTEMPT, FINAL_LOCAL_ATTEMPT and PER_ATTEMPT
   selection and records the selected view. Multi-attempt tests reject silent
   merging.
+- Artifact validation enforces causal stage order and routing semantics:
+  RETRY_LOCAL only on non-terminal attempts, terminal routing cannot retry, and
+  ANSWER follows the final attempt.
+- Atomic writer validates the new artifact before sealing, holds an exclusive
+  file lock while checking duplicate case keys, validates existing records,
+  flushes/fsyncs append, and releases the lock reliably.
 - Synthetic real-storage integration (`SYNTHETIC_INTEGRATION`, not Open
   RAGBench): real PostgreSQL/Milvus/Redis, real Stage 5 sync/readiness, real
   local retrieval and `retrieval_graph`, disabled Query Cache with zero GET/SET,
@@ -119,8 +126,8 @@ started.
 ## 4. Verification
 
 - Baseline before Stage 9 implementation: 3226 passed / 106 deselected.
-- `make verify`: **3266 passed, 107 deselected**.
-- `make test-stage9`: **40 passed**.
+- `make verify`: **3267 passed, 107 deselected**.
+- `make test-stage9`: **41 passed**.
 - Local metadata snapshot (not committed; CC-BY-NC-4.0) was checksum-validated
   locally. CLI output:
   - revision `63f6b052ff83508b08e242db42263ee708815c26`

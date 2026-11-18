@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
@@ -19,6 +21,7 @@ _REQUIRED_LOCAL = frozenset(
         ObservationStage.RERANKER,
         ObservationStage.EVIDENCE,
         ObservationStage.SUFFICIENCY,
+        ObservationStage.ROUTING,
     }
 )
 
@@ -110,8 +113,12 @@ def validate_case_artifact(
         raise ObservationArtifactError("case has no observations")
     if artifact.observation_status != "COMPLETE":
         raise ObservationArtifactError("case observation capture is incomplete")
-    if not artifact.attempt_view:
-        raise ObservationArtifactError("artifact must declare an attempt view")
+    if artifact.attempt_view not in {
+        "FIRST_LOCAL_ATTEMPT",
+        "FINAL_LOCAL_ATTEMPT",
+        "PER_ATTEMPT",
+    }:
+        raise ObservationArtifactError("unsupported attempt view")
     if {item.invocation_id for item in artifact.observations} != {
         artifact.invocation_id
     }:
@@ -139,6 +146,16 @@ def validate_case_artifact(
             raise ObservationArtifactError(
                 f"missing required observations in attempt {index}"
             )
+        routing = next(
+            event for event in events if event.stage is ObservationStage.ROUTING
+        )
+        if index < len(attempts):
+            if routing.status != "RETRY_LOCAL":
+                raise ObservationArtifactError(
+                    f"attempt {index} must route RETRY_LOCAL"
+                )
+        elif routing.status == "RETRY_LOCAL":
+            raise ObservationArtifactError("terminal attempt cannot route RETRY_LOCAL")
         positions = {event.stage: position for position, event in enumerate(events)}
         expected_order = (
             ObservationStage.DENSE,
@@ -194,31 +211,9 @@ def _integrity_payload(artifact: CaseObservationArtifact) -> bytes:
     ).encode("utf-8")
 
 
-def write_case_artifact(
-    path: Path, artifact: CaseObservationArtifact
-) -> CaseObservationArtifact:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    key = (artifact.run_id, artifact.query_id, artifact.repetition_index)
-    if any(
-        (existing.run_id, existing.query_id, existing.repetition_index) == key
-        for existing in read_case_artifacts(path)
-    ):
-        raise ObservationArtifactError("duplicate committed case identity")
-    sealed = artifact.model_copy(
-        update={
-            "integrity_sha256": hashlib.sha256(_integrity_payload(artifact)).hexdigest()
-        }
-    )
-    with path.open("a", encoding="utf-8") as stream:
-        stream.write(sealed.model_dump_json() + "\n")
-    return sealed
-
-
-def read_case_artifacts(path: Path) -> tuple[CaseObservationArtifact, ...]:
-    if not path.exists():
-        return ()
+def _parse_artifacts(text: str) -> list[CaseObservationArtifact]:
     values: list[CaseObservationArtifact] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if not line.strip():
             continue
         try:
@@ -232,4 +227,40 @@ def read_case_artifacts(path: Path) -> tuple[CaseObservationArtifact, ...]:
     keys = [(item.run_id, item.query_id, item.repetition_index) for item in values]
     if len(keys) != len(set(keys)):
         raise ObservationArtifactError("duplicate committed case key")
-    return tuple(values)
+    return values
+
+
+def write_case_artifact(
+    path: Path, artifact: CaseObservationArtifact
+) -> CaseObservationArtifact:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    validate_case_artifact(artifact)
+    sealed = artifact.model_copy(
+        update={
+            "integrity_sha256": hashlib.sha256(_integrity_payload(artifact)).hexdigest()
+        }
+    )
+    with path.open("a+", encoding="utf-8") as stream:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        try:
+            stream.seek(0)
+            existing = _parse_artifacts(stream.read())
+            key = (artifact.run_id, artifact.query_id, artifact.repetition_index)
+            if any(
+                (item.run_id, item.query_id, item.repetition_index) == key
+                for item in existing
+            ):
+                raise ObservationArtifactError("duplicate committed case identity")
+            stream.seek(0, 2)
+            stream.write(sealed.model_dump_json() + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        finally:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    return sealed
+
+
+def read_case_artifacts(path: Path) -> tuple[CaseObservationArtifact, ...]:
+    if not path.exists():
+        return ()
+    return tuple(_parse_artifacts(path.read_text(encoding="utf-8")))
