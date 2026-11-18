@@ -9,10 +9,12 @@ from pathlib import Path
 from benchmarks.datasets.open_ragbench import DatasetAdapterError, OpenRagBenchAdapter
 from benchmarks.metrics.replay import AttemptSelection, replay_case_metrics
 from benchmarks.observation.artifacts import (
+    CaseObservationArtifact,
     ObservationArtifactError,
     read_case_artifacts,
     validate_case_artifact,
 )
+from benchmarks.runners.manifests import RunManifest
 from benchmarks.snapshots.manifest import SnapshotError, validate_snapshot
 
 
@@ -26,33 +28,68 @@ def _parser() -> argparse.ArgumentParser:
     verify = sub.add_parser("verify-corpus")
     verify.add_argument("--snapshot", type=Path, required=True)
     verify.add_argument("--profile", default="FULL_CORPUS")
-    metrics = sub.add_parser("compute-metrics")
-    metrics.add_argument("--artifacts", type=Path, required=True)
-    metrics.add_argument("--gold", type=Path, required=True)
-    metrics.add_argument("--attempt-view", default="FINAL_LOCAL_ATTEMPT")
-    report = sub.add_parser("report")
-    report.add_argument("--artifacts", type=Path, required=True)
-    report.add_argument("--gold", type=Path, required=True)
-    report.add_argument("--attempt-view", default="FINAL_LOCAL_ATTEMPT")
-    resume = sub.add_parser("resume")
-    resume.add_argument("--artifacts", type=Path, required=True)
+    for name in ("compute-metrics", "report"):
+        command = sub.add_parser(name)
+        command.add_argument("--artifacts", type=Path, required=True)
+        command.add_argument("--manifest", type=Path, required=True)
+        command.add_argument("--gold", type=Path, required=True)
+        command.add_argument("--attempt-view", default="")
+        command.add_argument("--alternate-analysis", action="store_true")
+    check = sub.add_parser("check-artifacts")
+    check.add_argument("--artifacts", type=Path, required=True)
+    check.add_argument("--manifest", type=Path, required=True)
     return parser
 
 
-def _gold(path: Path) -> dict[str, int]:
+def _gold(path: Path) -> dict[str, dict[str, int]]:
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or not all(
-        isinstance(key, str) and type(grade) is int for key, grade in value.items()
-    ):
-        raise ValueError("gold must be an object of document_id to integer relevance")
-    return value
+    if not isinstance(value, dict) or not value:
+        raise ValueError("gold must be a nonempty query_id -> document relevance map")
+    result: dict[str, dict[str, int]] = {}
+    for query_id, docs in value.items():
+        if not isinstance(query_id, str) or not isinstance(docs, dict):
+            raise ValueError("gold query mapping is invalid")
+        if not all(
+            isinstance(doc_id, str) and type(grade) is int
+            for doc_id, grade in docs.items()
+        ):
+            raise ValueError("gold document relevance must be integer")
+        result[query_id] = docs
+    return result
 
 
-def _artifacts(path: Path):
+def _manifest(path: Path) -> RunManifest:
+    return RunManifest.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _artifacts(path: Path) -> tuple[CaseObservationArtifact, ...]:
     cases = read_case_artifacts(path)
     for case in cases:
         validate_case_artifact(case)
     return cases
+
+
+def _validate_run(
+    manifest: RunManifest,
+    cases: tuple[CaseObservationArtifact, ...],
+    gold: dict[str, dict[str, int]],
+) -> None:
+    if not cases:
+        raise ValueError("no committed case artifacts")
+    if manifest.planned_queries != len(gold):
+        raise ValueError("manifest planned_queries does not match gold query set")
+    if {case.run_id for case in cases} != {manifest.run_id}:
+        raise ValueError("artifact run_id does not match manifest")
+    if {case.query_id for case in cases} != set(gold):
+        raise ValueError("case query identities do not match gold")
+    if {case.attempt_view for case in cases} != {manifest.attempt_view}:
+        raise ValueError("case attempt view does not match manifest")
+    for query_id in gold:
+        indexes = sorted(
+            case.repetition_index for case in cases if case.query_id == query_id
+        )
+        if indexes != list(range(manifest.repetitions)):
+            raise ValueError("case repetition set does not match manifest")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -120,14 +157,25 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         if args.command in {"compute-metrics", "report"}:
+            run_manifest = _manifest(args.manifest)
             cases = _artifacts(args.artifacts)
             gold = _gold(args.gold)
-            selection = AttemptSelection(args.attempt_view)
+            _validate_run(run_manifest, cases, gold)
+            selection = (
+                AttemptSelection(args.attempt_view)
+                if args.attempt_view
+                else AttemptSelection(run_manifest.attempt_view)
+            )
+            if (
+                selection.value != run_manifest.attempt_view
+                and not args.alternate_analysis
+            ):
+                raise ValueError("attempt view conflicts with run manifest")
             results = []
             for case in cases:
                 replay = replay_case_metrics(
                     case,
-                    gold_documents=gold,
+                    gold_documents=gold[case.query_id],
                     attempt_view=selection,
                     allow_alternate_analysis=True,
                 )
@@ -139,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
                             "repetition_index": case.repetition_index,
                         },
                         "attempt_view": replay.attempt_view.value,
+                        "alternate_analysis": selection.value
+                        != run_manifest.attempt_view,
                         "stages": [
                             {
                                 "stage": item.stage.value,
@@ -158,12 +208,24 @@ def main(argv: list[str] | None = None) -> int:
                     }
                 )
             if args.command == "compute-metrics":
-                print(json.dumps({"status": "VALID", "cases": results}, sort_keys=True))
+                print(
+                    json.dumps(
+                        {
+                            "status": "VALID",
+                            "run_id": run_manifest.run_id,
+                            "attempt_view": run_manifest.attempt_view,
+                            "cases": results,
+                        },
+                        sort_keys=True,
+                    )
+                )
                 return 0
             print(
                 json.dumps(
                     {
                         "status": "SYNTHETIC_OR_DECLARED_REPORT",
+                        "run_id": run_manifest.run_id,
+                        "attempt_view": run_manifest.attempt_view,
                         "case_count": len(cases),
                         "cases": results,
                     },
@@ -171,16 +233,19 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
-        if args.command == "resume":
+        if args.command == "check-artifacts":
+            run_manifest = _manifest(args.manifest)
             cases = _artifacts(args.artifacts)
+            if not cases:
+                raise ValueError("no committed case artifacts")
+            if {case.run_id for case in cases} != {run_manifest.run_id}:
+                raise ValueError("artifact run_id does not match manifest")
             print(
                 json.dumps(
                     {
-                        "status": "RESUME_SAFE",
+                        "status": "COMMITTED_CASES_VALID",
                         "committed_cases": len(cases),
-                        "keys": [
-                            [c.run_id, c.query_id, c.repetition_index] for c in cases
-                        ],
+                        "run_id": run_manifest.run_id,
                     },
                     sort_keys=True,
                 )
@@ -196,7 +261,8 @@ def main(argv: list[str] | None = None) -> int:
     ) as error:
         print(
             json.dumps(
-                {"status": "ERROR", "error": str(error), "exit_code": 2}, sort_keys=True
+                {"status": "ERROR", "error": str(error), "exit_code": 2},
+                sort_keys=True,
             )
         )
         return 2

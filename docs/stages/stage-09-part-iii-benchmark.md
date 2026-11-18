@@ -128,8 +128,8 @@ started.
 ## 4. Verification
 
 - Baseline before Stage 9 implementation: 3226 passed / 106 deselected.
-- `make verify`: **3267 passed, 107 deselected**.
-- `make test-stage9`: **41 passed**.
+- `make verify`: **3270 passed, 107 deselected**.
+- `make test-stage9`: **44 passed**.
 - Local metadata snapshot (not committed; CC-BY-NC-4.0) was checksum-validated
   locally. CLI output:
   - revision `63f6b052ff83508b08e242db42263ee708815c26`
