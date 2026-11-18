@@ -55,6 +55,7 @@ class CaseObservationArtifact(_Frozen):
     terminal_outcome: StrictStr
     case_status: StrictStr = "COMPLETED"
     observation_status: StrictStr = "COMPLETE"
+    attempt_view: StrictStr = ""
     integrity_sha256: StrictStr = ""
 
 
@@ -109,8 +110,11 @@ def validate_case_artifact(
         raise ObservationArtifactError("case has no observations")
     if artifact.observation_status != "COMPLETE":
         raise ObservationArtifactError("case observation capture is incomplete")
-    invocation_ids = {item.invocation_id for item in artifact.observations}
-    if invocation_ids != {artifact.invocation_id}:
+    if not artifact.attempt_view:
+        raise ObservationArtifactError("artifact must declare an attempt view")
+    if {item.invocation_id for item in artifact.observations} != {
+        artifact.invocation_id
+    }:
         raise ObservationArtifactError("cross-invocation observation contamination")
     ordered_attempts = [item.attempt_index for item in artifact.observations]
     if ordered_attempts != sorted(ordered_attempts):
@@ -128,30 +132,59 @@ def validate_case_artifact(
             raise ObservationArtifactError(
                 f"duplicate conflicting stage in attempt {index}"
             )
+        if artifact.case_status == "TECHNICAL_FAILURE":
+            continue
         missing = required_stages - set(stages)
         if missing:
             raise ObservationArtifactError(
                 f"missing required observations in attempt {index}"
+            )
+        positions = {event.stage: position for position, event in enumerate(events)}
+        expected_order = (
+            ObservationStage.DENSE,
+            ObservationStage.BM25,
+            ObservationStage.FUSION,
+            ObservationStage.RERANKER,
+            ObservationStage.EVIDENCE,
+            ObservationStage.SUFFICIENCY,
+            ObservationStage.ROUTING,
+        )
+        if [positions[stage] for stage in expected_order] != sorted(
+            positions[stage] for stage in expected_order
+        ):
+            raise ObservationArtifactError(
+                f"causal stage order violated in attempt {index}"
             )
     answer_events = [
         event
         for event in artifact.observations
         if event.stage is ObservationStage.ANSWER
     ]
+    if artifact.case_status == "TECHNICAL_FAILURE":
+        if answer_events:
+            raise ObservationArtifactError(
+                "technical failure cannot carry a terminal ANSWER observation"
+            )
+        if artifact.terminal_outcome != "TECHNICAL_FAILURE":
+            raise ObservationArtifactError(
+                "technical failure requires a technical terminal outcome"
+            )
+        return
     if len(answer_events) != 1:
         raise ObservationArtifactError(
             "exactly one terminal ANSWER observation is required"
         )
     answer = answer_events[0]
+    if answer.attempt_index != max(attempts):
+        raise ObservationArtifactError(
+            "terminal ANSWER attempt must match the final local attempt"
+        )
     if artifact.terminal_outcome != answer.status:
         raise ObservationArtifactError(
             "terminal outcome does not match ANSWER observation"
         )
     if answer.status == "SAFE_FAILURE" and not allow_safe_failure:
         raise ObservationArtifactError("SAFE_FAILURE is not allowed for this run")
-    technical = artifact.case_status == "TECHNICAL_FAILURE"
-    if technical and answer.status != "SAFE_FAILURE":
-        raise ObservationArtifactError("technical failure must be a failed case")
 
 
 def _integrity_payload(artifact: CaseObservationArtifact) -> bytes:
@@ -196,4 +229,7 @@ def read_case_artifacts(path: Path) -> tuple[CaseObservationArtifact, ...]:
         if item.integrity_sha256 != expected:
             raise ObservationArtifactError("artifact integrity checksum mismatch")
         values.append(item)
+    keys = [(item.run_id, item.query_id, item.repetition_index) for item in values]
+    if len(keys) != len(set(keys)):
+        raise ObservationArtifactError("duplicate committed case key")
     return tuple(values)

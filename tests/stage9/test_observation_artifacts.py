@@ -57,6 +57,7 @@ def artifact(*events: StoredObservation) -> CaseObservationArtifact:
         invocation_id="inv",
         observations=events,
         terminal_outcome="SUCCESS",
+        attempt_view="FINAL_LOCAL_ATTEMPT",
     )
 
 
@@ -107,3 +108,18 @@ def test_missing_cross_invocation_and_order_rejected() -> None:
                 {ObservationStage.FUSION, ObservationStage.ANSWER}
             ),
         )
+
+
+def test_causal_order_and_terminal_attempt_are_enforced() -> None:
+    unordered = artifact(
+        observation(ObservationStage.FUSION),
+        observation(ObservationStage.DENSE),
+        observation(ObservationStage.BM25),
+        observation(ObservationStage.RERANKER),
+        observation(ObservationStage.EVIDENCE),
+        observation(ObservationStage.SUFFICIENCY),
+        observation(ObservationStage.ROUTING),
+        observation(ObservationStage.ANSWER, status="SUCCESS"),
+    )
+    with pytest.raises(ObservationArtifactError, match="causal stage order"):
+        validate_case_artifact(unordered)
