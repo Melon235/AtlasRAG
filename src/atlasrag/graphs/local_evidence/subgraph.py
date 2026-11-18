@@ -14,6 +14,7 @@ from atlasrag.domain.observation import (
     ProductionObservation,
     current_attempt_index,
     current_invocation_id,
+    deliver_observation,
 )
 from atlasrag.domain.retrieval import RetrievalCandidate
 from atlasrag.graphs.state.local_evidence import (
@@ -39,7 +40,8 @@ def build_local_evidence_subgraph(
         latency_ms: float | None = None,
         degraded: bool = False,
     ) -> None:
-        services.observer.observe(
+        deliver_observation(
+            services.observer,
             ProductionObservation(
                 stage=stage,
                 status=status,
@@ -49,7 +51,7 @@ def build_local_evidence_subgraph(
                 degraded=degraded,
                 invocation_id=current_invocation_id(),
                 attempt_index=current_attempt_index(),
-            )
+            ),
         )
 
     def _candidates(
@@ -104,7 +106,7 @@ def build_local_evidence_subgraph(
         _observe(
             ObservationStage.FUSION,
             "OK" if pool.candidates else "EMPTY",
-            candidates=_candidates(pool.candidates, stage=ObservationStage.RERANKER),
+            candidates=_candidates(pool.candidates, stage=ObservationStage.FUSION),
             latency_ms=(monotonic() - started) * 1000,
         )
         return {"candidate_pool": pool}

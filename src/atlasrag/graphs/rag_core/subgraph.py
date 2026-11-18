@@ -17,8 +17,8 @@ from atlasrag.domain.observation import (
     ObservationStage,
     ProductionObservation,
     ProductionObserver,
-    current_attempt_index,
     current_invocation_id,
+    deliver_observation,
     observation_attempt,
 )
 from atlasrag.domain.requests import UserTurnRequest
@@ -77,14 +77,15 @@ def build_rag_core_subgraph(
             result=state["local_result"],
             attempt_index=state["local_attempt_index"],
         )
-        services.observer.observe(
+        deliver_observation(
+            services.observer,
             ProductionObservation(
                 stage=ObservationStage.ROUTING,
                 status=decision.action.value,
                 degraded=state["local_result"].execution_status.value != "OK",
                 invocation_id=current_invocation_id(),
                 attempt_index=state["local_attempt_index"],
-            )
+            ),
         )
         return {}
 
@@ -133,7 +134,8 @@ def build_rag_core_subgraph(
 
     async def answer(state: RagCoreState) -> dict[str, object]:
         final_response, outcome = await services.answer.run(state["answer_input"])
-        services.observer.observe(
+        deliver_observation(
+            services.observer,
             ProductionObservation(
                 stage=ObservationStage.ANSWER,
                 status=outcome.value,
@@ -143,7 +145,7 @@ def build_rag_core_subgraph(
                 degraded=outcome is AnswerExecutionOutcome.SAFE_FAILURE,
                 invocation_id=current_invocation_id(),
                 attempt_index=state["local_attempt_index"],
-            )
+            ),
         )
         return {
             "final_response": final_response,
@@ -151,14 +153,15 @@ def build_rag_core_subgraph(
         }
 
     async def safe_failure(state: RagCoreState) -> dict[str, object]:
-        services.observer.observe(
+        deliver_observation(
+            services.observer,
             ProductionObservation(
                 stage=ObservationStage.ANSWER,
                 status=AnswerExecutionOutcome.SAFE_FAILURE.value,
                 degraded=True,
                 invocation_id=current_invocation_id(),
-                attempt_index=current_attempt_index(),
-            )
+                attempt_index=state["local_attempt_index"],
+            ),
         )
         return {
             "final_response": FinalResponse(

@@ -49,6 +49,13 @@ from benchmarks.ingestion.readiness import CorpusReadinessGate, ReadinessStatus
 from benchmarks.ingestion.readiness_collector import collect_production_readiness
 from benchmarks.ingestion.runner import BenchmarkIngestionRunner
 from benchmarks.metrics.retrieval import evaluate_relaxed_document
+from benchmarks.observation.artifacts import (
+    CaseObservationArtifact,
+    read_case_artifacts,
+    stored_observation,
+    validate_case_artifact,
+    write_case_artifact,
+)
 from benchmarks.observation.events import JsonlObservationSink
 from benchmarks.runners.quality_run import QualityPolicies, run_quality
 from integration.stage4_helpers import resources as build_resources
@@ -230,9 +237,15 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
     assert local.last.evidence_status is LocalEvidenceStatus.SUFFICIENT
     assert local.last is not None
     selected = local.last.selected_evidence[0]
+    fusion_event = next(
+        event for event in capture.events if event.stage is ObservationStage.FUSION
+    )
     reranker_event = next(
         event for event in capture.events if event.stage is ObservationStage.RERANKER
     )
+    assert fusion_event.candidates
+    assert all(candidate.score is not None for candidate in fusion_event.candidates)
+    assert any(candidate.score is not None for candidate in reranker_event.candidates)
     ranked = [
         RankedUnit(
             identity=item.identity,
@@ -273,6 +286,45 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
         ),
     )
     assert alignment.confidence.value == "HIGH"
+    invocation_ids = sorted(
+        {event.invocation_id for event in capture.events if event.invocation_id}
+    )
+    assert len(invocation_ids) == 2
+    selected_invocation = invocation_ids[0]
+    case_observations = tuple(
+        stored_observation(event)
+        for event in capture.events
+        if event.invocation_id == selected_invocation
+    )
+    case_artifact = CaseObservationArtifact(
+        run_id="synthetic-integration",
+        query_id="q1",
+        repetition_index=0,
+        invocation_id=selected_invocation,
+        observations=case_observations,
+        terminal_outcome="SUCCESS",
+    )
+    validate_case_artifact(
+        case_artifact,
+        required_stages=frozenset(
+            {
+                ObservationStage.DENSE,
+                ObservationStage.BM25,
+                ObservationStage.FUSION,
+                ObservationStage.RERANKER,
+                ObservationStage.EVIDENCE,
+                ObservationStage.SUFFICIENCY,
+                ObservationStage.ROUTING,
+                ObservationStage.ANSWER,
+            }
+        ),
+    )
+    write_case_artifact(
+        tmp_path / "synthetic" / "observation_cases.jsonl", case_artifact
+    )
+    assert read_case_artifacts(tmp_path / "synthetic" / "observation_cases.jsonl") == (
+        case_artifact,
+    )
     artifact = {
         "label": "SYNTHETIC_INTEGRATION",
         "readiness": readiness.status.value,
@@ -287,6 +339,27 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
         ],
         "gold_documents": [selected.document_id],
         "alignment": alignment.model_dump(mode="json"),
+        "production_observations": [
+            {
+                "stage": event.stage.value,
+                "status": event.status,
+                "candidates": [
+                    {
+                        "identity": candidate.identity,
+                        "rank": candidate.rank,
+                        "score": candidate.score,
+                        "document_id": candidate.document_id,
+                    }
+                    for candidate in event.candidates
+                ],
+                "selected_identities": list(event.selected_identities),
+                "latency_ms": event.latency_ms,
+                "degraded": event.degraded,
+                "invocation_id": event.invocation_id,
+                "attempt_index": event.attempt_index,
+            }
+            for event in capture.events
+        ],
         "cases": [item.observation.model_dump(mode="json") for item in result.cases],
     }
     (tmp_path / "synthetic" / "cases.json").write_text(

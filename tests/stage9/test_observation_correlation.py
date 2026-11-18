@@ -118,3 +118,72 @@ async def test_invocation_and_attempt_correlation_under_concurrency() -> None:
     assert {event.invocation_id for event in first.events}.isdisjoint(
         {event.invocation_id for event in second.events}
     )
+
+
+class AlwaysInsufficient:
+    async def run(self, request: LocalRetrievalRequest) -> LocalEvidenceResult:
+        return LocalEvidenceResult(
+            execution_status=LocalExecutionStatus.OK,
+            evidence_status=LocalEvidenceStatus.INSUFFICIENT,
+            selected_evidence=(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_safe_failure_uses_terminal_attempt_two() -> None:
+    capture = Capture()
+    runner = RagCoreRunner(
+        RagCoreServices(
+            query_construction=cast(Any, Query()),
+            local_evidence=cast(Any, AlwaysInsufficient()),
+            routing=CorrectiveRoutingService(max_retries=1),
+            web_evidence=cast(Any, Web()),
+            answer_input=AnswerInputBuilder(),
+            answer=cast(Any, Answer()),
+            completion=CompletionAssessor(),
+            observer=capture,
+        )
+    )
+    await runner.run(
+        UserTurnRequest(
+            session_id="s", query="question", filters=QueryFilters(file_name="x.md")
+        )
+    )
+    failures = [
+        event
+        for event in capture.events
+        if event.stage is ObservationStage.ANSWER
+        and event.status == AnswerExecutionOutcome.SAFE_FAILURE.value
+    ]
+    assert len(failures) == 1
+    assert failures[0].attempt_index == 2
+
+
+class RaisingObserver:
+    def observe(self, event: ProductionObservation) -> None:
+        raise RuntimeError("observer unavailable")
+
+
+@pytest.mark.asyncio
+async def test_observer_failure_does_not_change_product_result() -> None:
+    runner = RagCoreRunner(
+        RagCoreServices(
+            query_construction=cast(Any, Query()),
+            local_evidence=cast(Any, Local()),
+            routing=CorrectiveRoutingService(max_retries=1),
+            web_evidence=cast(Any, Web()),
+            answer_input=AnswerInputBuilder(),
+            answer=cast(Any, Answer()),
+            completion=CompletionAssessor(),
+            observer=RaisingObserver(),
+        )
+    )
+    with pytest.warns(RuntimeWarning, match="observation delivery failed"):
+        result = await runner.run(
+            UserTurnRequest(
+                session_id="s",
+                query="question",
+                filters=QueryFilters(file_name="x.md"),
+            )
+        )
+    assert result.final_response.answer_text == "Answer."

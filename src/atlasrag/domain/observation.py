@@ -8,6 +8,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
+from warnings import warn
 
 _INVOCATION: ContextVar[str | None] = ContextVar(
     "atlasrag_observation_invocation", default=None
@@ -87,3 +88,17 @@ class NullProductionObserver:
 
 
 NULL_OBSERVER = NullProductionObserver()
+
+
+def deliver_observation(
+    observer: ProductionObserver, event: ProductionObservation
+) -> None:
+    """Deliver an observation without changing the business result."""
+    try:
+        observer.observe(event)
+    except Exception:
+        warn(
+            "production observation delivery failed",
+            RuntimeWarning,
+            stacklevel=2,
+        )
