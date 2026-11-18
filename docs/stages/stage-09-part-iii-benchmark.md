@@ -175,11 +175,12 @@ Full 1,000-PDF and 2,062-query execution is explicitly not approved.
 The following are **not implemented or not accepted** and are required before a
 formal Stage 9 benchmark claim:
 
-- Real Part I ingestion runner/readiness gate using MinerU/Qwen/Milvus for the
-  Open RAGBench corpus.
-- Production trace observation capture for dense/BM25/fusion/rerank/evidence/
-  routing facts.
-- Full quality/negative/performance runners and artifact schemas.
+- Real Open RAGBench Part I ingestion runner/readiness execution using
+  MinerU/Qwen/Milvus; only synthetic real-storage ingestion is accepted.
+- Production observation is implemented, but durable formal Benchmark
+  orchestration and missing/duplicate observation validation are incomplete.
+- Executable `run-quality` / `run-performance` CLI and true Resume.
+- Full quality/negative/performance artifact coverage.
 - BEIR auxiliary evaluation and DeepEval secondary evaluator execution.
 - Reranker, sufficiency, Web representation, and compression experiments.
 - Real Open RAGBench pilot, formal FULL/NEGATIVE runs, performance runs, and
