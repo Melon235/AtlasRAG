@@ -98,10 +98,11 @@ started.
   the product and emit a diagnostic warning.
 - A forced Web-fallback regression exercises the disabled Web boundary and
   disabled Query Cache with zero external HTTP and zero Redis cache calls.
-- Synthetic integration derives relaxed-document metrics from captured reranker
-  observations, stores ranked units and production observations in artifacts,
-  validates per-invocation required stages, and replays metrics from the stored
-  artifact without rerunning generation.
+- Synthetic integration now binds an explicit invocation ID per
+  run/query/repetition via the production observation context, writes a sealed
+  per-case artifact with schema version and SHA256 integrity, validates
+  invocation/attempt/stage ordering, and replays Dense/BM25/Fusion/Reranker
+  document metrics from the stored artifact without production calls.
 - Synthetic real-storage integration (`SYNTHETIC_INTEGRATION`, not Open
   RAGBench): real PostgreSQL/Milvus/Redis, real Stage 5 sync/readiness, real
   local retrieval and `retrieval_graph`, disabled Query Cache with zero GET/SET,
@@ -115,8 +116,8 @@ started.
 ## 4. Verification
 
 - Baseline before Stage 9 implementation: 3226 passed / 106 deselected.
-- `make verify`: **3262 passed, 107 deselected**.
-- `make test-stage9`: **36 passed**.
+- `make verify`: **3264 passed, 107 deselected**.
+- `make test-stage9`: **38 passed**.
 - Local metadata snapshot (not committed; CC-BY-NC-4.0) was checksum-validated
   locally. CLI output:
   - revision `63f6b052ff83508b08e242db42263ee708815c26`

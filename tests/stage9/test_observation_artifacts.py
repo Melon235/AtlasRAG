@@ -33,6 +33,22 @@ def observation(
     )
 
 
+def full_events() -> tuple[StoredObservation, ...]:
+    return tuple(
+        observation(stage)
+        for stage in (
+            ObservationStage.DENSE,
+            ObservationStage.BM25,
+            ObservationStage.FUSION,
+            ObservationStage.RERANKER,
+            ObservationStage.EVIDENCE,
+            ObservationStage.SUFFICIENCY,
+            ObservationStage.ROUTING,
+            ObservationStage.ANSWER,
+        )
+    )[:-1] + (observation(ObservationStage.ANSWER, status="SUCCESS"),)
+
+
 def artifact(*events: StoredObservation) -> CaseObservationArtifact:
     return CaseObservationArtifact(
         run_id="run",
@@ -45,17 +61,7 @@ def artifact(*events: StoredObservation) -> CaseObservationArtifact:
 
 
 def test_valid_artifact_and_jsonl_roundtrip(tmp_path: Path) -> None:
-    item = artifact(
-        observation(
-            ObservationStage.FUSION,
-            candidates=(StoredCandidate(identity="c1", rank=1, score=0.5),),
-        ),
-        observation(ObservationStage.RERANKER),
-        observation(ObservationStage.EVIDENCE),
-        observation(ObservationStage.SUFFICIENCY),
-        observation(ObservationStage.ROUTING),
-        observation(ObservationStage.ANSWER),
-    )
+    item = artifact(*full_events())
     validate_case_artifact(
         item,
         required_stages=frozenset(
@@ -69,8 +75,8 @@ def test_valid_artifact_and_jsonl_roundtrip(tmp_path: Path) -> None:
             }
         ),
     )
-    write_case_artifact(tmp_path / "cases.jsonl", item)
-    assert read_case_artifacts(tmp_path / "cases.jsonl") == (item,)
+    sealed = write_case_artifact(tmp_path / "cases.jsonl", item)
+    assert read_case_artifacts(tmp_path / "cases.jsonl") == (sealed,)
 
 
 def test_missing_cross_invocation_and_order_rejected() -> None:

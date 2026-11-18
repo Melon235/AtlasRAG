@@ -319,11 +319,11 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
             }
         ),
     )
-    write_case_artifact(
+    sealed_case = write_case_artifact(
         tmp_path / "synthetic" / "observation_cases.jsonl", case_artifact
     )
     assert read_case_artifacts(tmp_path / "synthetic" / "observation_cases.jsonl") == (
-        case_artifact,
+        sealed_case,
     )
     artifact = {
         "label": "SYNTHETIC_INTEGRATION",
