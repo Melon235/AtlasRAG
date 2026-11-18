@@ -109,7 +109,7 @@ def validate_case_artifact(
 ) -> None:
     if artifact.schema_version != 1:
         raise ObservationArtifactError("unsupported artifact schema version")
-    if not artifact.observations:
+    if not artifact.observations and artifact.case_status != "TECHNICAL_FAILURE":
         raise ObservationArtifactError("case has no observations")
     if artifact.observation_status != "COMPLETE":
         raise ObservationArtifactError("case observation capture is incomplete")
@@ -119,10 +119,16 @@ def validate_case_artifact(
         "PER_ATTEMPT",
     }:
         raise ObservationArtifactError("unsupported attempt view")
-    if {item.invocation_id for item in artifact.observations} != {
-        artifact.invocation_id
-    }:
+    if artifact.observations and {
+        item.invocation_id for item in artifact.observations
+    } != {artifact.invocation_id}:
         raise ObservationArtifactError("cross-invocation observation contamination")
+    if artifact.case_status == "TECHNICAL_FAILURE" and not artifact.observations:
+        if artifact.terminal_outcome != "TECHNICAL_FAILURE":
+            raise ObservationArtifactError(
+                "technical failure requires a technical terminal outcome"
+            )
+        return
     ordered_attempts = [item.attempt_index for item in artifact.observations]
     if ordered_attempts != sorted(ordered_attempts):
         raise ObservationArtifactError("observation attempts are out of order")
@@ -202,6 +208,18 @@ def validate_case_artifact(
         )
     if answer.status == "SAFE_FAILURE" and not allow_safe_failure:
         raise ObservationArtifactError("SAFE_FAILURE is not allowed for this run")
+    routing_events = [
+        event
+        for event in artifact.observations
+        if event.stage is ObservationStage.ROUTING
+    ]
+    final_routing = routing_events[-1]
+    if final_routing.status not in {"ANSWER", "WEB"}:
+        raise ObservationArtifactError("invalid final routing status")
+    if artifact.observations.index(answer) <= artifact.observations.index(
+        final_routing
+    ):
+        raise ObservationArtifactError("terminal ANSWER must follow final routing")
 
 
 def _integrity_payload(artifact: CaseObservationArtifact) -> bytes:

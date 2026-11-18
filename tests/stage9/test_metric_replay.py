@@ -137,6 +137,7 @@ def test_first_final_and_per_attempt_replay_are_explicit() -> None:
         item,
         gold_documents={"d1": 1},
         attempt_view=AttemptSelection.FIRST_LOCAL_ATTEMPT,
+        allow_alternate_analysis=True,
     )
     final = replay_case_metrics(
         item,
@@ -147,6 +148,7 @@ def test_first_final_and_per_attempt_replay_are_explicit() -> None:
         item,
         gold_documents={"d1": 1},
         attempt_view=AttemptSelection.PER_ATTEMPT,
+        allow_alternate_analysis=True,
     )
     assert {stage.attempt_index for stage in first.stages} == {1}
     assert {stage.attempt_index for stage in final.stages} == {2}

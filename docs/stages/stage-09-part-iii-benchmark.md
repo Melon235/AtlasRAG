@@ -108,8 +108,10 @@ started.
   selection and records the selected view. Multi-attempt tests reject silent
   merging.
 - Artifact validation enforces causal stage order and routing semantics:
-  RETRY_LOCAL only on non-terminal attempts, terminal routing cannot retry, and
-  ANSWER follows the final attempt.
+  RETRY_LOCAL only on non-terminal attempts, terminal routing cannot retry,
+  terminal ANSWER follows the final routing observation, and attempt view is
+  validated against the supported enum. Replay rejects a conflicting declared
+  view unless alternate analysis is explicitly requested.
 - Atomic writer validates the new artifact before sealing, holds an exclusive
   file lock while checking duplicate case keys, validates existing records,
   flushes/fsyncs append, and releases the lock reliably.

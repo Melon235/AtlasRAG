@@ -42,6 +42,7 @@ class RunManifest(_Frozen):
     repetitions: int = Field(ge=1)
     environment_class: StrictStr
     model_identities: dict[str, str] = Field(default_factory=dict)
+    attempt_view: StrictStr = "FINAL_LOCAL_ATTEMPT"
 
 
 class CaseObservation(_Frozen):
@@ -160,6 +161,7 @@ def validate_comparison(
         "web_policy",
         "query_cache_policy",
         "parent_cache_policy",
+        "attempt_view",
     )
     for field in immutable:
         if getattr(left, field) != getattr(right, field):

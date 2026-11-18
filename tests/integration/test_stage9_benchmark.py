@@ -221,17 +221,24 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
         reference_answer="The maintenance interval is 30 days.",
     )
     observation = JsonlObservationSink(tmp_path / "synthetic" / "trace.jsonl")
+    second_query = BenchmarkQuery(
+        query_id="q2",
+        text="Which maintenance interval does the sample manual require?",
+        modality=Modality.TEXT,
+        query_type="extractive",
+        reference_answer="The maintenance interval is 30 days.",
+    )
     result = await run_quality(
-        [query],
+        [query, second_query],
         run_id="synthetic-integration",
         repetitions=2,
         policies=QualityPolicies(),
         retrieve=retrieval.run,
         observation=observation,
     )
-    assert len(result.cases) == 2
+    assert len(result.cases) == 4
     assert provider.gets == 0 and provider.puts == 0
-    assert web.calls == 0 and generation.calls == 2
+    assert web.calls == 0 and generation.calls == 4
     assert (tmp_path / "synthetic" / "trace.jsonl").is_file()
 
     assert local.last is not None
@@ -338,7 +345,7 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
         assert reranker_replay.hit10 == baseline.hit
         assert reranker_replay.recall10 == baseline.recall
         artifacts.append(reloaded)
-    assert len(artifacts) == 2
+    assert len(artifacts) == 4
     artifact = {
         "label": "SYNTHETIC_INTEGRATION",
         "readiness": readiness.status.value,

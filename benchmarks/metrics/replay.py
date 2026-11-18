@@ -97,8 +97,13 @@ def replay_case_metrics(
     gold_documents: dict[str, int],
     strict_evidence: dict[str, int] | None = None,
     attempt_view: AttemptSelection = AttemptSelection.FINAL_LOCAL_ATTEMPT,
+    allow_alternate_analysis: bool = False,
 ) -> ReplayResult:
     validate_case_artifact(artifact)
+    if not allow_alternate_analysis and artifact.attempt_view != attempt_view.value:
+        raise ObservationArtifactError(
+            "replay attempt view conflicts with artifact declaration"
+        )
     attempts = sorted({event.attempt_index for event in artifact.observations})
     if attempt_view is AttemptSelection.PER_ATTEMPT:
         selected_attempts = attempts
