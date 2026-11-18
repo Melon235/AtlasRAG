@@ -79,16 +79,20 @@ started.
   caller-supplied initialized Part I resources; the actual synthetic test
   executes the real Stage 5 sync/build entrypoint against PostgreSQL/Milvus.
 - Corpus Readiness Gate requiring exact source sets, complete ingestion,
-  canonical lineage, Milvus exact-set verification, Stage 5 `SAFE_TO_SERVE`,
-  and compatible pipeline fingerprint. The production readiness collector
-  validates each expected document's READY state, current revision identity,
-  current content/pipeline fingerprints, and exact source set, and requires the
-  real Stage 5 `verified_documents` count to match the expected corpus.
+  canonical lineage, Milvus exact-set verification, fresh Stage 5
+  `SAFE_TO_SERVE`, compatible pipeline fingerprint, snapshot identity,
+  verification execution ID, and evidence digest. The production readiness
+  collector performs a fresh authoritative verification call and validates each
+  expected document's READY state, current revision identity, content/pipeline
+  fingerprints, and exact source set.
 - Optional generic production observer boundary with a no-op default:
-  Dense/BM25 candidate identities/ranks/scores, RRF fusion ordering, reranker
-  ordering, selected Parent/Table identities, sufficiency status, corrective
-  routing, answer outcome/citations, latency and degradation. Production events
-  contain no benchmark IDs, qrels, gold labels, or reference answers.
+  Dense/BM25 candidate identities/ranks/stage-specific scores, RRF fusion
+  ordering, reranker ordering, selected Parent/Table identities, sufficiency
+  status, corrective routing, answer outcome/citations, latency and degradation.
+  Events carry a context-local production invocation ID and local attempt index;
+  no benchmark IDs, qrels, gold labels, or reference answers are present.
+  Dense and BM25 timings are branch-measured, not copied from a shared hybrid
+  duration. Terminal SAFE_FAILURE emits an ANSWER observation.
 - A forced Web-fallback regression exercises the disabled Web boundary and
   disabled Query Cache with zero external HTTP and zero Redis cache calls.
 - Synthetic integration derives relaxed-document metrics from captured reranker
@@ -107,8 +111,8 @@ started.
 ## 4. Verification
 
 - Baseline before Stage 9 implementation: 3226 passed / 106 deselected.
-- `make verify`: **3256 passed, 107 deselected**.
-- `make test-stage9`: **30 passed**.
+- `make verify`: **3258 passed, 107 deselected**.
+- `make test-stage9`: **32 passed**.
 - Local metadata snapshot (not committed; CC-BY-NC-4.0) was checksum-validated
   locally. CLI output:
   - revision `63f6b052ff83508b08e242db42263ee708815c26`

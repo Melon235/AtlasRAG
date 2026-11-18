@@ -20,6 +20,7 @@ class IngestionAccounting:
     sync_source_mutations: int
     verified_published_paths: tuple[str, ...]
     unchanged_source_paths: tuple[str, ...]
+    expected_source_paths: tuple[str, ...]
 
     @classmethod
     def from_actual(
@@ -28,6 +29,7 @@ class IngestionAccounting:
         *,
         sync_result: SyncResult | None,
         verified_published_paths: tuple[str, ...],
+        expected_source_paths: tuple[str, ...],
         unchanged_source_paths: tuple[str, ...] = (),
     ) -> IngestionAccounting:
         return cls(
@@ -43,16 +45,20 @@ class IngestionAccounting:
             ),
             verified_published_paths=verified_published_paths,
             unchanged_source_paths=unchanged_source_paths,
+            expected_source_paths=expected_source_paths,
         )
 
     @property
     def complete(self) -> bool:
-        expected = {item.relative_source_path for item in self.build_observations}
-        return (
-            bool(self.build_observations)
-            and all(item.outcome == "READY" for item in self.build_observations)
-            and self.sync_failed_builds == 0
-            and self.sync_technical_failures == 0
-            and self.sync_source_mutations == 0
-            and set(self.verified_published_paths) == expected
-        )
+        expected = set(self.expected_source_paths)
+        if not expected:
+            return False
+        if (
+            self.sync_failed_builds
+            or self.sync_technical_failures
+            or self.sync_source_mutations
+        ):
+            return False
+        if any(item.outcome != "READY" for item in self.build_observations):
+            return False
+        return set(self.verified_published_paths) == expected

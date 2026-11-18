@@ -59,6 +59,9 @@ async def test_ingestion_exact_set_and_readiness_gate(tmp_path: Path) -> None:
         pipeline_fingerprint_compatible=True,
         stage5_verified_documents=2,
         verification_id="a" * 64,
+        verification_execution_id="exec",
+        verification_evidence_digest="d" * 64,
+        snapshot_identity="snapshot",
     )
     gate = CorpusReadinessGate()
     ready = gate.assess(summary, evidence, expected_source_paths=("a.md", "b.md"))
@@ -73,6 +76,9 @@ async def test_ingestion_exact_set_and_readiness_gate(tmp_path: Path) -> None:
             pipeline_fingerprint_compatible=True,
             stage5_verified_documents=2,
             verification_id="a" * 64,
+            verification_execution_id="exec",
+            verification_evidence_digest="d" * 64,
+            snapshot_identity="snapshot",
         ),
         expected_source_paths=("a.md", "b.md"),
     )
@@ -212,6 +218,7 @@ async def test_readiness_collector_uses_fresh_verification() -> None:
         verifier=verifier,
         expected_source_paths=("a.md",),
         expected_pipeline_fingerprint=pipeline,
+        snapshot_identity="snapshot",
     )
     assert evidence.canonical_lineage_verified
     assert evidence.pipeline_fingerprint_compatible
@@ -311,6 +318,7 @@ async def test_readiness_negative_cases_and_freshness() -> None:
             verifier=verifier,
             expected_source_paths=expected,
             expected_pipeline_fingerprint=pipeline,
+            snapshot_identity="snapshot",
         )
         gate = CorpusReadinessGate().assess(
             IngestionSummary(
@@ -324,3 +332,24 @@ async def test_readiness_negative_cases_and_freshness() -> None:
         )
         assert gate.status is not ReadinessStatus.READY
         assert reason in gate.reasons
+
+
+def test_accounting_handles_noop_and_failure_without_synthetic_records() -> None:
+    from benchmarks.ingestion.accounting import IngestionAccounting
+    from benchmarks.ingestion.runner import IngestionRecord
+
+    noop = IngestionAccounting.from_actual(
+        (),
+        sync_result=None,
+        verified_published_paths=("a.md", "b.md"),
+        expected_source_paths=("a.md", "b.md"),
+        unchanged_source_paths=("a.md", "b.md"),
+    )
+    assert noop.complete
+    partial = IngestionAccounting.from_actual(
+        (IngestionRecord("a.md", "FAILED"),),
+        sync_result=None,
+        verified_published_paths=("a.md", "b.md"),
+        expected_source_paths=("a.md", "b.md"),
+    )
+    assert not partial.complete

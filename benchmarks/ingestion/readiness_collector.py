@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from hashlib import sha256
 from typing import Any, Protocol
+from uuid import uuid4
 
 from atlasrag.config.fingerprint import pipeline_fingerprint
 from atlasrag.config.models import RuntimeConfig
@@ -33,6 +34,7 @@ async def collect_production_readiness(
     verifier: Callable[[], Awaitable[GlobalSafetyResult]],
     expected_source_paths: tuple[str, ...],
     expected_pipeline_fingerprint: str,
+    snapshot_identity: str,
 ) -> ProductionReadinessEvidence:
     expected = tuple(sorted(expected_source_paths))
     if not expected or len(set(expected)) != len(expected):
@@ -72,18 +74,27 @@ async def collect_production_readiness(
         and not verification.unsafe_reasons
         and verification.required_deletion_failures == 0
     )
-    verification_id = sha256(
-        repr(
+    if not snapshot_identity.strip():
+        raise ValueError("snapshot_identity must be nonempty")
+    evidence_payload = (
+        expected,
+        expected_pipeline_fingerprint,
+        snapshot_identity,
+        verification.serving_safety.value,
+        verification.verified_documents,
+        verification.verified_records,
+        tuple(
             (
-                expected,
-                expected_pipeline_fingerprint,
-                verification.serving_safety.value,
-                verification.verified_documents,
-                verification.verified_records,
-                verification.unsafe_reasons,
+                stored.relative_source_path,
+                stored.document_id,
+                stored.current_revision_id,
+                stored.current_pipeline_fingerprint,
             )
-        ).encode("utf-8")
-    ).hexdigest()
+            for stored in by_path.values()
+        ),
+    )
+    verification_digest = sha256(repr(evidence_payload).encode("utf-8")).hexdigest()
+    verification_id = verification_digest
     return ProductionReadinessEvidence(
         canonical_lineage_verified=lineage_ok,
         milvus_exact_set_verified=stage5_safe and stage5_consistent,
@@ -94,6 +105,9 @@ async def collect_production_readiness(
         pipeline_fingerprint_compatible=pipeline_compatible,
         stage5_verified_documents=verification.verified_documents,
         verification_id=verification_id,
+        verification_execution_id=uuid4().hex,
+        verification_evidence_digest=verification_digest,
+        snapshot_identity=snapshot_identity,
     )
 
 

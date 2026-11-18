@@ -160,9 +160,13 @@ async def test_synthetic_stage9_real_ingestion_readiness_and_quality(
         verifier=fresh_verification,
         expected_source_paths=("guide.md",),
         expected_pipeline_fingerprint=pipeline_fingerprint(runtime),
+        snapshot_identity="synthetic-snapshot-v1",
     )
     readiness = CorpusReadinessGate().assess(
-        ingestion, evidence, expected_source_paths=("guide.md",)
+        ingestion,
+        evidence,
+        expected_source_paths=("guide.md",),
+        expected_snapshot_identity="synthetic-snapshot-v1",
     )
     assert readiness.status is ReadinessStatus.READY
 

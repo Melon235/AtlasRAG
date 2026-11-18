@@ -17,6 +17,9 @@ from atlasrag.domain.observation import (
     ObservationStage,
     ProductionObservation,
     ProductionObserver,
+    current_attempt_index,
+    current_invocation_id,
+    observation_attempt,
 )
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.domain.results import FinalResponse, RagCoreResult
@@ -60,7 +63,8 @@ def build_rag_core_subgraph(
     async def local_evidence(state: RagCoreState) -> dict[str, object]:
         request = state["current_local_request"]
         attempt = int(state.get("local_attempt_index", 0)) + 1
-        result = await services.local_evidence.run(request)
+        with observation_attempt(attempt):
+            result = await services.local_evidence.run(request)
         return {
             "local_attempt_index": attempt,
             "local_result": result,
@@ -78,6 +82,8 @@ def build_rag_core_subgraph(
                 stage=ObservationStage.ROUTING,
                 status=decision.action.value,
                 degraded=state["local_result"].execution_status.value != "OK",
+                invocation_id=current_invocation_id(),
+                attempt_index=state["local_attempt_index"],
             )
         )
         return {}
@@ -135,6 +141,8 @@ def build_rag_core_subgraph(
                     citation.citation_id for citation in final_response.citations
                 ),
                 degraded=outcome is AnswerExecutionOutcome.SAFE_FAILURE,
+                invocation_id=current_invocation_id(),
+                attempt_index=state["local_attempt_index"],
             )
         )
         return {
@@ -143,6 +151,15 @@ def build_rag_core_subgraph(
         }
 
     async def safe_failure(state: RagCoreState) -> dict[str, object]:
+        services.observer.observe(
+            ProductionObservation(
+                stage=ObservationStage.ANSWER,
+                status=AnswerExecutionOutcome.SAFE_FAILURE.value,
+                degraded=True,
+                invocation_id=current_invocation_id(),
+                attempt_index=current_attempt_index(),
+            )
+        )
         return {
             "final_response": FinalResponse(
                 answer_text=_SAFE_FAILURE_TEXT, citations=()

@@ -12,6 +12,8 @@ from atlasrag.domain.observation import (
     ObservationStage,
     ObservedCandidate,
     ProductionObservation,
+    current_attempt_index,
+    current_invocation_id,
 )
 from atlasrag.domain.retrieval import RetrievalCandidate
 from atlasrag.graphs.state.local_evidence import (
@@ -45,46 +47,46 @@ def build_local_evidence_subgraph(
                 selected_identities=selected,
                 latency_ms=latency_ms,
                 degraded=degraded,
+                invocation_id=current_invocation_id(),
+                attempt_index=current_attempt_index(),
             )
         )
 
     def _candidates(
-        values: Sequence[RetrievalCandidate],
+        values: Sequence[RetrievalCandidate], *, stage: ObservationStage
     ) -> tuple[ObservedCandidate, ...]:
+        scores = {
+            ObservationStage.DENSE: lambda c: c.scores.dense_score,
+            ObservationStage.BM25: lambda c: c.scores.bm25_score,
+            ObservationStage.FUSION: lambda c: c.scores.fusion_score,
+            ObservationStage.RERANKER: lambda c: c.scores.rerank_score,
+        }
         return tuple(
             ObservedCandidate(
                 identity=candidate.chunk_id,
                 rank=index,
                 document_id=candidate.document_id,
-                score=(
-                    candidate.scores.rerank_score
-                    if candidate.scores.rerank_score is not None
-                    else candidate.scores.fusion_score
-                    if candidate.scores.fusion_score is not None
-                    else candidate.scores.dense_score
-                    if candidate.scores.dense_score is not None
-                    else candidate.scores.bm25_score
-                ),
+                score=scores[stage](candidate),
             )
             for index, candidate in enumerate(values, start=1)
         )
 
     async def retrieve_candidates(state: LocalEvidenceState) -> dict[str, object]:
-        started = monotonic()
         result = await services.retrieval.retrieve(state["request"])
-        elapsed = (monotonic() - started) * 1000
         _observe(
             ObservationStage.DENSE,
             result.dense.status.value,
-            candidates=_candidates(result.dense.candidates),
-            latency_ms=elapsed,
+            candidates=_candidates(
+                result.dense.candidates, stage=ObservationStage.DENSE
+            ),
+            latency_ms=result.dense_latency_ms,
             degraded=result.dense.status.value != "OK",
         )
         _observe(
             ObservationStage.BM25,
             result.bm25.status.value,
-            candidates=_candidates(result.bm25.candidates),
-            latency_ms=elapsed,
+            candidates=_candidates(result.bm25.candidates, stage=ObservationStage.BM25),
+            latency_ms=result.bm25_latency_ms,
             degraded=result.bm25.status.value != "OK",
         )
         return {
@@ -102,7 +104,7 @@ def build_local_evidence_subgraph(
         _observe(
             ObservationStage.FUSION,
             "OK" if pool.candidates else "EMPTY",
-            candidates=_candidates(pool.candidates),
+            candidates=_candidates(pool.candidates, stage=ObservationStage.RERANKER),
             latency_ms=(monotonic() - started) * 1000,
         )
         return {"candidate_pool": pool}
@@ -116,7 +118,7 @@ def build_local_evidence_subgraph(
         _observe(
             ObservationStage.RERANKER,
             "DEGRADED" if pool.degraded else "OK",
-            candidates=_candidates(pool.candidates),
+            candidates=_candidates(pool.candidates, stage=ObservationStage.RERANKER),
             latency_ms=(monotonic() - started) * 1000,
             degraded=pool.degraded,
         )
