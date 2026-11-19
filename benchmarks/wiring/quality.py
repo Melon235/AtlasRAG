@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from atlasrag.application.answer import AnswerRunner
@@ -10,7 +11,7 @@ from atlasrag.application.local_evidence import LocalEvidenceRunner
 from atlasrag.application.rag_core import RagCoreRunner
 from atlasrag.application.retrieval import RetrievalRunner
 from atlasrag.domain.enums import WebExecutionStatus
-from atlasrag.domain.observation import ProductionObserver
+from atlasrag.domain.observation import ProductionObservation, ProductionObserver
 from atlasrag.domain.web import WebEvidenceResult
 from atlasrag.graphs.rag_core.subgraph import RagCoreServices
 from atlasrag.graphs.retrieval.graph import RetrievalGraphServices
@@ -21,6 +22,14 @@ from atlasrag.services.rag_core.boundary import AnswerInputBuilder
 from atlasrag.services.rag_core.completion import CompletionAssessor
 from atlasrag.services.rag_core.query import QueryConstructionService
 from atlasrag.services.rag_core.routing import CorrectiveRoutingService
+
+
+class CollectingObserver:
+    def __init__(self) -> None:
+        self.events: list[ProductionObservation] = []
+
+    def observe(self, event: ProductionObservation) -> None:
+        self.events.append(event)
 
 
 class QualityWiringError(ValueError):
@@ -84,3 +93,17 @@ def build_quality_retrieval(
         web,
         cache,
     )
+
+
+@dataclass(frozen=True)
+class QualityRuntime:
+    retrieval: RetrievalRunner
+    observer: CollectingObserver
+    queries: tuple[object, ...]
+    gold: dict[str, dict[str, int]]
+    pipeline_fingerprint: str
+    runtime_fingerprint: str
+    corpus_ready: bool
+    web: DisabledWebBoundary
+    cache_gets: object = field(default=lambda: 0)
+    cache_sets: object = field(default=lambda: 0)

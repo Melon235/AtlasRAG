@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 from pathlib import Path
 
@@ -35,6 +36,14 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--gold", type=Path, required=True)
         command.add_argument("--attempt-view", default="")
         command.add_argument("--alternate-analysis", action="store_true")
+    quality = sub.add_parser("run-quality")
+    quality.add_argument("--snapshot", type=Path, required=True)
+    quality.add_argument("--runtime-module", type=Path, required=True)
+    quality.add_argument("--gold", type=Path, required=True)
+    quality.add_argument("--output", type=Path, required=True)
+    quality.add_argument("--repetitions", type=int, default=1)
+    quality.add_argument("--max-cases", type=int, default=100)
+    quality.add_argument("--attempt-view", default="FINAL_LOCAL_ATTEMPT")
     check = sub.add_parser("check-artifacts")
     check.add_argument("--artifacts", type=Path, required=True)
     check.add_argument("--manifest", type=Path, required=True)
@@ -95,6 +104,10 @@ def _validate_run(
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "run-quality":
+            from benchmarks.quality_command import execute_quality_command
+
+            return asyncio.run(execute_quality_command(args))
         if args.command == "validate-snapshot":
             manifest = validate_snapshot(args.snapshot)
             print(

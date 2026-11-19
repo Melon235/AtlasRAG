@@ -181,9 +181,9 @@ formal Stage 9 benchmark claim:
   MinerU/Qwen/Milvus; only synthetic real-storage ingestion is accepted.
 - Production observation is implemented, but durable formal Benchmark
   orchestration and missing/duplicate observation validation are incomplete.
-- Executable `run-quality` / `run-performance` CLI and true Resume; the
-  production wiring factory exists but is not yet driven by an accepted CLI
-  workflow over real resources.
+- `run-performance`, true Resume, formal Open RAGBench execution and full
+  quality/negative/performance coverage. `run-quality` is accepted only for the
+  synthetic isolated fixture.
 - Full quality/negative/performance artifact coverage.
 - BEIR auxiliary evaluation and DeepEval secondary evaluator execution.
 - Reranker, sufficiency, Web representation, and compression experiments.
