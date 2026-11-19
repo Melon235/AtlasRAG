@@ -67,9 +67,11 @@ started.
   helpers. These are preflight checks only; Compose-volume ownership and
   no-concurrent-mutation guarantees are not yet implemented or verified.
 - Quality-case/run adapters around an injected retrieval callable, independent
-  benchmark sessions, repetitions, and enforced Web/Query Cache/Parent Cache
-  OFF policy flags. They are not yet composed by a production wiring factory;
-  tests use an injected fake callable.
+  benchmark sessions, and repetitions.
+- `benchmarks/wiring/quality.py` composes the real production
+  RetrievalRunner/RagCore/LocalEvidence services with a disabled Web boundary
+  and disabled Query Cache, and rejects non-bypassed Parent Cache configuration.
+  A non-interactive `run-quality` command over this factory is not yet accepted.
 - Benchmark-owned ingestion orchestration over an injected production
   `BuildRequest -> BuildResult` backend; it preserves Part I parsing/persistence/
   indexing/publication by delegation and never inserts gold/vectors directly.
@@ -179,7 +181,9 @@ formal Stage 9 benchmark claim:
   MinerU/Qwen/Milvus; only synthetic real-storage ingestion is accepted.
 - Production observation is implemented, but durable formal Benchmark
   orchestration and missing/duplicate observation validation are incomplete.
-- Executable `run-quality` / `run-performance` CLI and true Resume.
+- Executable `run-quality` / `run-performance` CLI and true Resume; the
+  production wiring factory exists but is not yet driven by an accepted CLI
+  workflow over real resources.
 - Full quality/negative/performance artifact coverage.
 - BEIR auxiliary evaluation and DeepEval secondary evaluator execution.
 - Reranker, sufficiency, Web representation, and compression experiments.
