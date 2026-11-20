@@ -62,6 +62,16 @@ Existing Part I path supports PDF ingestion through its configured parser
 runtime did not parse a real Open RAGBench PDF. Real parse/model behavior is
 **REQUIRES_PILOT_MEASUREMENT**.
 
+## 3a. Dry-run result
+
+`python -m benchmarks.cli pilot-preflight --snapshot /tmp/pilot-snapshot
+--selection docs/stages/stage-09-pilot-preflight/pilot_selection_manifest.json
+--gold docs/stages/stage-09-pilot-preflight/pilot_gold.json`
+
+Result: exit 2, `PILOT_AWAITING_AUTHORIZED_INGESTION`, 10 queries, 10 documents,
+mapping fingerprint `023cab6f351a667c24b667213366c71efe2cfb0301096169b80933692752403c`.
+This is a validation result, not a successful real corpus run.
+
 ## 4. Identity mapping assessment
 
 The deterministic candidate mapping is:
@@ -134,18 +144,24 @@ Proposed hard caps for the future pilot:
 - Maximum 10 GB additional benchmark storage.
 - No external Web provider calls.
 
-**Monetary cap: UNRESOLVED.** Reliable current DeepSeek pricing and the exact
-call mix are not verified in this preflight, so no dollar figure is invented.
-User approval must include a concrete spending cap before any paid call.
+**Monetary cap: conditionally proposed $0.20 USD, but B4 remains unresolved.**
+Official pricing (fetched 2026-11-20) lists `deepseek-flash` peak cache-miss
+input $0.30/M and output $1.20/M. A worst-case 100,000-token run (all output)
+costs at most $0.12; reserving input and rounding up gives a **$0.20 cap**.
+However, the repository still configures `deepseek-chat`; current compatibility
+with that model is not confirmed by the official model table. Configure and
+smoke-test an approved `deepseek-flash` identity under separate authorization
+before treating this as a firm budget.
+Pricing source: <https://api-docs.deepseek.com/quick_start/pricing>.
 
 ## 7. Blocker register
 
 | ID | Classification | Evidence | Impact / minimum resolution |
 |---|---|---|---|
-| B1 | BLOCKER | `benchmarks/quality_command.py` loads a caller-supplied runtime module; only `tests/integration/stage9_cli_runtime.py` exists and hardcodes synthetic corpus/queries. | Real pilot cannot run. Add a benchmark-owned real runtime adapter that ingests selected PDFs and loads official query/gold identities. |
-| B2 | BLOCKER | No accepted command exists for real selected-PDF ingestion/readiness. `verify-corpus` returns `SNAPSHOT_VALID` metadata only. | Readiness for the selected published set is unproven. Add approved ingestion + fresh Stage 5 verification. |
-| B3 | BLOCKER | The manifest writes `environment_class="SYNTHETIC_INTEGRATION"` and `run_id="synthetic-"` in `benchmarks/quality_command.py`. | A real run would be mislabeled. Add a pilot execution mode with immutable pilot identity. |
-| B4 | EXTERNAL_BLOCKER | No spending approval and no verified current provider rate. | Paid pilot cannot start. Obtain concrete monetary cap and provider authorization. |
+| B1 | RESOLVED (adapter; no real run) | `benchmarks/pilot/identity.py` loads the pinned snapshot/selection, resolves real queries, validates 10 official-to-canonical mappings, and `benchmarks/pilot/runtime.py` composes real production services with a shared observer. | Dry-run passes; adapter is unexercised against real PDFs until authorized ingestion. |
+| B2 | BLOCKED | `benchmarks/pilot/ingestion.py` delegates an exact selected PDF set to `BenchmarkIngestionRunner` and fresh Stage 5 readiness; its exact-set rejection test passes. No real parser/runtime module was executed and `verify-corpus` remains metadata-only. | Real selected-PDF ingestion/readiness remains unproven. Requires authorized ingestion and a real ingestion runtime module. |
+| B3 | RESOLVED (identity path) | `run-quality --mode pilot --selection ...` now derives a pilot run ID, `OPEN_RAGBENCH_PILOT` environment, git commit/dirty identity, snapshot/mapping provenance and persists the manifest before execution; synthetic remains separate. | Real pilot execution still awaits B2/B4. |
+| B4 | EXTERNAL_BLOCKER / UNRESOLVED | Official pricing page lists `deepseek-flash`/`deepseek-v4-pro`; repository config still references `deepseek-chat`. No current compatibility/smoke confirmation and no spending approval. | Conditional cap below, but configured model must be confirmed and user must approve before any paid call. |
 | B5 | REQUIRES_PILOT_MEASUREMENT | PDF parser, embedding, reranker memory/latency and token usage not measured. | Resource admission must be measured on the selected 10 PDFs before full run. |
 | D1 | DEFERRED | No true `run-performance`/Resume. | Does not block a Quality-only pilot. |
 | D2 | DEFERRED | Strict Parent/Table evidence mapping incomplete. | Report strict coverage as unavailable; do not block document-level pilot. |
@@ -159,11 +175,13 @@ implemented first.
 ```bash
 # 1. Isolated environment
 docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml up -d postgres redis etcd minio milvus
-# 2. Ingest selected PDFs (NOT IMPLEMENTED)
-# 3. Fresh Stage 5 verification (NOT IMPLEMENTED for real corpus)
+# 2. Ingest selected PDFs / fresh Stage 5 verification (orchestration exists;
+#    real runtime module is B2 blocker; NOT EXECUTED)
 # 4. Quality run (requires a real runtime module; NOT IMPLEMENTED)
 python -m benchmarks.cli run-quality \
+  --mode pilot \
   --snapshot <pinned-snapshot> \
+  --selection docs/stages/stage-09-pilot-preflight/pilot_selection_manifest.json \
   --runtime-module <real-open-ragbench-runtime> \
   --gold docs/stages/stage-09-pilot-preflight/pilot_gold.json \
   --output <pilot-run-dir> --repetitions 1 --max-cases 10
@@ -176,9 +194,9 @@ python -m benchmarks.cli compute-metrics --artifacts <pilot-run-dir>/observation
 
 ## 9. Readiness decision
 
-**PILOT_BLOCKED.** The official metric identities and a deterministic selection
-are verified, but the real pilot requires B1-B3 implementation and B4 explicit
-spending authorization. Until then, no real Open RAGBench quality metric may be
-reported.
+**PILOT_BLOCKED.** B1 and B3 are implemented and dry-run verified. B2 real
+selected-PDF ingestion/readiness is still blocked, and B4 provider model
+compatibility plus explicit spending approval are unresolved. Until then, no
+real Open RAGBench quality metric may be reported.
 
 No paid calls, PDF ingestion, pilot execution or full-corpus workload occurred.

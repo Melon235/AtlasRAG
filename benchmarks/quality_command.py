@@ -17,6 +17,7 @@ from benchmarks.observation.artifacts import (
     validate_case_artifact,
     write_case_artifact,
 )
+from benchmarks.pilot.identity import load_pilot_inputs
 from benchmarks.runners.manifests import (
     CaseStatus,
     RunLedger,
@@ -44,6 +45,15 @@ def _gold(path: Path) -> dict[str, dict[str, int]]:
     return result
 
 
+def _git(arguments: list[str]) -> str:
+    import subprocess
+
+    result = subprocess.run(
+        ["git", *arguments], capture_output=True, text=True, timeout=10
+    )
+    return result.stdout.strip() if result.returncode == 0 else "UNKNOWN"
+
+
 async def execute_quality_command(args: argparse.Namespace) -> int:
     spec = importlib.util.spec_from_file_location(
         "benchmark_runtime", args.runtime_module
@@ -56,27 +66,51 @@ async def execute_quality_command(args: argparse.Namespace) -> int:
     if inspect.isawaitable(runtime):
         runtime = await runtime
     snapshot = validate_snapshot(args.snapshot)
-    gold = _gold(args.gold)
+    pilot = args.mode == "pilot"
+    pilot_inputs = (
+        load_pilot_inputs(args.snapshot, args.selection, args.gold) if pilot else None
+    )
+    gold = pilot_inputs.gold_canonical if pilot_inputs is not None else _gold(args.gold)
     if not runtime.corpus_ready:
         raise ValueError("published corpus readiness is not accepted")
     if runtime.web.calls or runtime.web.external_calls:
         raise ValueError("Web must be OFF for Quality Run")
     if {query.query_id for query in runtime.queries} != set(gold):
         raise ValueError("gold identities do not match configured queries")
+    if pilot_inputs is not None:
+        if {query.query_id for query in runtime.queries} != set(
+            pilot_inputs.gold_canonical
+        ):
+            raise ValueError("pilot runtime query identities do not match selection")
+        if runtime.gold and runtime.gold != pilot_inputs.gold_canonical:
+            raise ValueError("pilot runtime gold does not match canonical mapping")
     planned = len(runtime.queries) * args.repetitions
     if planned <= 0 or planned > args.max_cases:
         raise ValueError("case count outside max-cases")
+    if args.output.exists() and any(args.output.iterdir()):
+        raise ValueError("output directory is not empty; refusing overwrite")
     args.output.mkdir(parents=True, exist_ok=True)
-    run_id = "synthetic-" + uuid4().hex
+    if pilot:
+        run_id = "pilot-" + uuid4().hex
+        environment_class = "OPEN_RAGBENCH_PILOT"
+        code_commit = _git(["rev-parse", "HEAD"])
+        dirty_tree = bool(_git(["status", "--porcelain"]))
+    else:
+        run_id = "synthetic-" + uuid4().hex
+        environment_class = "SYNTHETIC_INTEGRATION"
+        code_commit = "UNCOMMITTED"
+        dirty_tree = True
+    snapshot_sha = snapshot.files[0].sha256 if snapshot.files else ""
+    mapping_fingerprint = pilot_inputs.mapping_fingerprint if pilot_inputs else ""
     manifest = RunManifest(
         run_id=run_id,
         dataset_revision=snapshot.dataset_revision,
-        snapshot_sha256=snapshot.files[0].sha256 if snapshot.files else "",
+        snapshot_sha256=snapshot_sha,
         corpus_profile="FULL_CORPUS",
         query_profile="SUPPORTED",
         planned_queries=len(runtime.queries),
-        code_commit="UNCOMMITTED",
-        dirty_tree=True,
+        code_commit=code_commit,
+        dirty_tree=dirty_tree,
         pipeline_fingerprint=runtime.pipeline_fingerprint,
         runtime_fingerprint=runtime.runtime_fingerprint,
         evaluator_fingerprint="retrieval-metrics-v1",
@@ -85,9 +119,28 @@ async def execute_quality_command(args: argparse.Namespace) -> int:
         parent_cache_policy="BYPASSED",
         concurrency=1,
         repetitions=args.repetitions,
-        environment_class="SYNTHETIC_INTEGRATION",
+        environment_class=environment_class,
         attempt_view=args.attempt_view,
     )
+    (args.output / "manifest.json").write_text(
+        manifest.model_dump_json(), encoding="utf-8"
+    )
+    if pilot:
+        (args.output / "pilot_mapping.json").write_text(
+            json.dumps(
+                {
+                    "mapping_fingerprint": mapping_fingerprint,
+                    "snapshot_identity": pilot_inputs.snapshot_identity
+                    if pilot_inputs
+                    else "",
+                    "mappings": [m.__dict__ for m in pilot_inputs.mappings]
+                    if pilot_inputs
+                    else [],
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
     result = await run_quality(
         runtime.queries,
         run_id=run_id,
@@ -132,9 +185,6 @@ async def execute_quality_command(args: argparse.Namespace) -> int:
     status = validity.validity.value
     if status == "VALID" and (runtime.web.external_calls or cache_gets or cache_sets):
         status = "INVALID"
-    (args.output / "manifest.json").write_text(
-        manifest.model_dump_json(), encoding="utf-8"
-    )
     replay = []
     for artifact in artifacts:
         replay.append(

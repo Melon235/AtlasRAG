@@ -44,6 +44,12 @@ def _parser() -> argparse.ArgumentParser:
     quality.add_argument("--repetitions", type=int, default=1)
     quality.add_argument("--max-cases", type=int, default=100)
     quality.add_argument("--attempt-view", default="FINAL_LOCAL_ATTEMPT")
+    quality.add_argument("--mode", choices=("synthetic", "pilot"), default="synthetic")
+    quality.add_argument("--selection", type=Path)
+    preflight = sub.add_parser("pilot-preflight")
+    preflight.add_argument("--snapshot", type=Path, required=True)
+    preflight.add_argument("--selection", type=Path, required=True)
+    preflight.add_argument("--gold", type=Path, required=True)
     check = sub.add_parser("check-artifacts")
     check.add_argument("--artifacts", type=Path, required=True)
     check.add_argument("--manifest", type=Path, required=True)
@@ -104,6 +110,24 @@ def _validate_run(
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "pilot-preflight":
+            from benchmarks.pilot.identity import load_pilot_inputs, preflight_status
+
+            inputs = load_pilot_inputs(args.snapshot, args.selection, args.gold)
+            print(
+                json.dumps(
+                    {
+                        "status": preflight_status(False),
+                        "label": "PILOT_PREFLIGHT_ONLY",
+                        "queries": len(inputs.queries),
+                        "documents": len(inputs.mappings),
+                        "mapping_fingerprint": inputs.mapping_fingerprint,
+                        "snapshot_identity": inputs.snapshot_identity,
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
         if args.command == "run-quality":
             from benchmarks.quality_command import execute_quality_command
 
