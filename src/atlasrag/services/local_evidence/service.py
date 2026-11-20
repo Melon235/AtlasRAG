@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from atlasrag.domain.observation import NULL_OBSERVER, ProductionObserver
 from atlasrag.services.local_evidence.parent_context import ParentContextService
 from atlasrag.services.local_evidence.profile import LocalEvidenceProfile
 from atlasrag.services.local_evidence.reranking import RerankerService
@@ -22,3 +23,4 @@ class LocalEvidenceServices:
     parent_context: ParentContextService
     sufficiency: LocalEvidenceSufficiencyStrategy
     profile: LocalEvidenceProfile
+    observer: ProductionObserver = NULL_OBSERVER

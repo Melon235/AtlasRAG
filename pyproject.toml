@@ -64,6 +64,7 @@ addopts = [
     "not integration",
 ]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "integration: requires explicitly opted-in local infrastructure",
 ]

@@ -6,24 +6,21 @@ incrementally through independently verified implementation stages.
 The authoritative design is
 [`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md).
 
-**Current implementation stage: Stage 8 — Part II: RagCore / Cache**
+**Current implementation stage: Stage 9 — Part III: Benchmark**
 
-**Status: Stage 8 COMPLETE — pull request #9 open and unmerged**
+**Status: Stage 9 PARTIAL — harness implemented; formal benchmark BLOCKED**
 
-Stage 7 adds independent `web_evidence_subgraph` and `answer_subgraph`
-capabilities: SearXNG JSON search, SSRF-safe fetch/sanitize/budgets, direct and
-batch-summary Web evidence strategies, structured DeepSeek generation,
-identity compression, deterministic output review, bounded regeneration, and
-authoritative citation resolution. It adds no database migration and does not
-implement Query Construction, RagCore orchestration, Query Cache, RuntimeGate,
-Stage 8, or benchmarks.
+Stage 9 adds an external benchmark harness under `benchmarks/`, with frozen
+dataset snapshot validation, modality-filtered Open RAGBench metadata, corpus
+profiles, deterministic retrieval metrics, gold-evidence alignment, run
+manifests/validity, and static isolation checks. Formal FULL_CORPUS acceptance is
+blocked by the verified 396/604 document-profile conflict and resource limits;
+no benchmark quality/latency score is claimed.
 
-The evidence-bearing report is
-[`docs/stages/stage-07-part-ii-web-evidence-answer.md`](docs/stages/stage-07-part-ii-web-evidence-answer.md).
-Local, Stage 2–6 regression, real Qwen/MinerU, and local HTTP transport gates
-pass; real SearXNG and DeepSeek generation/batch-summary acceptance also pass.
-[pull request #8](https://github.com/Melon235/AtlasRAG/pull/8) remains open and
-deliberately unmerged.
+The Stage 9 report is
+[`docs/stages/stage-09-part-iii-benchmark.md`](docs/stages/stage-09-part-iii-benchmark.md).
+Stage 8 remains closed at `bda75fe`; Stage 9 is partial and its PR is open and
+unmerged.
 
 ## Setup
 

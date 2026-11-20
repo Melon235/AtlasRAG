@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import monotonic
 from typing import Protocol
 
 from atlasrag.domain.enums import (
@@ -43,6 +44,8 @@ from atlasrag.services.local_evidence.scope import (
 class HybridRetrieval:
     dense: RetrievalBranchResult
     bm25: RetrievalBranchResult
+    dense_latency_ms: float = 0.0
+    bm25_latency_ms: float = 0.0
 
 
 class PublishedSnapshot(Protocol):
@@ -233,14 +236,23 @@ class HybridRetrievalService:
                 ),
             )
         query = request.retrieval_query
+        dense_started = monotonic()
         dense = await self._dense.retrieve(
             query,
             filter_expression=compiled.expression,
             published=published,
         )
+        dense_latency = (monotonic() - dense_started) * 1000
+        bm25_started = monotonic()
         bm25 = await self._bm25.retrieve(
             query,
             filter_expression=compiled.expression,
             published=published,
         )
-        return HybridRetrieval(dense=dense, bm25=bm25)
+        bm25_latency = (monotonic() - bm25_started) * 1000
+        return HybridRetrieval(
+            dense=dense,
+            bm25=bm25,
+            dense_latency_ms=dense_latency,
+            bm25_latency_ms=bm25_latency,
+        )

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import uuid4
 
+from atlasrag.domain.observation import current_invocation_id, observation_invocation
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.domain.results import RagCoreResult
 from atlasrag.graphs.rag_core.subgraph import RagCoreServices, build_rag_core_subgraph
@@ -24,12 +26,20 @@ class RagCoreRunner:
 
     async def run(self, request: UserTurnRequest) -> RagCoreResult:
         request = UserTurnRequest.model_validate(request)
-        output = await self._graph.ainvoke({"request": request})
+        if current_invocation_id() is not None:
+            output = await self._graph.ainvoke({"request": request})
+        else:
+            with observation_invocation(uuid4().hex):
+                output = await self._graph.ainvoke({"request": request})
         return RagCoreResult.model_validate(output["result"])
 
     async def run_with_facts(self, request: UserTurnRequest) -> RagCoreExecution:
         request = UserTurnRequest.model_validate(request)
-        output = await self._state_graph.ainvoke({"request": request})
+        if current_invocation_id() is not None:
+            output = await self._state_graph.ainvoke({"request": request})
+        else:
+            with observation_invocation(uuid4().hex):
+                output = await self._state_graph.ainvoke({"request": request})
         return RagCoreExecution(
             result=RagCoreResult.model_validate(output["result"]),
             web_invoked="web_result" in output,

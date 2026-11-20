@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
+from atlasrag.domain.observation import current_invocation_id, observation_invocation
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.domain.results import FinalResponse
 from atlasrag.graphs.retrieval.graph import (
@@ -18,5 +21,9 @@ class RetrievalRunner:
         request = UserTurnRequest.model_validate(request)
         facts: dict[str, bool] = {}
         graph = build_retrieval_graph(self._services, execution_facts=facts)
-        output = await graph.ainvoke({"request": request})
+        if current_invocation_id() is not None:
+            output = await graph.ainvoke({"request": request})
+        else:
+            with observation_invocation(uuid4().hex):
+                output = await graph.ainvoke({"request": request})
         return FinalResponse.model_validate(output["final_response"])

@@ -1,0 +1,122 @@
+"""Immutable snapshot creation and validation."""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path, PurePosixPath
+
+from benchmarks.contracts.models import SnapshotFile, SnapshotManifest
+
+
+class SnapshotError(ValueError):
+    pass
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _safe_path(root: Path, relative_path: str) -> Path:
+    pure = PurePosixPath(relative_path)
+    if pure.is_absolute() or ".." in pure.parts or not pure.parts:
+        raise SnapshotError("unsafe snapshot path")
+    # Inspect the raw path components before resolve() can follow a link.
+    candidate = root
+    for part in pure.parts:
+        candidate = candidate / part
+        if candidate.is_symlink():
+            raise SnapshotError("symlink not allowed in snapshot path")
+    candidate = candidate.resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError as error:
+        raise SnapshotError("snapshot path escapes root") from error
+    return candidate
+
+
+def build_manifest(
+    root: Path,
+    *,
+    dataset_revision: str,
+    license: str,
+    source_url: str,
+    relative_files: tuple[str, ...],
+    total_documents: int,
+    total_queries: int,
+    supported_queries: int = 0,
+    modality_counts: dict[str, int] | None = None,
+    corpus_document_ids: tuple[str, ...] = (),
+) -> SnapshotManifest:
+    files = tuple(
+        SnapshotFile(
+            relative_path=item,
+            sha256=sha256_file(_safe_path(root, item)),
+            size_bytes=_safe_path(root, item).stat().st_size,
+        )
+        for item in relative_files
+    )
+    return SnapshotManifest(
+        dataset_revision=dataset_revision,
+        license=license,
+        source_url=source_url,
+        files=files,
+        total_documents=total_documents,
+        corpus_document_ids=corpus_document_ids,
+        total_queries=total_queries,
+        supported_queries=supported_queries,
+        modality_counts=modality_counts or {},
+    )
+
+
+def write_manifest(root: Path, manifest: SnapshotManifest) -> None:
+    (root / "manifest.json").write_text(
+        manifest.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def load_manifest(root: Path) -> SnapshotManifest:
+    path = root / "manifest.json"
+    if not path.is_file():
+        raise SnapshotError("manifest.json missing")
+    try:
+        return SnapshotManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise SnapshotError("invalid snapshot manifest") from error
+
+
+REQUIRED_SNAPSHOT_FILES = frozenset(
+    {"queries.json", "qrels.json", "answers.json", "pdf_urls.json"}
+)
+
+
+def validate_snapshot(root: Path) -> SnapshotManifest:
+    manifest = load_manifest(root)
+    expected = {item.relative_path for item in manifest.files}
+    missing_required = REQUIRED_SNAPSHOT_FILES - expected
+    if missing_required:
+        raise SnapshotError(
+            f"required snapshot files not declared: {sorted(missing_required)}"
+        )
+    actual = {
+        str(path.relative_to(root).as_posix())
+        for path in root.rglob("*")
+        if path.is_file() and path.name != "manifest.json"
+    }
+    unexpected = actual - expected
+    if unexpected:
+        raise SnapshotError(f"unexpected snapshot files: {sorted(unexpected)}")
+    for item in manifest.files:
+        path = _safe_path(root, item.relative_path)
+        if path.is_symlink():
+            raise SnapshotError(f"symlink not allowed: {item.relative_path}")
+        if not path.is_file():
+            raise SnapshotError(f"missing snapshot file: {item.relative_path}")
+        if path.stat().st_size != item.size_bytes:
+            raise SnapshotError(f"size mismatch: {item.relative_path}")
+        if sha256_file(path) != item.sha256:
+            raise SnapshotError(f"checksum mismatch: {item.relative_path}")
+    return manifest
