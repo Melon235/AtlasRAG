@@ -1,6 +1,6 @@
 # Stage 9 — Real Open RAGBench Pilot Preflight
 
-**Result: PILOT_BLOCKED (preflight partial).** The official metadata and proposed
+**Result: PILOT_AWAITING_AUTHORIZED_INGESTION.** The official metadata and proposed
 selection are verified, but the real pilot cannot execute through the current
 Benchmark CLI without a real Open RAGBench runtime/ingestion composition and
 explicit spending approval. No pilot ingestion or paid inference occurred.
@@ -62,7 +62,21 @@ Existing Part I path supports PDF ingestion through its configured parser
 runtime did not parse a real Open RAGBench PDF. Real parse/model behavior is
 **REQUIRES_PILOT_MEASUREMENT**.
 
-## 3a. Dry-run result
+## 3a. Offline synthetic PDF acceptance
+
+Actual command (run with the MinerU-enabled local environment):
+
+```bash
+python -m benchmarks.cli pilot-ingest   --snapshot /tmp/pilot-snapshot   --selection docs/stages/stage-09-pilot-preflight/pilot_selection_manifest.json   --gold docs/stages/stage-09-pilot-preflight/pilot_gold.json   --pdf-directory /tmp/pilot-pdfs   --runtime-module tests/integration/stage9_pilot_ingestion_runtime.py   --output /tmp/pilot-ingest-out2
+```
+
+Observed exit code 0, `READY`, 10/10 published paths, `SAFE_TO_SERVE`, canonical
+lineage and exact Milvus set verified. Ten synthetic copies of the local
+`tests/fixtures/stage3/simple.pdf` were parsed by real MinerU; this is **not**
+official Open RAGBench PDF content. See
+[`synthetic_pdf_readiness.json`](stage-09-pilot-preflight/synthetic_pdf_readiness.json).
+
+## 3b. Dry-run result
 
 `python -m benchmarks.cli pilot-preflight --snapshot /tmp/pilot-snapshot
 --selection docs/stages/stage-09-pilot-preflight/pilot_selection_manifest.json
@@ -159,8 +173,8 @@ Pricing source: <https://api-docs.deepseek.com/quick_start/pricing>.
 | ID | Classification | Evidence | Impact / minimum resolution |
 |---|---|---|---|
 | B1 | RESOLVED (adapter; no real run) | `benchmarks/pilot/identity.py` loads the pinned snapshot/selection, resolves real queries, validates 10 official-to-canonical mappings, and `benchmarks/pilot/runtime.py` composes real production services with a shared observer. | Dry-run passes; adapter is unexercised against real PDFs until authorized ingestion. |
-| B2 | BLOCKED | `benchmarks/pilot/ingestion.py` delegates an exact selected PDF set to `BenchmarkIngestionRunner` and fresh Stage 5 readiness; its exact-set rejection test passes. No real parser/runtime module was executed and `verify-corpus` remains metadata-only. | Real selected-PDF ingestion/readiness remains unproven. Requires authorized ingestion and a real ingestion runtime module. |
-| B3 | RESOLVED (identity path) | `run-quality --mode pilot --selection ...` now derives a pilot run ID, `OPEN_RAGBENCH_PILOT` environment, git commit/dirty identity, snapshot/mapping provenance and persists the manifest before execution; synthetic remains separate. | Real pilot execution still awaits B2/B4. |
+| B2 | RESOLVED (offline synthetic PDF acceptance) | `python -m benchmarks.cli pilot-ingest ...` executed real MinerU parsing on 10 synthetic PDFs (copies of `tests/fixtures/stage3/simple.pdf` under selected identities), real PostgreSQL/Milvus persistence and fresh Stage 5 verification. Result: READY, 10/10 paths, SAFE_TO_SERVE, exact Milvus set, canonical lineage verified. Evidence: `synthetic_pdf_readiness.json`. | Real selected Open RAGBench PDFs have NOT been ingested; authorized ingestion remains required. |
+| B3 | RESOLVED (identity path) | `run-quality --mode pilot` derives a pilot run ID, `OPEN_RAGBENCH_PILOT` environment, git commit/dirty identity, snapshot/mapping provenance, persists the manifest before execution, requires durable READY readiness evidence matching the mapping/source set, and keeps synthetic mode separate. | Real pilot execution still awaits B4 and authorized ingestion. |
 | B4 | EXTERNAL_BLOCKER / UNRESOLVED | Official pricing page lists `deepseek-flash`/`deepseek-v4-pro`; repository config still references `deepseek-chat`. No current compatibility/smoke confirmation and no spending approval. | Conditional cap below, but configured model must be confirmed and user must approve before any paid call. |
 | B5 | REQUIRES_PILOT_MEASUREMENT | PDF parser, embedding, reranker memory/latency and token usage not measured. | Resource admission must be measured on the selected 10 PDFs before full run. |
 | D1 | DEFERRED | No true `run-performance`/Resume. | Does not block a Quality-only pilot. |
@@ -176,7 +190,7 @@ implemented first.
 # 1. Isolated environment
 docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml up -d postgres redis etcd minio milvus
 # 2. Ingest selected PDFs / fresh Stage 5 verification (orchestration exists;
-#    real runtime module is B2 blocker; NOT EXECUTED)
+#    offline synthetic PDF path verified; real selected PDFs NOT EXECUTED)
 # 4. Quality run (requires a real runtime module; NOT IMPLEMENTED)
 python -m benchmarks.cli run-quality \
   --mode pilot \
@@ -194,9 +208,10 @@ python -m benchmarks.cli compute-metrics --artifacts <pilot-run-dir>/observation
 
 ## 9. Readiness decision
 
-**PILOT_BLOCKED.** B1 and B3 are implemented and dry-run verified. B2 real
-selected-PDF ingestion/readiness is still blocked, and B4 provider model
-compatibility plus explicit spending approval are unresolved. Until then, no
-real Open RAGBench quality metric may be reported.
+**PILOT_AWAITING_AUTHORIZED_INGESTION.** B1, B2 (offline synthetic PDF path)
+and B3 are implemented and verified. B4 provider model compatibility plus
+explicit spending approval remain unresolved, and the selected real PDFs have
+not been ingested. Until authorized, no real Open RAGBench quality metric may
+be reported.
 
 No paid calls, PDF ingestion, pilot execution or full-corpus workload occurred.

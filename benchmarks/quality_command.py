@@ -198,7 +198,7 @@ async def execute_quality_command(args: argparse.Namespace) -> int:
         json.dumps(
             {
                 "status": status,
-                "label": "SYNTHETIC_INTEGRATION",
+                "label": "OPEN_RAGBENCH_PILOT" if pilot else "SYNTHETIC_INTEGRATION",
                 "run_id": run_id,
                 "queries": [query.query_id for query in runtime.queries],
                 "cases": len(artifacts),

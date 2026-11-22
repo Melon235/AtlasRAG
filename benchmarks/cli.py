@@ -46,6 +46,14 @@ def _parser() -> argparse.ArgumentParser:
     quality.add_argument("--attempt-view", default="FINAL_LOCAL_ATTEMPT")
     quality.add_argument("--mode", choices=("synthetic", "pilot"), default="synthetic")
     quality.add_argument("--selection", type=Path)
+    quality.add_argument("--readiness", type=Path)
+    ingest = sub.add_parser("pilot-ingest")
+    ingest.add_argument("--snapshot", type=Path, required=True)
+    ingest.add_argument("--selection", type=Path, required=True)
+    ingest.add_argument("--gold", type=Path, required=True)
+    ingest.add_argument("--pdf-directory", type=Path, required=True)
+    ingest.add_argument("--runtime-module", type=Path, required=True)
+    ingest.add_argument("--output", type=Path, required=True)
     preflight = sub.add_parser("pilot-preflight")
     preflight.add_argument("--snapshot", type=Path, required=True)
     preflight.add_argument("--selection", type=Path, required=True)
@@ -110,6 +118,10 @@ def _validate_run(
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "pilot-ingest":
+            from benchmarks.pilot.ingestion_command import execute_pilot_ingest
+
+            return asyncio.run(execute_pilot_ingest(args))
         if args.command == "pilot-preflight":
             from benchmarks.pilot.identity import load_pilot_inputs, preflight_status
 
