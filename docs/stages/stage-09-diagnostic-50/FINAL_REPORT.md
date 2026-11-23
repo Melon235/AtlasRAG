@@ -117,3 +117,26 @@ diagnostic observation, not evidence that the strategies are equivalent.
 DeepEval real Judge evaluation was **not** executed; it remains at the paid
 authorization gate. The adapter and verified 4.2.4 signatures are ready, but a
 real answer/context capture and fresh paid batch are still required.
+
+## Real DeepEval execution gate
+
+The deterministic 20-query evaluation panel was frozen in
+`evaluation_panel_20.json` (16 TEXT, 4 TEXT_TABLE, seed 20261124) before any
+end-to-end output was observed.
+
+No real DeepEval execution was performed:
+
+- No fresh paid batch was explicitly authorized by the user.
+- No real answer/context capture exists because the end-to-end production run
+  was not executed.
+- The historical 40-call budget is exhausted and was not reused.
+- DeepEval adapter accepts injected metric/test-case factories; the complete
+  fake-metric evaluation path is tested.
+- Real DeepEval 4.2.4 signatures were verified in an isolated environment.
+
+Status: `DEEPEVAL_ADAPTER_READY` (offline); real evaluation
+`AWAITING_PAID_AUTHORIZATION`.
+
+The diagnostic CLI k-mapping bug was fixed: `_stage_metrics` now uses k=1 for
+Hit@1, k=5 for Hit@5/Recall@5 and k=10 for Hit@10/Recall@10/MRR@10/nDCG@10,
+with a reporting-path regression.

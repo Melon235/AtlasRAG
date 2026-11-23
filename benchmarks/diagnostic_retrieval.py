@@ -11,7 +11,23 @@ from uuid import uuid4
 
 from atlasrag.domain.observation import ObservationStage, observation_invocation
 from atlasrag.domain.requests import LocalRetrievalRequest
-from benchmarks.metrics.retrieval import RankedUnit, evaluate_relaxed_document
+from benchmarks.contracts.models import RankedUnit
+from benchmarks.metrics.retrieval import evaluate_relaxed_document
+
+
+def _stage_metrics(ranked: list[RankedUnit], gold: dict[str, int]) -> dict[str, float]:
+    m1 = evaluate_relaxed_document(ranked, gold, k=1)
+    m5 = evaluate_relaxed_document(ranked, gold, k=5)
+    m10 = evaluate_relaxed_document(ranked, gold, k=10)
+    return {
+        "hit1": m1.hit,
+        "hit5": m5.hit,
+        "hit10": m10.hit,
+        "recall5": m5.recall,
+        "recall10": m10.recall,
+        "mrr10": m10.mrr,
+        "ndcg10": m10.ndcg,
+    }
 
 
 async def execute(args: argparse.Namespace) -> int:
@@ -58,15 +74,8 @@ async def execute(args: argparse.Namespace) -> int:
                 for item in event.candidates
                 if item.document_id
             ]
-            metrics = evaluate_relaxed_document(ranked, gold, k=10)
             stages[stage.value] = {
-                "hit1": metrics.hit,
-                "hit5": metrics.hit,
-                "hit10": metrics.hit,
-                "recall5": metrics.recall,
-                "recall10": metrics.recall,
-                "mrr10": metrics.mrr,
-                "ndcg10": metrics.ndcg,
+                **_stage_metrics(ranked, gold),
                 "latency_ms": event.latency_ms,
                 "ranked_documents": [item.document_id for item in ranked],
             }

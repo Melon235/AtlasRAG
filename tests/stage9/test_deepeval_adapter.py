@@ -41,3 +41,22 @@ def test_adapter_requires_deepeval_when_record_is_complete() -> None:
         pytest.skip(
             "DeepEval is installed in this environment; see installed-adapter test"
         )
+
+
+def test_complete_fake_metric_evaluation_path() -> None:
+    class Metric:
+        score = 0.75
+        reason = "fake judge"
+
+        def measure(self, test_case: object) -> None:
+            assert test_case is not None
+
+    scores = evaluate_record(
+        record(),
+        object(),
+        metric_factory=lambda judge, threshold: [("faithfulness", Metric())],
+        test_case_factory=lambda **kwargs: kwargs,
+    )
+    assert scores[0].metric == "faithfulness"
+    assert scores[0].score == 0.75
+    assert scores[0].status == "EVALUATED"

@@ -68,16 +68,23 @@ def _metrics(judge: object, threshold: float) -> list[tuple[str, Any]]:
 
 
 def evaluate_record(
-    record: EvaluationRecord, judge: object, *, threshold: float = 0.5
+    record: EvaluationRecord,
+    judge: object,
+    *,
+    threshold: float = 0.5,
+    metric_factory: Callable[[object, float], list[tuple[str, Any]]] | None = None,
+    test_case_factory: Callable[..., object] | None = None,
 ) -> list[MetricScore]:
     unavailable = record.validate()
     if unavailable is not None:
         return [MetricScore("deepeval", None, unavailable, "NOT_EVALUABLE")]
-    try:
-        from deepeval.test_case import LLMTestCase  # type: ignore[import-not-found]
-    except ImportError as error:
-        raise DeepEvalUnavailableError("deepeval is not installed") from error
-    test_case = LLMTestCase(
+    if test_case_factory is None:
+        try:
+            from deepeval.test_case import LLMTestCase  # type: ignore[import-not-found]
+        except ImportError as error:
+            raise DeepEvalUnavailableError("deepeval is not installed") from error
+        test_case_factory = LLMTestCase
+    test_case = test_case_factory(
         input=record.input,
         actual_output=record.actual_output,
         expected_output=record.expected_output,
@@ -85,7 +92,12 @@ def evaluate_record(
         context=list(record.retrieval_context),
     )
     output: list[MetricScore] = []
-    for name, metric in _metrics(judge, threshold):
+    metrics = (
+        metric_factory(judge, threshold)
+        if metric_factory is not None
+        else _metrics(judge, threshold)
+    )
+    for name, metric in metrics:
         try:
             metric.measure(test_case)
             output.append(
