@@ -1,6 +1,6 @@
 # Stage 9 — Real Open RAGBench Pilot Preflight
 
-**Result: PILOT_AWAITING_AUTHORIZED_INGESTION.** The official metadata and proposed
+**Result: PILOT_EXECUTED (bounded 10-query pilot).** The official metadata and proposed
 selection are verified, but the real pilot cannot execute through the current
 Benchmark CLI without a real Open RAGBench runtime/ingestion composition and
 explicit spending approval. No pilot ingestion or paid inference occurred.
@@ -208,10 +208,8 @@ python -m benchmarks.cli compute-metrics --artifacts <pilot-run-dir>/observation
 
 ## 9. Readiness decision
 
-**PILOT_AWAITING_AUTHORIZED_INGESTION.** B1, B2 (offline synthetic PDF path)
-and B3 are implemented and verified. B4 provider model compatibility plus
-explicit spending approval remain unresolved, and the selected real PDFs have
-not been ingested. Until authorized, no real Open RAGBench quality metric may
-be reported.
+**PILOT_EXECUTED.** The authorized 10-query pilot was completed with real PDFs,
+real MinerU/Qwen/BGE/Milvus/PostgreSQL and DeepSeek `deepseek-flash`. Results are
+in `stage-09-pilot-run/`. This remains a 10-query pilot, not a full benchmark.
 
 No paid calls, PDF ingestion, pilot execution or full-corpus workload occurred.

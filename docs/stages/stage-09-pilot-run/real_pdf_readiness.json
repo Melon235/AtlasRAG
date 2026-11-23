@@ -1,0 +1,130 @@
+{
+  "canonical_documents": [
+    "doc_348aa63eaa78a4feafa5e16202bee5b7c584162eeea2cc7b1e4ef4065c209572",
+    "doc_404505592d7ce62d2cff3917d83674843b3c244796991d99e205d070d984a50e",
+    "doc_6cd9703f6c02425c5eb872a5298185121df1dddf1294348bf683596683a4fc55",
+    "doc_6f6c2c89caf4669269dd5b7d7d12dcd2ae64ba89846130c79b627708440f619b",
+    "doc_6fcd6b0d77bd521b331c5ca8692ea179875e73e723e7adcfa530248638edf173",
+    "doc_cb1ddf52ca81886d57e0bf11ac5be3aac71e92ce945b7934815295c2ecaa3000",
+    "doc_cd007e8db5763b990cd111c4e5320a74c44d02228815dac5d4d7340952fcb4c1",
+    "doc_da9320988e85d9a97c700a893b1e2ec8d0146d7f574f5db805a0804de0a5112c",
+    "doc_e21df4b46ae48485125c100b4f5d6178fa1f2bbf5e943505b0c2966c440b710f",
+    "doc_e909d58c9f2beb1bd516ef7aa00b551fa486c612dfdd3210fd64d0484e1488ab"
+  ],
+  "gate_reasons": [],
+  "ingestion": {
+    "complete": true,
+    "expected_count": 10,
+    "failure_reasons": [],
+    "records": [
+      {
+        "document_id": "doc_6cd9703f6c02425c5eb872a5298185121df1dddf1294348bf683596683a4fc55",
+        "failure_reason": null,
+        "outcome": "READY",
+        "relative_source_path": "2403.00422v2.pdf",
+        "revision_id": "rev_588252411ea7e8cc58b32ba4b3d2789aab35f5352c618073ad4152afcd17d678"
+      },
+      {
+        "document_id": "doc_404505592d7ce62d2cff3917d83674843b3c244796991d99e205d070d984a50e",
+        "failure_reason": null,
+        "outcome": "READY",
+        "relative_source_path": "2403.08753v2.pdf",
+        "revision_id": "rev_9ecfa5464572f67df7da62d76757672b31af829b05c2fd35605399133642089f"
+      },
+      {
+        "document_id": "doc_da9320988e85d9a97c700a893b1e2ec8d0146d7f574f5db805a0804de0a5112c",
+        "failure_reason": null,
+        "outcome": "READY",
+        "relative_source_path": "2403.13015v2.pdf",
+        "revision_id": "rev_2d597762451000e18e911154d66438d863e33ffb88e4a4c60b4f26eeb998a551"
+      },
+      {
+        "document_id": "doc_cb1ddf52ca81886d57e0bf11ac5be3aac71e92ce945b7934815295c2ecaa3000",
+        "failure_reason": null,
+        "outcome": "READY",
+        "relative_source_path": "2404.18137v2.pdf",
+        "revision_id": "rev_fabd090cb97e82a75f665536dca880bceaf3f59bead53b5672d0bfd59b0a9cd3"
+      },
+      {
+        "document_id": "doc_e21df4b46ae48485125c100b4f5d6178fa1f2bbf5e943505b0c2966c440b710f",
+        "failure_reason": null,
+        "outcome": "READY",
+        "relative_source_path": "2410.14317v2.pdf",
+        "revision_id": "rev_aef87921a8ad727f45ccb16fe1eb481ee79176f8000b7cfc865c54b198193572"
+      },
+      {
+        "document_id": "doc_348aa63eaa78a4feafa5e16202bee5b7c584162eeea2cc7b1e4ef4065c209572",
+        "failure_reason": null,
+        "outcome": "READY",
+        "relative_source_path": "2410.14997v2.pdf",
+        "revision_id": "rev_2ebb04ea0802b6e25a16a44d1a353bdd26ffa902e40dc6bd8ffabbc4c227f246"
+      },
+      {
+        "document_id": "doc_6f6c2c89caf4669269dd5b7d7d12dcd2ae64ba89846130c79b627708440f619b",
+        "failure_reason": null,
+        "outcome": "READY",
+        "relative_source_path": "2411.11841v3.pdf",
+        "revision_id": "rev_81e15e28dc3487e2c885e910b95e349dcbca586f0e4cab2d0c176763d6cbb64b"
+      },
+      {
+        "document_id": "doc_6fcd6b0d77bd521b331c5ca8692ea179875e73e723e7adcfa530248638edf173",
+        "failure_reason": null,
+        "outcome": "READY",
+        "relative_source_path": "2412.04468v2.pdf",
+        "revision_id": "rev_0cc934ad2743b02c604dae01057f7f994c313857ccc8a4da245f1c64e2312b8c"
+      },
+      {
+        "document_id": "doc_cd007e8db5763b990cd111c4e5320a74c44d02228815dac5d4d7340952fcb4c1",
+        "failure_reason": null,
+        "outcome": "READY",
+        "relative_source_path": "2412.13914v3.pdf",
+        "revision_id": "rev_d6daf7de49edf7cfaaa477f2e9bc3263264d16d8771fb43b924a2de54894fd46"
+      },
+      {
+        "document_id": "doc_e909d58c9f2beb1bd516ef7aa00b551fa486c612dfdd3210fd64d0484e1488ab",
+        "failure_reason": null,
+        "outcome": "READY",
+        "relative_source_path": "2412.14624v2.pdf",
+        "revision_id": "rev_0dea0cfcb73dd864a8131387a625423b6aa27e3d09bfc59d28b1a7d45883ec6e"
+      }
+    ]
+  },
+  "label": "PILOT_INGESTION",
+  "mapping_fingerprint": "023cab6f351a667c24b667213366c71efe2cfb0301096169b80933692752403c",
+  "readiness": {
+    "canonical_lineage_verified": true,
+    "milvus_exact_set_verified": true,
+    "pipeline_fingerprint_compatible": true,
+    "published_source_paths": [
+      "2403.00422v2.pdf",
+      "2403.08753v2.pdf",
+      "2403.13015v2.pdf",
+      "2404.18137v2.pdf",
+      "2410.14317v2.pdf",
+      "2410.14997v2.pdf",
+      "2411.11841v3.pdf",
+      "2412.04468v2.pdf",
+      "2412.13914v3.pdf",
+      "2412.14624v2.pdf"
+    ],
+    "serving_safety": "SAFE_TO_SERVE",
+    "snapshot_identity": "023cab6f351a667c24b667213366c71efe2cfb0301096169b80933692752403c",
+    "stage5_verified_documents": 10,
+    "verification_evidence_digest": "68ad74caee6c3b0b64594352209de84bbbde2b72c4edabca0dafa477e5286b8b",
+    "verification_execution_id": "afe1158c879144048eb94cbca0b8cadc",
+    "verification_id": "68ad74caee6c3b0b64594352209de84bbbde2b72c4edabca0dafa477e5286b8b"
+  },
+  "selected_paths": [
+    "2403.00422v2.pdf",
+    "2403.08753v2.pdf",
+    "2403.13015v2.pdf",
+    "2404.18137v2.pdf",
+    "2410.14317v2.pdf",
+    "2410.14997v2.pdf",
+    "2411.11841v3.pdf",
+    "2412.04468v2.pdf",
+    "2412.13914v3.pdf",
+    "2412.14624v2.pdf"
+  ],
+  "status": "READY"
+}

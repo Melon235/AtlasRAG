@@ -7,6 +7,7 @@ import importlib.util
 import inspect
 import json
 from pathlib import Path
+from time import monotonic
 from uuid import uuid4
 
 from benchmarks.metrics.replay import AttemptSelection, replay_case_metrics
@@ -141,6 +142,7 @@ async def execute_quality_command(args: argparse.Namespace) -> int:
             ),
             encoding="utf-8",
         )
+    started = monotonic()
     result = await run_quality(
         runtime.queries,
         run_id=run_id,
@@ -182,9 +184,23 @@ async def execute_quality_command(args: argparse.Namespace) -> int:
     validity = assess_validity(planned, ledger.read())
     cache_gets = runtime.cache_gets()
     cache_sets = runtime.cache_sets()
+    usage = getattr(runtime, "provider_usage", None)
+    query_usage = usage.query if usage is not None else []
+    generation_usage = usage.generation if usage is not None else []
+    calls = len(query_usage) + len(generation_usage)
+    input_tokens = sum(item["prompt_tokens"] for item in query_usage + generation_usage)
+    output_tokens = sum(
+        item["completion_tokens"] for item in query_usage + generation_usage
+    )
+    total_tokens = input_tokens + output_tokens
+    # Conservative peak deepseek-flash rates: $0.30/M input, $1.20/M output.
+    cost = input_tokens * 0.30 / 1_000_000 + output_tokens * 1.20 / 1_000_000
+    elapsed = monotonic() - started
     status = validity.validity.value
     if status == "VALID" and (runtime.web.external_calls or cache_gets or cache_sets):
         status = "INVALID"
+    if calls > 40 or total_tokens > 100_000 or cost > 0.20 or elapsed > 7200:
+        status = "LIMIT_EXCEEDED"
     replay = []
     for artifact in artifacts:
         replay.append(
@@ -212,6 +228,14 @@ async def execute_quality_command(args: argparse.Namespace) -> int:
                 "cache_sets": cache_sets,
                 "artifacts": str(args.output / "observation_cases.jsonl"),
                 "manifest": str(args.output / "manifest.json"),
+                "provider_usage": {
+                    "calls": calls,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": total_tokens,
+                    "cost_usd_peak_bound": round(cost, 6),
+                    "elapsed_seconds": round(elapsed, 3),
+                },
                 "replay_stages": [
                     [stage.stage.value, stage.attempt_index]
                     for item in replay
