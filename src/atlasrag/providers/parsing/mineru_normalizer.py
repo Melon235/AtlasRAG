@@ -579,6 +579,8 @@ class _MinerUNormalizer:
             # outside the canonical text/table element model and are skipped
             # rather than failing the entire document.
             return index
+        elif _REAL_LAYOUT.get():
+            return index
         else:
             _invalid()
         return index

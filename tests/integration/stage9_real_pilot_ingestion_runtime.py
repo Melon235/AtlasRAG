@@ -62,6 +62,19 @@ async def build_ingestion_runtime() -> SimpleNamespace:
         async def build(self, request: Any) -> BuildResult:
             source = request.source
             root = source.knowledge_directory
+            async with factory() as unit:
+                existing = await unit.documents.list()
+                for document in existing:
+                    if (
+                        document.relative_source_path == source.relative_source_path
+                        and document.current_revision_id is not None
+                        and document.ingestion_status.value == "READY"
+                    ):
+                        return BuildResult(
+                            document_id=document.document_id,
+                            revision_id=document.current_revision_id,
+                            outcome="READY",
+                        )
             env = dict(os.environ)
             env["STAGE9_PDF_ROOT"] = str(root)
             env["STAGE9_PDF_RELATIVE"] = source.relative_source_path

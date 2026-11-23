@@ -8,6 +8,7 @@ import inspect
 import json
 from pathlib import Path
 from time import monotonic
+from typing import Any
 from uuid import uuid4
 
 from benchmarks.metrics.replay import AttemptSelection, replay_case_metrics
@@ -46,6 +47,43 @@ def _gold(path: Path) -> dict[str, dict[str, int]]:
     return result
 
 
+def _verify_pilot_readiness(
+    args: argparse.Namespace, inputs: Any, runtime: Any
+) -> None:
+    if args.readiness is None:
+        raise ValueError("pilot mode requires durable readiness evidence")
+    evidence = json.loads(args.readiness.read_text(encoding="utf-8"))
+    if evidence.get("status") != "READY":
+        raise ValueError("pilot readiness evidence is not READY")
+    if evidence.get("mapping_fingerprint") != inputs.mapping_fingerprint:
+        raise ValueError("pilot readiness mapping fingerprint mismatch")
+    if sorted(evidence.get("selected_paths", [])) != sorted(
+        m.local_source_path for m in inputs.mappings
+    ):
+        raise ValueError("pilot readiness source set mismatch")
+    if sorted(evidence.get("canonical_documents", [])) != sorted(
+        m.canonical_document_id for m in inputs.mappings
+    ):
+        raise ValueError("pilot readiness canonical set mismatch")
+    if evidence.get("pipeline_fingerprint") != runtime.pipeline_fingerprint:
+        raise ValueError("pilot readiness pipeline fingerprint mismatch")
+    readiness = evidence.get("readiness", {})
+    if readiness.get("serving_safety") != "SAFE_TO_SERVE":
+        raise ValueError("pilot readiness is not SAFE_TO_SERVE")
+    if not readiness.get("canonical_lineage_verified"):
+        raise ValueError("pilot canonical lineage unverified")
+    if not readiness.get("milvus_exact_set_verified"):
+        raise ValueError("pilot Milvus exact set unverified")
+    if not readiness.get("pipeline_fingerprint_compatible"):
+        raise ValueError("pilot pipeline fingerprint incompatible")
+    if readiness.get("stage5_verified_documents") != len(inputs.mappings):
+        raise ValueError("pilot Stage 5 count mismatch")
+    if not readiness.get("verification_execution_id"):
+        raise ValueError("pilot verification execution unbound")
+    if not readiness.get("verification_evidence_digest"):
+        raise ValueError("pilot verification digest missing")
+
+
 def _git(arguments: list[str]) -> str:
     import subprocess
 
@@ -79,6 +117,7 @@ async def execute_quality_command(args: argparse.Namespace) -> int:
     if {query.query_id for query in runtime.queries} != set(gold):
         raise ValueError("gold identities do not match configured queries")
     if pilot_inputs is not None:
+        _verify_pilot_readiness(args, pilot_inputs, runtime)
         if {query.query_id for query in runtime.queries} != set(
             pilot_inputs.gold_canonical
         ):
@@ -107,7 +146,13 @@ async def execute_quality_command(args: argparse.Namespace) -> int:
         run_id=run_id,
         dataset_revision=snapshot.dataset_revision,
         snapshot_sha256=snapshot_sha,
-        corpus_profile="FULL_CORPUS",
+        corpus_profile=(
+            args.corpus_profile
+            if args.corpus_profile
+            else "SMALL_POSITIVE_CORPUS"
+            if pilot
+            else "SYNTHETIC_INTEGRATION"
+        ),
         query_profile="SUPPORTED",
         planned_queries=len(runtime.queries),
         code_commit=code_commit,

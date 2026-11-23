@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from pymilvus import MilvusClient  # type: ignore[import-untyped]
 from stage3.test_candidate_services import NOW
@@ -15,6 +15,7 @@ from stage4.candidate_fakes import config
 from atlasrag.application.document_build import DocumentBuildRunner
 from atlasrag.config.fingerprint import pipeline_fingerprint
 from atlasrag.config.models import RuntimeConfig
+from atlasrag.domain.indexing.models import EmbeddingModelIdentity
 from atlasrag.domain.ingestion.source import SourceFile
 from atlasrag.graphs.indexing.contracts import BuildRequest
 from atlasrag.providers.embedding.qwen import (
@@ -65,13 +66,43 @@ async def run() -> dict[str, object]:
     )
     await index.initialize()
     runtime = real_runtime()
-    qwen = QwenEmbeddingProvider(device="cuda:0")
-    await qwen.initialize()
+
+    class LazyQwen:
+        def __init__(self) -> None:
+            self._provider = QwenEmbeddingProvider(device="cuda:0")
+            self._ready = False
+
+        @property
+        def identity(self) -> EmbeddingModelIdentity:
+            return EmbeddingModelIdentity(
+                model_id=QWEN_MODEL_ID,
+                model_revision=QWEN_REVISION,
+                tokenizer_id=QWEN_MODEL_ID,
+                tokenizer_revision=QWEN_REVISION,
+                dimension=1024,
+                device="cuda:0",
+            )
+
+        async def embed(self, texts: Any) -> Any:
+            if not self._ready:
+                await self._provider.initialize()
+                self._ready = True
+            return await self._provider.embed(texts)
+
+        async def embed_query(self, query: str) -> Any:
+            if not self._ready:
+                await self._provider.initialize()
+                self._ready = True
+            return await self._provider.embed_query(query)
+
+    qwen = LazyQwen()
     bundle = BuildResources(
         config=runtime,
         uow_factory=factory,
         parsers=ParserRouter(
-            MinerUParser(allow_real_layout=True),
+            DoclingParser()
+            if os.environ.get("STAGE9_PARSER") == "docling"
+            else MinerUParser(allow_real_layout=True),
             DoclingParser(),
             MarkdownParser(),
             TextParser(),
@@ -103,8 +134,18 @@ def main() -> int:
     try:
         result = asyncio.run(run())
     except Exception as error:
+        import traceback
+
+        traceback.print_exc()
         print(
-            json.dumps({"outcome": "FAILED", "error": type(error).__name__}), flush=True
+            json.dumps(
+                {
+                    "outcome": "FAILED",
+                    "error": type(error).__name__,
+                    "detail": repr(error),
+                }
+            ),
+            flush=True,
         )
         return 1
     print(json.dumps(result), flush=True)

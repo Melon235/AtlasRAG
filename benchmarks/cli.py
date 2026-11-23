@@ -47,6 +47,10 @@ def _parser() -> argparse.ArgumentParser:
     quality.add_argument("--mode", choices=("synthetic", "pilot"), default="synthetic")
     quality.add_argument("--selection", type=Path)
     quality.add_argument("--readiness", type=Path)
+    quality.add_argument(
+        "--corpus-profile",
+        choices=("SMALL_POSITIVE_CORPUS", "DIAGNOSTIC_SUBCORPUS", "FULL_CORPUS"),
+    )
     ingest = sub.add_parser("pilot-ingest")
     ingest.add_argument("--snapshot", type=Path, required=True)
     ingest.add_argument("--selection", type=Path, required=True)

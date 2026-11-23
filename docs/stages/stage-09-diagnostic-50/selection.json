@@ -1,0 +1,505 @@
+{
+  "schema_version": 1,
+  "label": "DIAGNOSTIC_SUBCORPUS_50",
+  "dataset_revision": "63f6b052ff83508b08e242db42263ee708815c26",
+  "seed": 20261123,
+  "selection_rule": "seed-shuffled supported queries excluding prior 10-query panel; 24 text + 6 text-table unique-qrel targets; 20 additional qrel-linked distractor documents",
+  "query_count": 30,
+  "document_count": 50,
+  "target_count": 30,
+  "distractor_count": 20,
+  "documents": [
+    "2408.07372v2",
+    "2408.16309v2",
+    "2411.17165v2",
+    "2410.05459v2",
+    "2408.06994v2",
+    "2401.06959v2",
+    "2410.08287v3",
+    "2411.05659v3",
+    "2409.17635v2",
+    "2407.02994v3",
+    "2406.15341v3",
+    "2406.15888v2",
+    "2411.18086v2",
+    "2407.13314v3",
+    "2412.03227v2",
+    "2401.11899v3",
+    "2412.03848v3",
+    "2409.08951v2",
+    "2406.17972v3",
+    "2405.14131v3",
+    "2407.07009v2",
+    "2412.05495v6",
+    "2408.14507v2",
+    "2410.14997v2",
+    "2411.13673v2",
+    "2407.09711v4",
+    "2411.08909v3",
+    "2407.18337v4",
+    "2401.07294v4",
+    "2412.15239v2",
+    "2403.01012v4",
+    "2405.01155v3",
+    "2403.11030v3",
+    "2411.11841v3",
+    "2410.20812v3",
+    "2412.20245v4",
+    "2408.04814v3",
+    "2405.02054v2",
+    "2409.16507v2",
+    "2410.07913v3",
+    "2411.14884v3",
+    "2405.08806v2",
+    "2408.08704v2",
+    "2403.12117v2",
+    "2411.09808v3",
+    "2410.18929v2",
+    "2412.19754v3",
+    "2406.07641v2",
+    "2412.06947v3",
+    "2401.17469v2"
+  ],
+  "selected": [
+    {
+      "query_id": "85dab45c-c097-42ae-8f7d-a00164d2ac97",
+      "official_document_id": "2408.07372v2",
+      "section_id": 6,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2408.07372v2",
+      "local_source_path": "2408.07372v2.pdf",
+      "derived_local_document_id": "doc_469390652fb97b66d03f3ea910e98f4b191ed01ce4ad2921c4f76f8e57818381"
+    },
+    {
+      "query_id": "f4dbc547-2267-4dc7-82e2-0c39c68b9a64",
+      "official_document_id": "2408.16309v2",
+      "section_id": 11,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2408.16309v2",
+      "local_source_path": "2408.16309v2.pdf",
+      "derived_local_document_id": "doc_add68781a47db138e8d206c1e50e1d4879c7f0a6360e8bb4cfbba0c442c7a929"
+    },
+    {
+      "query_id": "45852ce7-70a8-4690-9c53-dfc80728d6f3",
+      "official_document_id": "2411.17165v2",
+      "section_id": 13,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2411.17165v2",
+      "local_source_path": "2411.17165v2.pdf",
+      "derived_local_document_id": "doc_c4ac2be65b917773b9069458313f4f45e1eda64a44de55f311d5aa18fcab632d"
+    },
+    {
+      "query_id": "7092ae25-d313-44a3-968f-541cbb833307",
+      "official_document_id": "2410.05459v2",
+      "section_id": 3,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2410.05459v2",
+      "local_source_path": "2410.05459v2.pdf",
+      "derived_local_document_id": "doc_038e4867c32d39f0a9df8fc9c75db3961098439ef662989eeb032b1c4971a86d"
+    },
+    {
+      "query_id": "aa00c321-111d-482a-aaa9-e932a7419d66",
+      "official_document_id": "2408.06994v2",
+      "section_id": 0,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2408.06994v2",
+      "local_source_path": "2408.06994v2.pdf",
+      "derived_local_document_id": "doc_253b9c797105cc9a9b318e811062f74af2da6c1ea53910675996414e9dbfa2ca"
+    },
+    {
+      "query_id": "b1fc9796-a0cb-401a-bea9-a4104cf20497",
+      "official_document_id": "2401.06959v2",
+      "section_id": 0,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2401.06959v2",
+      "local_source_path": "2401.06959v2.pdf",
+      "derived_local_document_id": "doc_07d9dec7c5e3fc228b6e8f0af7960bf60e3a5ca0e7f99780942844d40b19d027"
+    },
+    {
+      "query_id": "f3855074-2a80-4742-bd7b-af4298f11ca6",
+      "official_document_id": "2410.08287v3",
+      "section_id": 5,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2410.08287v3",
+      "local_source_path": "2410.08287v3.pdf",
+      "derived_local_document_id": "doc_1173e91aeff0f301a185e57e89b181f2c6e89be1f4728bf0b2dc9ce9cbd4aa8b"
+    },
+    {
+      "query_id": "23dd10c9-75e9-4219-b1e2-ca3c95374b7a",
+      "official_document_id": "2411.05659v3",
+      "section_id": 6,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2411.05659v3",
+      "local_source_path": "2411.05659v3.pdf",
+      "derived_local_document_id": "doc_c077ae3a9b7e73933c5c3ce1cdb356c89c401574f368c72279df147df80f05fd"
+    },
+    {
+      "query_id": "6b0be0d3-3e85-409a-bb6d-51145f11d393",
+      "official_document_id": "2409.17635v2",
+      "section_id": 10,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2409.17635v2",
+      "local_source_path": "2409.17635v2.pdf",
+      "derived_local_document_id": "doc_ffe76155c59f3d44a81f68f30175e8a9e671ffa442bc385dbd1d5249c5442371"
+    },
+    {
+      "query_id": "d6633b16-3803-430b-a144-89bfc2f79757",
+      "official_document_id": "2407.02994v3",
+      "section_id": 1,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2407.02994v3",
+      "local_source_path": "2407.02994v3.pdf",
+      "derived_local_document_id": "doc_e5084c2dae42ac1446703bfb620b86237a6eb9087b771a113061c02cf82646ca"
+    },
+    {
+      "query_id": "55d494f1-45e2-49a2-9d34-b8e28e3734ab",
+      "official_document_id": "2406.15341v3",
+      "section_id": 3,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2406.15341v3",
+      "local_source_path": "2406.15341v3.pdf",
+      "derived_local_document_id": "doc_de993eb47497138a6d7d7bcb92e89e90c09fc57bd36c9531382c12ccc6ce7100"
+    },
+    {
+      "query_id": "f242252c-53ba-44a8-8224-4ea1be8d8088",
+      "official_document_id": "2406.15888v2",
+      "section_id": 29,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2406.15888v2",
+      "local_source_path": "2406.15888v2.pdf",
+      "derived_local_document_id": "doc_06535cd295d84f3b25eab4eb1e3be9a1fb530e5b8f5d05f0a6f7cefc20b297af"
+    },
+    {
+      "query_id": "79975da5-4347-41cc-84cf-380d0c33962a",
+      "official_document_id": "2411.18086v2",
+      "section_id": 10,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2411.18086v2",
+      "local_source_path": "2411.18086v2.pdf",
+      "derived_local_document_id": "doc_532895171e588b2d2fd9014943b273d0f5590807a748b1a828cfbb1487992b17"
+    },
+    {
+      "query_id": "4ae3d9d7-c5ec-4393-88b1-71e11038b94f",
+      "official_document_id": "2407.13314v3",
+      "section_id": 4,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2407.13314v3",
+      "local_source_path": "2407.13314v3.pdf",
+      "derived_local_document_id": "doc_b5d89267d5edf65e9784bc55744767097f838893cf8e6653893448600f2c5850"
+    },
+    {
+      "query_id": "efe5d614-9733-4ed3-84ef-2c696c458822",
+      "official_document_id": "2412.03227v2",
+      "section_id": 2,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2412.03227v2",
+      "local_source_path": "2412.03227v2.pdf",
+      "derived_local_document_id": "doc_8952e3a391a12fa1213f120a0c604674272e75aa16d6833c1af16be1a9b204cc"
+    },
+    {
+      "query_id": "bac61451-d99a-43b3-9754-b8a593e5d1d7",
+      "official_document_id": "2401.11899v3",
+      "section_id": 10,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2401.11899v3",
+      "local_source_path": "2401.11899v3.pdf",
+      "derived_local_document_id": "doc_485b90efe4e327937236e5c36913d804dc14994a24d080ef9597a7314f7254e8"
+    },
+    {
+      "query_id": "a5811f6f-22bc-430a-a1f6-2e9aefbc6762",
+      "official_document_id": "2412.03848v3",
+      "section_id": 13,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2412.03848v3",
+      "local_source_path": "2412.03848v3.pdf",
+      "derived_local_document_id": "doc_a7382e2739378f572e2fb850ff619d9960412685889fc159826135840f673e08"
+    },
+    {
+      "query_id": "0faca208-1f08-43ed-ace7-46ac1956e879",
+      "official_document_id": "2409.08951v2",
+      "section_id": 19,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2409.08951v2",
+      "local_source_path": "2409.08951v2.pdf",
+      "derived_local_document_id": "doc_0e4218f78e172ef1307dc430f578141603613597fc0cbb690a26b71b5cf1ff8d"
+    },
+    {
+      "query_id": "85ced6b1-438a-4b14-b973-4b1b440e7028",
+      "official_document_id": "2406.17972v3",
+      "section_id": 21,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2406.17972v3",
+      "local_source_path": "2406.17972v3.pdf",
+      "derived_local_document_id": "doc_b9d33f2f34bdef30232c1714161fcacbdb87a9799d146de9c473efeb578cfb44"
+    },
+    {
+      "query_id": "0c4e0d90-93a7-4e4f-ad8b-3fcd9ff609b1",
+      "official_document_id": "2405.14131v3",
+      "section_id": 2,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2405.14131v3",
+      "local_source_path": "2405.14131v3.pdf",
+      "derived_local_document_id": "doc_3575e716825c21b54907b6db2846ed57b0f906e32207cb410a841f52ca00743a"
+    },
+    {
+      "query_id": "01063042-ba62-4c90-8cb6-9ac5df7adb2a",
+      "official_document_id": "2407.07009v2",
+      "section_id": 3,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2407.07009v2",
+      "local_source_path": "2407.07009v2.pdf",
+      "derived_local_document_id": "doc_a086ab3e849f1101f10a8e2b04f25a6d798955f160257145841a6334a3533324"
+    },
+    {
+      "query_id": "b7627ca4-e7c6-4bc1-bfa9-93c4f09608bc",
+      "official_document_id": "2412.05495v6",
+      "section_id": 2,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2412.05495v6",
+      "local_source_path": "2412.05495v6.pdf",
+      "derived_local_document_id": "doc_8665ffdbbc9d29f49fc5f901ea7e72c1d3c17379d7dbee5b21d50436aa7676bc"
+    },
+    {
+      "query_id": "0860c0a4-ec48-4c3b-85c8-5fc27d2f290f",
+      "official_document_id": "2408.14507v2",
+      "section_id": 3,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2408.14507v2",
+      "local_source_path": "2408.14507v2.pdf",
+      "derived_local_document_id": "doc_52f33e548619d0b521511af1b579b9166c7b58caec66c3a64caee8b85e0d9cef"
+    },
+    {
+      "query_id": "62843ef9-c5ff-44f5-a965-1bd2a024a5ff",
+      "official_document_id": "2410.14997v2",
+      "section_id": 0,
+      "modality": "text",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2410.14997v2",
+      "local_source_path": "2410.14997v2.pdf",
+      "derived_local_document_id": "doc_348aa63eaa78a4feafa5e16202bee5b7c584162eeea2cc7b1e4ef4065c209572"
+    },
+    {
+      "query_id": "ce930828-7ec1-44d5-9e74-899e38589c11",
+      "official_document_id": "2411.13673v2",
+      "section_id": 12,
+      "modality": "text-table",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2411.13673v2",
+      "local_source_path": "2411.13673v2.pdf",
+      "derived_local_document_id": "doc_4dab0f62bca2ca6f15a52dd8e2e54a2d301425c084cfd4b2f44d00542006377a"
+    },
+    {
+      "query_id": "39a88362-7dbe-4edd-8db5-79674dc662fc",
+      "official_document_id": "2407.09711v4",
+      "section_id": 17,
+      "modality": "text-table",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2407.09711v4",
+      "local_source_path": "2407.09711v4.pdf",
+      "derived_local_document_id": "doc_11c248036aa8b52f39ebefe266cc941a155418f92f8ab1393e729ca8cf4ef1aa"
+    },
+    {
+      "query_id": "081a3106-1355-42b7-ba51-ac45a47dc3ed",
+      "official_document_id": "2411.08909v3",
+      "section_id": 30,
+      "modality": "text-table",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2411.08909v3",
+      "local_source_path": "2411.08909v3.pdf",
+      "derived_local_document_id": "doc_f6ceda7c1dc9105df36068be5ec983e33ef2f3b136a638cdddde8802670991a0"
+    },
+    {
+      "query_id": "a8bba3c8-5df8-40f4-98d1-03adaaa31169",
+      "official_document_id": "2407.18337v4",
+      "section_id": 9,
+      "modality": "text-table",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2407.18337v4",
+      "local_source_path": "2407.18337v4.pdf",
+      "derived_local_document_id": "doc_937beaa34b2f8bcaf381a510417db719dec3ebe0a3534279afc2ba1e51d63a9a"
+    },
+    {
+      "query_id": "2589f76f-da96-427c-96f8-c6e34d2e4d1a",
+      "official_document_id": "2401.07294v4",
+      "section_id": 7,
+      "modality": "text-table",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2401.07294v4",
+      "local_source_path": "2401.07294v4.pdf",
+      "derived_local_document_id": "doc_2ea1dc1e8c9915e9d1f67ab8dbbdf2f881ca32fad3eca7c137c6f2accbc7b888"
+    },
+    {
+      "query_id": "abde5f0c-f877-4626-84f9-73c378b97a2e",
+      "official_document_id": "2412.15239v2",
+      "section_id": 9,
+      "modality": "text-table",
+      "role": "TARGET",
+      "source_url": "https://arxiv.org/pdf/2412.15239v2",
+      "local_source_path": "2412.15239v2.pdf",
+      "derived_local_document_id": "doc_5f9ff196fbf4b0838ba679e639046ade9d89b8c741dfd9f87fb8da399850b9f7"
+    },
+    {
+      "official_document_id": "2403.01012v4",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2403.01012v4",
+      "local_source_path": "2403.01012v4.pdf",
+      "derived_local_document_id": "doc_22a398176159696610bff849b13c24c438db1c006928797f8c5c18c0e530bb48"
+    },
+    {
+      "official_document_id": "2405.01155v3",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2405.01155v3",
+      "local_source_path": "2405.01155v3.pdf",
+      "derived_local_document_id": "doc_66b79c7864295abaf6fe4c693b14332e58e7c43cac59fb924c92cc5d66b8bef7"
+    },
+    {
+      "official_document_id": "2403.11030v3",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2403.11030v3",
+      "local_source_path": "2403.11030v3.pdf",
+      "derived_local_document_id": "doc_3267591cb925ca4e6dae4db6505c61dadcba3f83f13d28b244d6dc6bc30c9be1"
+    },
+    {
+      "official_document_id": "2411.11841v3",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2411.11841v3",
+      "local_source_path": "2411.11841v3.pdf",
+      "derived_local_document_id": "doc_6f6c2c89caf4669269dd5b7d7d12dcd2ae64ba89846130c79b627708440f619b"
+    },
+    {
+      "official_document_id": "2410.20812v3",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2410.20812v3",
+      "local_source_path": "2410.20812v3.pdf",
+      "derived_local_document_id": "doc_7b07f20fc23d4e43bea2a51b98423939e6a6a255073552ab309b94518c1b50d2"
+    },
+    {
+      "official_document_id": "2412.20245v4",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2412.20245v4",
+      "local_source_path": "2412.20245v4.pdf",
+      "derived_local_document_id": "doc_f14d17d1de196d41ac6779a876a29976d94184ac15d4de3b8016eaf16197f35c"
+    },
+    {
+      "official_document_id": "2408.04814v3",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2408.04814v3",
+      "local_source_path": "2408.04814v3.pdf",
+      "derived_local_document_id": "doc_5b158da7a2fa05422b34cc4093e349ffe856369f6d875fccd4603c87dd835d5d"
+    },
+    {
+      "official_document_id": "2405.02054v2",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2405.02054v2",
+      "local_source_path": "2405.02054v2.pdf",
+      "derived_local_document_id": "doc_8cea55952245b374b956d192b5aa5290872998cd201649df470caedd5d8dc690"
+    },
+    {
+      "official_document_id": "2409.16507v2",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2409.16507v2",
+      "local_source_path": "2409.16507v2.pdf",
+      "derived_local_document_id": "doc_1ed49d89bfce17632c5e192a6d0866346c08213bec04a36f3aba851b5339577f"
+    },
+    {
+      "official_document_id": "2410.07913v3",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2410.07913v3",
+      "local_source_path": "2410.07913v3.pdf",
+      "derived_local_document_id": "doc_bbd9fd2f3c85eb7a7136388cac25d1aa0a504bf391a0b85b573b27525227bb8c"
+    },
+    {
+      "official_document_id": "2411.14884v3",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2411.14884v3",
+      "local_source_path": "2411.14884v3.pdf",
+      "derived_local_document_id": "doc_9068993faadef1433596207365a2ca43b676edec4ad981631c9a9538e0da5681"
+    },
+    {
+      "official_document_id": "2405.08806v2",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2405.08806v2",
+      "local_source_path": "2405.08806v2.pdf",
+      "derived_local_document_id": "doc_3a2ac9910d61a6ee5cb8aaf1e6131e769593b7cbacb0e3cd8651d756c1185655"
+    },
+    {
+      "official_document_id": "2408.08704v2",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2408.08704v2",
+      "local_source_path": "2408.08704v2.pdf",
+      "derived_local_document_id": "doc_442f9ebf428595881ee6898f6c3eb49a12cc14d87e00f4e5535e64c8954c4468"
+    },
+    {
+      "official_document_id": "2403.12117v2",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2403.12117v2",
+      "local_source_path": "2403.12117v2.pdf",
+      "derived_local_document_id": "doc_582acfd52215dcceb38a68d55be7775beed905a23bbd2270058c55558e6db046"
+    },
+    {
+      "official_document_id": "2411.09808v3",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2411.09808v3",
+      "local_source_path": "2411.09808v3.pdf",
+      "derived_local_document_id": "doc_087b9960f96316898dda40e3c6af9a6fc7fbdfae6e1996dce5c873ca5f535a08"
+    },
+    {
+      "official_document_id": "2410.18929v2",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2410.18929v2",
+      "local_source_path": "2410.18929v2.pdf",
+      "derived_local_document_id": "doc_0e4b5d9ea391dcd97d1cec0a1f8b760d64bc6934da1391a78ef599dc8656d258"
+    },
+    {
+      "official_document_id": "2412.19754v3",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2412.19754v3",
+      "local_source_path": "2412.19754v3.pdf",
+      "derived_local_document_id": "doc_a98208f1d16a6b72527a85f0e1d28a40569f215b70a2472506ce80c7d76658f0"
+    },
+    {
+      "official_document_id": "2406.07641v2",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2406.07641v2",
+      "local_source_path": "2406.07641v2.pdf",
+      "derived_local_document_id": "doc_31464ddd3a95359091e9a3bf0fc0171dab08540e627a58f3ec545179b2943eb6"
+    },
+    {
+      "official_document_id": "2412.06947v3",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2412.06947v3",
+      "local_source_path": "2412.06947v3.pdf",
+      "derived_local_document_id": "doc_fdd4654b109366d068f698fa09140edeb6adccb4d5fae88f6ef18819cf7859ae"
+    },
+    {
+      "official_document_id": "2401.17469v2",
+      "role": "DISTRACTOR",
+      "source_url": "https://arxiv.org/pdf/2401.17469v2",
+      "local_source_path": "2401.17469v2.pdf",
+      "derived_local_document_id": "doc_9e786250fb08c8c150c8fdebf875c255b7629afb77602d4f94760a89bce488da"
+    }
+  ]
+}
