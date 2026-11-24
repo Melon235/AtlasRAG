@@ -66,6 +66,7 @@ from atlasrag.services.rag_core.boundary import AnswerInputBuilder
 from atlasrag.services.rag_core.completion import CompletionAssessor
 from atlasrag.services.rag_core.query import QueryConstructionService
 from atlasrag.services.rag_core.routing import CorrectiveRoutingService
+from benchmarks.evaluation.capture_provider import CapturingGenerationProvider
 from benchmarks.pilot.identity import load_pilot_inputs
 from benchmarks.pilot.runtime import PilotRuntimeComponents, build_pilot_quality_runtime
 
@@ -128,13 +129,31 @@ async def build_runtime() -> Any:
         ),
         profile=profile,
     )
-    client_http = httpx.AsyncClient(trust_env=False)
+    budget_path = os.environ.get("STAGE9_BUDGET_PATH")
+    if budget_path:
+        from benchmarks.budget import BudgetedTransport, BudgetLedger, BudgetPolicy
+
+        ledger = BudgetLedger(
+            Path(budget_path),
+            BudgetPolicy(
+                int(os.environ.get("STAGE9_MAX_ATTEMPTS", "200")),
+                int(os.environ.get("STAGE9_MAX_TOKENS", "300000")),
+                int(float(os.environ.get("STAGE9_MAX_USD", "0.50")) * 1_000_000),
+            ),
+        )
+        transport = BudgetedTransport(httpx.AsyncHTTPTransport(trust_env=False), ledger)
+        client_http = httpx.AsyncClient(transport=transport)  # type: ignore[arg-type]
+    else:
+        client_http = httpx.AsyncClient(trust_env=False)
     api_key = SecretStr(os.environ["DEEPSEEK_API_KEY"])
     model = os.environ.get("DEEPSEEK_MODEL_ID", "deepseek-flash")
     qp = DeepSeekQueryRewriteProvider(
         model_id=model, api_key=api_key, client=client_http
     )
-    gp = DeepSeekGenerationProvider(model_id=model, api_key=api_key, client=client_http)
+    raw_generation = DeepSeekGenerationProvider(
+        model_id=model, api_key=api_key, client=client_http
+    )
+    gp = CapturingGenerationProvider(raw_generation)
     answer = AnswerRunner(
         AnswerServices(
             compression=IdentityCompression(),
@@ -171,7 +190,7 @@ async def build_runtime() -> Any:
         Path(os.environ["STAGE9_GOLD"]),
     )
     qruntime = build_pilot_quality_runtime(inputs, components)
-    usage = SimpleNamespace(query=qp.usage, generation=gp.usage)
+    usage = SimpleNamespace(query=qp.usage, generation=raw_generation.usage)
     return SimpleNamespace(
         retrieval=qruntime.retrieval,
         observer=qruntime.observer,
@@ -185,5 +204,6 @@ async def build_runtime() -> Any:
         cache_sets=lambda: 0,
         provider_usage=usage,
         query_provider=qp,
-        generation_provider=gp,
+        generation_provider=raw_generation,
+        generation_capture=gp,
     )

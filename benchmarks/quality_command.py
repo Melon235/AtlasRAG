@@ -8,9 +8,10 @@ import inspect
 import json
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
+from benchmarks.evaluation.capture import capture_answer, write_capture
 from benchmarks.metrics.replay import AttemptSelection, replay_case_metrics
 from benchmarks.observation.artifacts import (
     CaseObservationArtifact,
@@ -226,6 +227,51 @@ async def execute_quality_command(args: argparse.Namespace) -> int:
             write_case_artifact(args.output / "observation_cases.jsonl", artifact)
         )
         ledger.append(case.observation)
+    captures = []
+    generation_capture = getattr(runtime, "generation_capture", None)
+    if generation_capture is not None:
+        adapter_refs = {}
+        if pilot:
+            from benchmarks.datasets.open_ragbench import OpenRagBenchAdapter
+
+            adapter_refs = {
+                query.query_id: query.reference_answer
+                for query in OpenRagBenchAdapter(args.snapshot).queries
+            }
+        for case in result.cases:
+            response = cast(Any, case.final_response)
+            if response is None:
+                continue
+            inputs = [
+                value
+                for invocation, value in generation_capture.inputs
+                if invocation == case.invocation_id
+            ]
+            if not inputs:
+                continue
+            generated = inputs[-1]
+            contexts = tuple(item.content for item in generated.local_knowledge)
+            citation_ids = tuple(
+                citation.citation_id for citation in response.citations
+            )
+            captures.append(
+                capture_answer(
+                    query_id=case.query_id,
+                    original_query=generated.original_query,
+                    final_answer=response.answer_text,
+                    evidence_contexts=contexts,
+                    citation_ids=citation_ids,
+                    citation_valid=all(
+                        identifier in response.answer_text
+                        for identifier in citation_ids
+                    ),
+                    product_status=case.observation.status.value,
+                    reference_answer=adapter_refs.get(case.query_id),
+                    runtime_fingerprint=runtime.runtime_fingerprint,
+                )
+            )
+        if captures:
+            write_capture(args.output / "answers.jsonl", tuple(captures))
     validity = assess_validity(planned, ledger.read())
     cache_gets = runtime.cache_gets()
     cache_sets = runtime.cache_sets()

@@ -55,8 +55,12 @@ def load_pilot_inputs(
     adapter = OpenRagBenchAdapter(snapshot_root)
     selection = _load(selection_path)
     selected = selection.get("selected")
-    if not isinstance(selected, list) or len(selected) != 10:
-        raise PilotIdentityError("selection must contain exactly 10 documents/queries")
+    is_panel = selection.get("label") == "DEEPEVAL_PANEL_20"
+    expected = 20 if is_panel else 10
+    if not isinstance(selected, list) or len(selected) != expected:
+        raise PilotIdentityError(
+            f"selection must contain exactly {expected} target entries"
+        )
     if selection.get("dataset_revision") != adapter.manifest.dataset_revision:
         raise PilotIdentityError("selection revision does not match snapshot")
     query_by_id = {query.query_id: query for query in adapter.queries}
@@ -113,10 +117,10 @@ def load_pilot_inputs(
                 relevance=1,
             )
         )
-    if set(gold_raw) != seen_queries:
+    if not is_panel and set(gold_raw) != seen_queries:
         raise PilotIdentityError("gold query set does not match selection")
-    if len(mappings) != 10 or len({m.canonical_document_id for m in mappings}) != 10:
-        raise PilotIdentityError("pilot requires 10 unique canonical documents")
+    if len({m.canonical_document_id for m in mappings}) != expected:
+        raise PilotIdentityError(f"requires {expected} unique canonical documents")
     payload = tuple(
         (m.official_document_id, m.canonical_document_id, m.query_id)
         for m in sorted(mappings, key=lambda item: item.query_id)

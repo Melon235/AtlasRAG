@@ -37,6 +37,7 @@ class QualityCaseResult:
     repetition_index: int
     invocation_id: str
     observation: CaseObservation
+    final_response: object | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,7 @@ async def run_quality(
                     repetition_index=repetition,
                     invocation_id=invocation_id,
                     observation=case.observation,
+                    final_response=case.final_response,
                 )
             )
     return QualityRunResult(run_id=run_id, cases=tuple(cases))
