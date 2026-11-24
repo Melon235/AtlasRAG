@@ -19,8 +19,8 @@
 - Technical/product failures: **0**
 - Captured contexts: exact `GenerationInput.local_knowledge` content supplied
   to generation; citation IDs preserved.
-- Deterministic citation validity: **20/20** (all citation IDs appear in the
-  final answer and citations are nonempty).
+- Citation validation is **MARKER_ONLY**: 20/20 cases have nonempty citation IDs
+  that appear in the answer. This is not strict citation grounding.
 - Real answer text and contexts: `production_captures.jsonl`
 - Gold/reference answers were joined externally for evaluation only.
 
@@ -77,3 +77,15 @@ LLM-judged, not ground truth.
 - Faithfulness/Answer Relevancy coverage is partial.
 - Contextual metrics were not executed.
 - No Ragas integration.
+
+## Judge-only completion plan (not executed)
+
+A Judge-only replay plan is in `judge_only_plan.json`:
+
+- Missing: 2 Faithfulness, 3 Answer Relevancy, 20 Contextual Relevancy,
+  20 Contextual Precision and 20 Contextual Recall evaluations.
+- Prior scores/reasons/execution identity are preserved and skipped.
+- Conservative estimate based on the observed 155 Judge attempts / 35
+  evaluations: **288 attempts**, **346,725 tokens**, **$0.528843** peak-bound.
+- Proposed fresh caps: **320 attempts / 500,000 tokens / $0.80 / 2 hours**.
+- Status: **AWAITING_PAID_AUTHORIZATION**; no Judge-only calls were made.

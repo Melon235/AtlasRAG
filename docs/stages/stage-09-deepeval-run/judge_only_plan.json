@@ -1,0 +1,92 @@
+{
+  "status": "AWAITING_PAID_AUTHORIZATION",
+  "missing": {
+    "faithfulness": [
+      "efe5d614-9733-4ed3-84ef-2c696c458822",
+      "f242252c-53ba-44a8-8224-4ea1be8d8088"
+    ],
+    "answer_relevancy": [
+      "dea63029-5f2d-4ecb-8a54-89d5716fb51b",
+      "efe5d614-9733-4ed3-84ef-2c696c458822",
+      "f242252c-53ba-44a8-8224-4ea1be8d8088"
+    ],
+    "contextual_relevancy": [
+      "01063042-ba62-4c90-8cb6-9ac5df7adb2a",
+      "0c4e0d90-93a7-4e4f-ad8b-3fcd9ff609b1",
+      "0de97b35-39b2-4811-af3d-1b87bafcee9e",
+      "39a88362-7dbe-4edd-8db5-79674dc662fc",
+      "4ae3d9d7-c5ec-4393-88b1-71e11038b94f",
+      "55d494f1-45e2-49a2-9d34-b8e28e3734ab",
+      "62843ef9-c5ff-44f5-a965-1bd2a024a5ff",
+      "6b0be0d3-3e85-409a-bb6d-51145f11d393",
+      "7092ae25-d313-44a3-968f-541cbb833307",
+      "79975da5-4347-41cc-84cf-380d0c33962a",
+      "9516e24e-b4d5-4010-a384-715f2ce71ec6",
+      "a8bba3c8-5df8-40f4-98d1-03adaaa31169",
+      "aa00c321-111d-482a-aaa9-e932a7419d66",
+      "abde5f0c-f877-4626-84f9-73c378b97a2e",
+      "bac61451-d99a-43b3-9754-b8a593e5d1d7",
+      "ce930828-7ec1-44d5-9e74-899e38589c11",
+      "d6633b16-3803-430b-a144-89bfc2f79757",
+      "dea63029-5f2d-4ecb-8a54-89d5716fb51b",
+      "efe5d614-9733-4ed3-84ef-2c696c458822",
+      "f242252c-53ba-44a8-8224-4ea1be8d8088"
+    ],
+    "contextual_precision": [
+      "01063042-ba62-4c90-8cb6-9ac5df7adb2a",
+      "0c4e0d90-93a7-4e4f-ad8b-3fcd9ff609b1",
+      "0de97b35-39b2-4811-af3d-1b87bafcee9e",
+      "39a88362-7dbe-4edd-8db5-79674dc662fc",
+      "4ae3d9d7-c5ec-4393-88b1-71e11038b94f",
+      "55d494f1-45e2-49a2-9d34-b8e28e3734ab",
+      "62843ef9-c5ff-44f5-a965-1bd2a024a5ff",
+      "6b0be0d3-3e85-409a-bb6d-51145f11d393",
+      "7092ae25-d313-44a3-968f-541cbb833307",
+      "79975da5-4347-41cc-84cf-380d0c33962a",
+      "9516e24e-b4d5-4010-a384-715f2ce71ec6",
+      "a8bba3c8-5df8-40f4-98d1-03adaaa31169",
+      "aa00c321-111d-482a-aaa9-e932a7419d66",
+      "abde5f0c-f877-4626-84f9-73c378b97a2e",
+      "bac61451-d99a-43b3-9754-b8a593e5d1d7",
+      "ce930828-7ec1-44d5-9e74-899e38589c11",
+      "d6633b16-3803-430b-a144-89bfc2f79757",
+      "dea63029-5f2d-4ecb-8a54-89d5716fb51b",
+      "efe5d614-9733-4ed3-84ef-2c696c458822",
+      "f242252c-53ba-44a8-8224-4ea1be8d8088"
+    ],
+    "contextual_recall": [
+      "01063042-ba62-4c90-8cb6-9ac5df7adb2a",
+      "0c4e0d90-93a7-4e4f-ad8b-3fcd9ff609b1",
+      "0de97b35-39b2-4811-af3d-1b87bafcee9e",
+      "39a88362-7dbe-4edd-8db5-79674dc662fc",
+      "4ae3d9d7-c5ec-4393-88b1-71e11038b94f",
+      "55d494f1-45e2-49a2-9d34-b8e28e3734ab",
+      "62843ef9-c5ff-44f5-a965-1bd2a024a5ff",
+      "6b0be0d3-3e85-409a-bb6d-51145f11d393",
+      "7092ae25-d313-44a3-968f-541cbb833307",
+      "79975da5-4347-41cc-84cf-380d0c33962a",
+      "9516e24e-b4d5-4010-a384-715f2ce71ec6",
+      "a8bba3c8-5df8-40f4-98d1-03adaaa31169",
+      "aa00c321-111d-482a-aaa9-e932a7419d66",
+      "abde5f0c-f877-4626-84f9-73c378b97a2e",
+      "bac61451-d99a-43b3-9754-b8a593e5d1d7",
+      "ce930828-7ec1-44d5-9e74-899e38589c11",
+      "d6633b16-3803-430b-a144-89bfc2f79757",
+      "dea63029-5f2d-4ecb-8a54-89d5716fb51b",
+      "efe5d614-9733-4ed3-84ef-2c696c458822",
+      "f242252c-53ba-44a8-8224-4ea1be8d8088"
+    ]
+  },
+  "attempts_estimate": 288,
+  "token_estimate": 346725,
+  "cost_micro_usd_estimate": 528843,
+  "proposed_caps": {
+    "attempts": 320,
+    "tokens": 500000,
+    "cost_usd": 0.8,
+    "wall_seconds": 7200
+  },
+  "prior_successes_preserved": true,
+  "citation_validation": "MARKER_ONLY (citation ID appears in answer)",
+  "payment_executed": false
+}
