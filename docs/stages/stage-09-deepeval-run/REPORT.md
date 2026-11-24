@@ -89,3 +89,40 @@ A Judge-only replay plan is in `judge_only_plan.json`:
   evaluations: **288 attempts**, **346,725 tokens**, **$0.528843** peak-bound.
 - Proposed fresh caps: **320 attempts / 500,000 tokens / $0.80 / 2 hours**.
 - Status: **AWAITING_PAID_AUTHORIZATION**; no Judge-only calls were made.
+
+## Judge-only batch result (actual)
+
+The fresh Judge-only batch executed after explicit authorization:
+
+- Additional HTTP attempts: **42 / 320**
+- Additional input/output tokens: **86,914 / 175,031** (261,945 total; cap 500,000)
+- Conservative budget-ledger cost bound: **$0.787038 / $0.80**
+- Token-based peak estimate of actual usage: approximately **$0.236**;
+  provider billing was not directly retrieved
+- Wall time: under the 2-hour cap
+- No production RAG, retrieval, PDF ingestion or generation was rerun
+
+Completed in the Judge-only batch:
+
+- 2 missing Faithfulness evaluations
+- 3 missing Answer Relevancy evaluations
+- 3 Contextual Relevancy evaluations
+
+Contextual Precision and Contextual Recall were not started because the
+conservative ledger reserve reached the $0.80 cap. Remaining cases are
+`BUDGET_BLOCKED`, not zero scores.
+
+Consolidated coverage:
+
+| Metric | Evaluated | Mean |
+|---|---:|---:|
+| Faithfulness | 20/20 | 0.9917 |
+| Answer Relevancy | 20/20 | 0.9273 |
+| Contextual Relevancy | 3/20 | 0.2587 |
+| Contextual Precision | 0/20 | unavailable |
+| Contextual Recall | 0/20 | unavailable |
+
+`DEEPEVAL_PANEL_20_PARTIAL` is the correct status. The three Contextual
+Relevancy scores are low (0.08, 0.24, 0.45), showing a clear disagreement
+between rank-1 document retrieval and the relevance of the full generation
+context.

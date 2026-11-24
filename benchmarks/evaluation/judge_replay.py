@@ -92,19 +92,32 @@ def main() -> int:
     if args.authorized:
         if args.ledger is None or args.output is None:
             raise ValueError("authorized execution requires --ledger and --output")
+        if args.ledger.exists():
+            raise ValueError("budget ledger must be fresh")
+        if args.output.exists():
+            raise ValueError("output must not overwrite prior results")
         import os
+        import time as _time
 
         import httpx
 
         from benchmarks.budget import BudgetLedger, BudgetPolicy
         from benchmarks.evaluation.deepeval_adapter import make_budgeted_judge
 
+        started = _time.monotonic()
         ledger = BudgetLedger(args.ledger, BudgetPolicy(320, 500000, 800000))
         client = httpx.Client(timeout=httpx.Timeout(90, connect=10), trust_env=False)
         key = os.environ["DEEPSEEK_API_KEY"]
         model = os.environ.get("DEEPSEEK_MODEL_ID", "deepseek-flash")
 
         def generate(prompt: str) -> str:
+            provisional_in = len(prompt) // 4 + 100
+            provisional_out = 4096
+            ledger.reserve_budget(
+                input_tokens=provisional_in,
+                output_tokens=provisional_out,
+                cost_micro_usd=provisional_in + 4 * provisional_out,
+            )
             response = client.post(
                 "https://api.deepseek.com/chat/completions",
                 headers={"Authorization": "Bearer " + key},
@@ -140,7 +153,7 @@ def main() -> int:
             prior=prior,
             references=references,
             evaluator=real_evaluator(judge),
-            budget_check=lambda: True,
+            budget_check=lambda: _time.monotonic() - started < 7200,
             output_path=args.output,
         )
         out["payment_executed"] = True
@@ -149,10 +162,6 @@ def main() -> int:
     args.plan.write_text(json.dumps(out, indent=2) + "\n")
     print(json.dumps(out, sort_keys=True))
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
 
 
 @dataclass
@@ -176,7 +185,10 @@ def execute_missing(
     state = ReplayState({}, {}, [])
     for row in prior:
         state.prior[row["query_id"]] = row
-        state.completed[row["query_id"]] = {"scores": dict(row["scores"])}
+        state.completed[row["query_id"]] = {
+            "query_id": row["query_id"],
+            "scores": dict(row["scores"]),
+        }
     order = (
         ("faithfulness", "faithfulness"),
         ("answer_relevancy", "answer_relevancy"),
@@ -205,11 +217,17 @@ def execute_missing(
             try:
                 score = evaluator(metric_name, record)
                 state.completed[query_id]["scores"][metric_name] = {
+                    "query_id": query_id,
                     "score": score.score,
                     "reason": score.reason,
                     "status": score.status,
                 }
             except Exception as error:
+                from benchmarks.budget import BudgetExceededError
+
+                if isinstance(error, BudgetExceededError):
+                    state.blocked.append(f"{metric_name}:{query_id}:BUDGET_BLOCKED")
+                    break
                 state.completed[query_id]["scores"][metric_name] = {
                     "score": None,
                     "reason": type(error).__name__,
@@ -253,3 +271,7 @@ def real_evaluator(judge: object) -> Callable[[str, EvaluationRecord], MetricSco
         return MetricScore(metric_name, float(metric.score), metric.reason, "EVALUATED")
 
     return evaluate
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,5 +1,5 @@
 {
-  "status": "AWAITING_PAID_AUTHORIZATION",
+  "status": "AUTHORIZED",
   "missing": {
     "faithfulness": [
       "efe5d614-9733-4ed3-84ef-2c696c458822",
@@ -88,5 +88,11 @@
   },
   "prior_successes_preserved": true,
   "citation_validation": "MARKER_ONLY (citation ID appears in answer)",
-  "payment_executed": false
+  "payment_executed": true,
+  "executed_queries": 20,
+  "blocked": [
+    "contextual_relevancy:39a88362-7dbe-4edd-8db5-79674dc662fc:BUDGET_BLOCKED",
+    "contextual_precision:01063042-ba62-4c90-8cb6-9ac5df7adb2a:BUDGET_BLOCKED",
+    "contextual_recall:01063042-ba62-4c90-8cb6-9ac5df7adb2a:BUDGET_BLOCKED"
+  ]
 }

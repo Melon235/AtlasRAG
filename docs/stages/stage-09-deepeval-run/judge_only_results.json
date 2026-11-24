@@ -1,0 +1,329 @@
+{
+  "captures_sha256": "f45348e4066d47c303c635f4ba65d9e19b4a6347db0828d9c9f07124d2bc8366",
+  "results": [
+    {
+      "query_id": "01063042-ba62-4c90-8cb6-9ac5df7adb2a",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions\u2014the actual output aligns perfectly with the retrieval context. Great job!",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 0.7777777777777778,
+          "reason": "The score is 0.78 because the output includes irrelevant statements that discuss interpretability based on model design and provide an example of decision tree interpretability, rather than directly defining the four main concepts of XAI as asked.",
+          "status": "EVALUATED"
+        },
+        "contextual_relevancy": {
+          "query_id": "01063042-ba62-4c90-8cb6-9ac5df7adb2a",
+          "score": 0.0821917808219178,
+          "reason": "The score is 0.08 because the retrieval context is largely irrelevant, with most statements discussing unrelated topics such as channel estimation and specific XAI frameworks, as noted in the reasons (e.g., 'The statement discusses DL-based channel estimation in wireless communications, which is unrelated to the four main concepts defined by XAI.'). However, it does contain one relevant statement: 'XAI defines four main concepts: Interpretability, Explainability, Trustworthiness, and Causality,' which directly answers the input.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "0c4e0d90-93a7-4e4f-ad8b-3fcd9ff609b1",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions, indicating the actual output is perfectly faithful to the retrieval context.",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 0.8,
+          "reason": "The score is 0.80 because the response is mostly relevant, but it includes a statement about the perturbed cosine router improving rates to polynomial order, which is not directly relevant to whether expert estimation rates can be as slow as O_P(1/log^\u03c4(n)).",
+          "status": "EVALUATED"
+        },
+        "contextual_relevancy": {
+          "query_id": "0c4e0d90-93a7-4e4f-ad8b-3fcd9ff609b1",
+          "score": 0.2413793103448276,
+          "reason": "The score is 0.24 because most of the retrieval context is irrelevant, with reasons such as 'This statement discusses limitations of the analysis regarding data sampling assumptions' and 'This is an acknowledgement of funding support', which do not address the question. However, a few statements directly answer the question, e.g., 'The rates for estimating parameters and experts are slower than any polynomial rates and therefore, could be as slow as OP (1/ log\u03c4(n)).' and 'The worst expert estimation rate for cosine router MoE could be as slow as OP(1/log^\u03c4(n)) for some \u03c4 > 0.'",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "0de97b35-39b2-4811-af3d-1b87bafcee9e",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions, indicating the actual output is perfectly faithful to the retrieval context.",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because the output is perfectly relevant to the input, with no irrelevant statements, and directly addresses the question.",
+          "status": "EVALUATED"
+        },
+        "contextual_relevancy": {
+          "query_id": "0de97b35-39b2-4811-af3d-1b87bafcee9e",
+          "score": 0.4523809523809524,
+          "reason": "The score is 0.45 because the retrieval context contains many statements about opposite conditions (e.g., 'LU \u2264 x or L \u2264 x + \u00afl(A\u00af + \u2113)') and unrelated cases (e.g., '\u03b3* \u2208 (0, s]'), but it does include relevant statements such as 'From here on, suppose instead that LU > x and L > x + \u00afl(A\u00af + \u2113)' and 'we cannot have a \u2018No sales\u2019 (minimal) clearing solution', which directly address the input question.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "39a88362-7dbe-4edd-8db5-79674dc662fc",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions\u2014the actual output aligns perfectly with the retrieval context. Great job!",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because the response is perfectly relevant to the input, with no irrelevant statements, directly addressing how energy consumption influences GDP growth at different development levels.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "4ae3d9d7-c5ec-4393-88b1-71e11038b94f",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions, indicating the actual output is perfectly faithful to the retrieval context.",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because the response is perfectly relevant, with no irrelevant statements, directly addressing the connection between the sample covariance matrix and the VAR coefficient matrix in NIRVAR estimation.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "55d494f1-45e2-49a2-9d34-b8e28e3734ab",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions\u2014the actual output is fully faithful to the retrieval context. Great job!",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because the response is perfectly relevant to the question, with no irrelevant statements, fully addressing the purpose of the GenoTEX benchmark.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "62843ef9-c5ff-44f5-a965-1bd2a024a5ff",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions\u2014the actual output aligns perfectly with the retrieval context. Great job!",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 0.8333333333333334,
+          "reason": "The score is 0.83 because the response is mostly relevant, but it includes some irrelevant statements about speaker similarity and accent-conversion accuracy that are not directly tied to pronunciation improvement.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "6b0be0d3-3e85-409a-bb6d-51145f11d393",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions\u2014the actual output aligns perfectly with the retrieval context. Great job!",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because the output is perfectly relevant to the input, with no irrelevant statements, and directly addresses the question about DNN-based codecs and synthesis speed optimization.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "7092ae25-d313-44a3-968f-541cbb833307",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions, indicating the actual output is perfectly faithful to the retrieval context.",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because the response is perfectly relevant, with no irrelevant statements, directly addressing the aspect abstracted by the parity problem in reasoning tasks.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "79975da5-4347-41cc-84cf-380d0c33962a",
+      "scores": {
+        "faithfulness": {
+          "score": 0.8333333333333334,
+          "reason": "The score is 0.83 because the actual output incorrectly claims that time-varying regions are kept free from both inter-agent collisions and inter-agent occlusions, whereas the context only states that DBVC is inter-collision-free and DIVC ensures no inter-agent occlusion, treating them as separate constructs.",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 0.8333333333333334,
+          "reason": "The score is 0.83 because the response includes a statement about distributed planning and cell construction that is unrelated to the purpose of designing time-varying regions in multi-agent tracking, which prevents a higher score.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "9516e24e-b4d5-4010-a384-715f2ce71ec6",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions, indicating the actual output is perfectly faithful to the retrieval context.",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 0.8,
+          "reason": "The score is 0.80 because the response correctly addresses the question but includes a statement that focuses on Laplace's equation in a specific region rather than Poisson's equation generally, making it slightly less directly relevant.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "a8bba3c8-5df8-40f4-98d1-03adaaa31169",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions\u2014the actual output aligns perfectly with the retrieval context. Great job!",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because the output is perfectly relevant to the input, with no irrelevant statements, and directly addresses the question about which method demonstrates superior performance.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "aa00c321-111d-482a-aaa9-e932a7419d66",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions, indicating the actual output is perfectly faithful to the retrieval context.",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 0.7692307692307693,
+          "reason": "The score is 0.77 because the response includes several statements about finite exceptional cases and specific finite examples that do not directly address the role of countability in Stone spaces and their complexes, which is the core of the question.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "abde5f0c-f877-4626-84f9-73c378b97a2e",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions, indicating the actual output is perfectly faithful to the retrieval context.",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because the output is perfectly relevant to the input, with no irrelevant statements, and fully addresses the question.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "bac61451-d99a-43b3-9754-b8a593e5d1d7",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions\u2014the actual output is fully faithful to the retrieval context. Great job!",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because the output is fully relevant to the input, with no irrelevant statements, so it cannot be higher and is already at the maximum.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "ce930828-7ec1-44d5-9e74-899e38589c11",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions\u2014the actual output is fully faithful to the retrieval context. Great job!",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 0.8571428571428571,
+          "reason": "The score is 0.86 because the response is mostly relevant, but one statement about general scheduler constraints is irrelevant as it does not mention gwemopt or its role in planning observations for gravitational wave events.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "d6633b16-3803-430b-a144-89bfc2f79757",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions, indicating the actual output is perfectly faithful to the retrieval context.",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "score": 0.875,
+          "reason": "The score is 0.88 because the response is largely relevant, but it includes a statement about MedPix 2.0 that does not directly address the EHDS's role in advancing medical AI research, which slightly lowers the relevancy.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "dea63029-5f2d-4ecb-8a54-89d5716fb51b",
+      "scores": {
+        "faithfulness": {
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions\u2014the actual output is fully faithful to the retrieval context. Great job!",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "query_id": "dea63029-5f2d-4ecb-8a54-89d5716fb51b",
+          "score": 1.0,
+          "reason": "The score is 1.00 because the output is perfectly relevant to the input, with no irrelevant statements, fully addressing the question.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "efe5d614-9733-4ed3-84ef-2c696c458822",
+      "scores": {
+        "faithfulness": {
+          "query_id": "efe5d614-9733-4ed3-84ef-2c696c458822",
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions\u2014the actual output is fully faithful to the retrieval context. Great job!",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "query_id": "efe5d614-9733-4ed3-84ef-2c696c458822",
+          "score": 1.0,
+          "reason": "The score is 1.00 because the response is perfectly relevant to the input, with no irrelevant statements, and directly addresses the question with a clear and focused answer.",
+          "status": "EVALUATED"
+        }
+      }
+    },
+    {
+      "query_id": "f242252c-53ba-44a8-8224-4ea1be8d8088",
+      "scores": {
+        "faithfulness": {
+          "query_id": "f242252c-53ba-44a8-8224-4ea1be8d8088",
+          "score": 1.0,
+          "reason": "The score is 1.00 because there are no contradictions\u2014the actual output aligns perfectly with the retrieval context. Great job!",
+          "status": "EVALUATED"
+        },
+        "answer_relevancy": {
+          "query_id": "f242252c-53ba-44a8-8224-4ea1be8d8088",
+          "score": 1.0,
+          "reason": "The score is 1.00 because the output directly and accurately addresses the question with no irrelevant statements, making it perfectly relevant.",
+          "status": "EVALUATED"
+        }
+      }
+    }
+  ],
+  "blocked": []
+}

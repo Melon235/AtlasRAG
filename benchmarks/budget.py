@@ -106,6 +106,78 @@ class BudgetLedger:
             finally:
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
+    def reserve_budget(
+        self, *, input_tokens: int, output_tokens: int, cost_micro_usd: int
+    ) -> None:
+        """Reserve conservative headroom before dispatch; caller reconciles afterwards."""
+        if min(input_tokens, output_tokens, cost_micro_usd) < 0:
+            raise BudgetExceededError("invalid reservation")
+        with self.path.open("a+", encoding="utf-8") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                state = self._read(stream)
+                projected = BudgetState(
+                    attempts=state.attempts,
+                    input_tokens=state.input_tokens + input_tokens,
+                    output_tokens=state.output_tokens + output_tokens,
+                    cost_micro_usd=state.cost_micro_usd + cost_micro_usd,
+                )
+                if (
+                    projected.input_tokens + projected.output_tokens
+                    > self.policy.max_tokens
+                ):
+                    raise BudgetExceededError("token reservation exceeds budget")
+                if projected.cost_micro_usd > self.policy.max_cost_micro_usd:
+                    raise BudgetExceededError("cost reservation exceeds budget")
+                stream.seek(0)
+                stream.truncate()
+                stream.write(json.dumps(asdict(projected)) + "\n")
+                stream.flush()
+                import os
+
+                os.fsync(stream.fileno())
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+    def adjust(
+        self, *, input_tokens: int, output_tokens: int, cost_micro_usd: int
+    ) -> None:
+        """Correct a prior reservation after actual usage is known."""
+        with self.path.open("a+", encoding="utf-8") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                state = self._read(stream)
+                values = (
+                    state.attempts,
+                    max(0, state.input_tokens + input_tokens),
+                    max(0, state.output_tokens + output_tokens),
+                    max(0, state.cost_micro_usd + cost_micro_usd),
+                )
+                if (
+                    values[1] + values[2] > self.policy.max_tokens
+                    or values[3] > self.policy.max_cost_micro_usd
+                ):
+                    raise BudgetExceededError("actual usage exceeds budget")
+                stream.seek(0)
+                stream.truncate()
+                stream.write(
+                    json.dumps(
+                        {
+                            "attempts": values[0],
+                            "input_tokens": values[1],
+                            "output_tokens": values[2],
+                            "cost_micro_usd": values[3],
+                        }
+                    )
+                    + "\n"
+                )
+                stream.flush()
+                import os
+
+                os.fsync(stream.fileno())
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
 
 class BudgetedTransport:
     """httpx transport wrapper that reserves one attempt before every request."""
