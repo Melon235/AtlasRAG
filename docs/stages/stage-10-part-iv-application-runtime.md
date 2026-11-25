@@ -120,7 +120,7 @@ local disposable-cache assumption is explicit.
 - Real isolated PostgreSQL/Milvus/Redis integration suite.
 - Real Qwen/BGE GPU initialization, MinerU guarded boundary measurement,
   RTX 3070 VRAM/OOM and SDK subprocess settlement.
-- Full production business-graph construction: `ApplicationComposition`
-  accepts a `BusinessBundle` builder for existing runners; this builder is not
-  yet a complete production wiring of every Stage 5–8 service.
+- Real isolated infrastructure and GPU verification remain pending; the
+  default production business composition now exists in
+  `runtime/production.py`.
 - Final transport/CLI/streaming/backup/performance work.

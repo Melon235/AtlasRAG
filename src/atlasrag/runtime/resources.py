@@ -7,6 +7,10 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
 
+from atlasrag.domain.ingestion.document import DocumentContainer
+from atlasrag.domain.ingestion.source import CandidateBuildContext, SourceFile
+from atlasrag.providers.parsing.base import DocumentParser
+
 
 class EmbeddingLike(Protocol):
     @property
@@ -97,3 +101,17 @@ class GuardedRerankerProvider:
     async def score(self, query: str, passages: Sequence[str]) -> tuple[float, ...]:
         async with self._guard.slot():
             return await self._provider.score(query, passages)
+
+
+class GuardedMinerUParser:
+    """Run the existing MinerU adapter on its invoking thread under the guard."""
+
+    def __init__(self, parser: DocumentParser, guard: ResourceGuard) -> None:
+        self._parser = parser
+        self._guard = guard
+
+    async def parse(
+        self, source: SourceFile, context: CandidateBuildContext
+    ) -> DocumentContainer:
+        async with self._guard.slot():
+            return await self._parser.parse(source, context)

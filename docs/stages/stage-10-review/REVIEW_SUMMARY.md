@@ -25,3 +25,14 @@ Reviewed HEAD: `622434e8de4c65c4b919e34b2c5bfb1481f998aa`
 - Several mandatory concurrency/cache/startup tests remain missing.
 
 Stage 10 remains **PARTIAL / UNSATISFIED**. No merge is authorized.
+
+
+---
+
+## Stage 10-A update (self-review evidence only)
+
+F-01 diagnosis corrected: ownership was reacquired by coordinator because the
+composition had already acquired it; the original review text's claim that
+composition acquired twice was imprecise. F-01 regression now covers the
+pre-owned coordinator path. F-02/F-03/F-04 regressions added. G-04..G-09 remain
+open; G-10 remains Stage 10-C.

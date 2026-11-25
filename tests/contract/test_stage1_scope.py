@@ -356,6 +356,7 @@ STAGE10_PRODUCTION_FILES = frozenset(
         "runtime/maintenance.py",
         "runtime/modes.py",
         "runtime/ownership.py",
+        "runtime/production.py",
         "runtime/resources.py",
         "runtime/tasks.py",
         "services/sync/source_safety.py",

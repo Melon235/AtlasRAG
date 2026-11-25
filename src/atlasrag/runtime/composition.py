@@ -4,15 +4,19 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 import redis.asyncio as redis
 from pymilvus import MilvusClient  # type: ignore[import-untyped]
 
 from atlasrag.config.models import RuntimeConfig
+from atlasrag.domain.requests import UserTurnRequest
+from atlasrag.domain.results import FinalResponse
 from atlasrag.providers.cache.redis import RedisCacheProvider
 from atlasrag.providers.embedding.qwen import QwenEmbeddingProvider
 from atlasrag.providers.index.milvus import MilvusIndexProvider
+from atlasrag.providers.parsing.mineru import MinerUParser
 from atlasrag.providers.reranker.bge import BgeRerankerProvider
 from atlasrag.repositories.postgres.pool import PostgresPool
 from atlasrag.repositories.postgres.uow import PostgresUnitOfWork
@@ -27,6 +31,7 @@ from atlasrag.runtime.maintenance import MaintenanceCoordinator
 from atlasrag.runtime.ownership import RuntimeOwnershipLock
 from atlasrag.runtime.resources import (
     GuardedEmbeddingProvider,
+    GuardedMinerUParser,
     GuardedRerankerProvider,
     ResourceGuard,
 )
@@ -49,13 +54,17 @@ class SharedResources:
     embedding: GuardedEmbeddingProvider
     reranker: GuardedRerankerProvider | None
     guard: ResourceGuard
+    guarded_mineru: GuardedMinerUParser
+    knowledge_directory: Path
+    deepseek_http: httpx.AsyncClient
+    web_http: httpx.AsyncClient
 
 
 @dataclass(frozen=True)
 class BusinessBundle:
     """Existing services composed with the shared resources by the caller."""
 
-    retrieval: Callable[[object], Awaitable[object]]
+    retrieval: Callable[[UserTurnRequest], Awaitable[FinalResponse]]
     sync: Callable[[], Awaitable[SyncResult]]
     reconcile: Callable[[], Awaitable[ReconciliationResult]]
     source_safety: Callable[[], Awaitable[SourceSafetyResult]]
@@ -78,12 +87,15 @@ class ApplicationComposition:
         self._redis: RedisCacheProvider | None = None
         self._qwen: QwenEmbeddingProvider | None = None
         self._bge: BgeRerankerProvider | None = None
-        self._http: httpx.AsyncClient | None = None
+        self._deepseek_http: httpx.AsyncClient | None = None
+        self._web_http: httpx.AsyncClient | None = None
         self._guard = ResourceGuard(capacity=config.runtime.gpu_concurrency)
         self._business: BusinessBundle | None = None
         self._closed = False
 
-    async def start(self, build_business: BusinessBuilder) -> ApplicationCoordinator:
+    async def start(
+        self, build_business: BusinessBuilder | None = None
+    ) -> ApplicationCoordinator:
         if self._closed:
             raise RuntimeError("composition is closed")
         self._ownership.acquire()
@@ -95,7 +107,12 @@ class ApplicationComposition:
                 max_size=config.runtime.postgres_pool_max_size,
             )
             await self._pool.open()
-            self._http = httpx.AsyncClient()
+            self._deepseek_http = httpx.AsyncClient(
+                timeout=httpx.Timeout(60.0, connect=10.0)
+            )
+            self._web_http = httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0, connect=10.0)
+            )
             self._redis_client = redis.from_url(
                 f"redis://{config.infrastructure.redis_host}:"
                 f"{config.infrastructure.redis_port}/0",
@@ -122,6 +139,8 @@ class ApplicationComposition:
                 self._bge = BgeRerankerProvider(device=config.models.model_device)
                 guarded_reranker = GuardedRerankerProvider(self._bge, self._guard)
                 await guarded_reranker.initialize(allow_download=False)
+            assert self._deepseek_http is not None
+            assert self._web_http is not None
             shared = SharedResources(
                 config=config,
                 ownership=self._ownership,
@@ -131,7 +150,15 @@ class ApplicationComposition:
                 embedding=guarded_embedding,
                 reranker=guarded_reranker,
                 guard=self._guard,
+                guarded_mineru=GuardedMinerUParser(MinerUParser(), self._guard),
+                knowledge_directory=Path(config.infrastructure.knowledge_directory),
+                deepseek_http=self._deepseek_http,
+                web_http=self._web_http,
             )
+            if build_business is None:
+                from atlasrag.runtime.production import build_default_business
+
+                build_business = build_default_business
             business = await build_business(shared)
             self._business = business
             gate = RuntimeGate()
@@ -166,7 +193,7 @@ class ApplicationComposition:
                 health=health,
                 freshness=freshness,
                 maintenance=maintenance,
-                retrieval=business.retrieval,  # type: ignore[arg-type]
+                retrieval=business.retrieval,
                 reconcile=business.reconcile,
                 source_safety=business.source_safety,
                 verify=business.verify,
@@ -196,8 +223,10 @@ class ApplicationComposition:
                 await self._redis_client.aclose()
             if self._pool is not None:
                 await self._pool.close()
-            if self._http is not None:
-                await self._http.aclose()
+            if self._deepseek_http is not None:
+                await self._deepseek_http.aclose()
+            if self._web_http is not None:
+                await self._web_http.aclose()
 
 
 async def _initialized() -> None:

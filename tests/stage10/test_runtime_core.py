@@ -150,3 +150,144 @@ async def test_resource_guard_capacity_and_cancelled_waiter() -> None:
     release.set()
     await first
     assert order == ["holder"]
+
+
+@pytest.mark.asyncio
+async def test_guarded_mineru_uses_shared_guard_and_releases() -> None:
+    from atlasrag.domain.ingestion.document import DocumentContainer
+    from atlasrag.runtime.resources import GuardedMinerUParser
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class Parser:
+        async def parse(self, source: object, context: object) -> DocumentContainer:
+            entered.set()
+            await release.wait()
+            return DocumentContainer.model_construct()
+
+    parser = Parser()
+    guarded = GuardedMinerUParser(parser, ResourceGuard(capacity=1))
+
+    async def run() -> None:
+        await guarded.parse(object(), object())  # type: ignore[arg-type]
+
+    task = asyncio.create_task(run())
+    await entered.wait()
+    assert not task.done()
+    release.set()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_maintenance_freshness_failure_blocks_runtime() -> None:
+    from atlasrag.runtime.maintenance import MaintenanceCoordinator
+    from atlasrag.services.sync.models import ServingSafety, SyncOutcome, SyncResult
+
+    class Freshness:
+        async def enforce(self) -> object:
+            raise RuntimeError("barrier failed")
+
+    async def sync() -> SyncResult:
+        return SyncResult(
+            outcome=SyncOutcome.SUCCESS,
+            serving_safety=ServingSafety.SAFE_TO_SERVE,
+        )
+
+    gate = RuntimeGate()
+    await gate.mark_serving()
+    await gate.set_admission_ready(True)
+    coordinator = MaintenanceCoordinator(
+        gate=gate,
+        run_sync=sync,
+        freshness=Freshness(),  # type: ignore[arg-type]
+        drain_timeout_seconds=1.0,
+    )
+    with pytest.raises(RuntimeError):
+        await coordinator.run()
+    assert gate.mode.value == "BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_coordinator_does_not_reacquire_preowned_lock() -> None:
+    from atlasrag.runtime.coordinator import (
+        ApplicationCoordinator,
+        CoordinatorDependencies,
+    )
+    from atlasrag.runtime.health import HealthRegistry
+    from atlasrag.services.sync.models import (
+        GlobalSafetyResult,
+        ReconciliationOutcome,
+        ReconciliationResult,
+        ServingSafety,
+    )
+    from atlasrag.services.sync.source_safety import SourceSafetyResult
+
+    class Ownership:
+        def __init__(self) -> None:
+            self.released = False
+
+        def acquire(self) -> None:
+            raise AssertionError("must not reacquire")
+
+        def release(self) -> None:
+            self.released = True
+
+    async def ok() -> None:
+        return None
+
+    gate = RuntimeGate()
+    health = HealthRegistry(
+        mode=lambda: gate.mode,
+        postgres=ok,
+        milvus=ok,
+        redis=ok,
+        embedding=ok,
+        probe_timeout=1,
+        refresh_interval=10,
+    )
+
+    class Freshness:
+        async def recover_if_due(self) -> None:
+            return None
+
+        async def enforce(self) -> object:
+            return "TRUSTED"
+
+    class Maintenance:
+        async def run(self) -> object:
+            raise AssertionError
+
+        async def recover_blocked(self) -> object:
+            raise AssertionError
+
+    async def reconcile() -> ReconciliationResult:
+        return ReconciliationResult(
+            outcome=ReconciliationOutcome.CLEAN, checked_documents=0
+        )
+
+    async def source() -> SourceSafetyResult:
+        return SourceSafetyResult(safe=True)
+
+    async def verify() -> GlobalSafetyResult:
+        return GlobalSafetyResult(serving_safety=ServingSafety.SAFE_TO_SERVE)
+
+    async def retrieval(request: object) -> object:
+        raise AssertionError
+
+    deps = CoordinatorDependencies(
+        ownership=Ownership(),  # type: ignore[arg-type]
+        gate=gate,
+        tasks=InFlightTaskRegistry(),
+        health=health,
+        freshness=Freshness(),  # type: ignore[arg-type]
+        maintenance=Maintenance(),  # type: ignore[arg-type]
+        retrieval=retrieval,  # type: ignore[arg-type]
+        reconcile=reconcile,
+        source_safety=source,
+        verify=verify,
+        ownership_acquired=True,
+    )
+    coordinator = ApplicationCoordinator(deps)
+    await coordinator._start()
+    assert gate.mode.value == "SERVING"

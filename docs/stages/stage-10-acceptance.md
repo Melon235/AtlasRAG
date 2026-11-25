@@ -7,7 +7,7 @@ SATISFIED; unavailable infrastructure/GPU evidence is marked PARTIAL.
 |---|---|---|
 | S10-01 | SATISFIED | `RuntimeOperationalConfig` defaults/ranges; config/fingerprint tests |
 | S10-02 | SATISFIED | `RuntimeOwnershipLock`; second-acquirer and idempotent tests |
-| S10-03 | PARTIAL | `ApplicationComposition` owns shared infra; business graph builder is injected, not fully production-wired |
+| S10-03 | PARTIAL | Default production builder added; real isolated construction not verified |
 | S10-04 | PARTIAL | Formula `2C+2`, default 16; unit/type validation; no isolated contention load test |
 | S10-05 | SATISFIED | Gate admission/release, duplicate release tests |
 | S10-05a | SATISFIED | `InFlightTaskRegistry`; registry settlement test |
@@ -29,4 +29,4 @@ SATISFIED; unavailable infrastructure/GPU evidence is marked PARTIAL.
 | S10-19 | PARTIAL | 3306 pass offline; isolated real-infrastructure suite not executed |
 | S10-20 | SATISFIED | Architecture checks, scope tests updated, Stage 9 artifacts preserved |
 
-Stage 10 is **not claimed PASS**.
+Stage 10-A production composition and deterministic additions are complete. Stage 10 remains **PARTIAL** pending Stage 10-B real integration and Stage 10-C independent review.
