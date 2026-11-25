@@ -92,6 +92,7 @@ class ApplicationComposition:
         self._guard = ResourceGuard(capacity=config.runtime.gpu_concurrency)
         self._business: BusinessBundle | None = None
         self._closed = False
+        self._cleanup_error: BaseException | None = None
 
     async def start(
         self, build_business: BusinessBuilder | None = None
@@ -204,29 +205,46 @@ class ApplicationComposition:
             coordinator = ApplicationCoordinator(deps)
             await coordinator._start()
             return coordinator
-        except BaseException:
-            await self._close_resources()
-            self._ownership.release()
+        except BaseException as primary:
+            try:
+                await self._close_resources()
+            except BaseException as cleanup:
+                primary.add_note(f"runtime cleanup failure: {type(cleanup).__name__}")
+            else:
+                self._ownership.release()
             raise
 
     async def _close_resources(self) -> None:
         if self._closed:
+            if self._cleanup_error is not None:
+                raise self._cleanup_error
             return
         self._closed = True
-        try:
-            if self._business is not None:
-                await self._business.close()
-        finally:
-            if self._milvus is not None:
-                await self._milvus.close()
-            if self._redis_client is not None:
-                await self._redis_client.aclose()
-            if self._pool is not None:
-                await self._pool.close()
-            if self._deepseek_http is not None:
-                await self._deepseek_http.aclose()
-            if self._web_http is not None:
-                await self._web_http.aclose()
+        first: BaseException | None = None
+        operations = (
+            ("business", self._business.close if self._business else None),
+            ("milvus", self._milvus.close if self._milvus else None),
+            ("redis", self._redis_client.aclose if self._redis_client else None),
+            ("postgres", self._pool.close if self._pool else None),
+            (
+                "deepseek_http",
+                self._deepseek_http.aclose if self._deepseek_http else None,
+            ),
+            ("web_http", self._web_http.aclose if self._web_http else None),
+        )
+        for name, close in operations:
+            if close is None:
+                continue
+            try:
+                await close()
+            except BaseException as error:
+                if first is None:
+                    first = error
+                else:
+                    first.add_note(f"runtime cleanup: {name}/{type(error).__name__}")
+        if first is not None:
+            self._cleanup_error = first
+            raise first
 
 
 async def _initialized() -> None:

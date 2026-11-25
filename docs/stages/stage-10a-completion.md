@@ -1,8 +1,7 @@
 # Stage 10-A Implementation Completion
 
-Status: **PARTIAL — production composition and MinerU guard are implemented;
-thirty offline tests pass, but mandatory concurrency/startup/cache matrices
-remain incomplete. Stage 10 overall remains PARTIAL.**
+Status: **A-R1 COMPLETE. Stage 10-A remains PARTIAL because A-R2..A-R5 offline
+matrices are incomplete. Stage 10 overall remains PARTIAL.**
 
 ## 10-A1 Production business composition
 

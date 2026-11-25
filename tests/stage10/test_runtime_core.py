@@ -432,3 +432,110 @@ async def test_registration_failure_releases_query_lease() -> None:
     with pytest.raises(RuntimeError):
         await coordinator.run_query(object())  # type: ignore[arg-type]
     assert gate.active_queries == 0
+
+
+@pytest.mark.asyncio
+async def test_composition_cleanup_attempts_all_resources_and_is_repeat_safe() -> None:
+    from atlasrag.runtime.composition import ApplicationComposition
+
+    calls: list[str] = []
+
+    class Close:
+        def __init__(self, name: str, fail: bool = False) -> None:
+            self.name = name
+            self.fail = fail
+
+        async def close(self) -> None:
+            calls.append(self.name)
+            if self.fail:
+                raise RuntimeError(self.name)
+
+        async def aclose(self) -> None:
+            await self.close()
+
+    class Business:
+        async def close(self) -> None:
+            calls.append("business")
+
+    composition = object.__new__(ApplicationComposition)
+    composition._closed = False
+    composition._cleanup_error = None
+    composition._business = Business()  # type: ignore[assignment]
+    composition._milvus = Close("milvus", fail=True)  # type: ignore[assignment]
+    composition._redis_client = Close("redis")  # type: ignore[assignment]
+    composition._pool = Close("postgres")  # type: ignore[assignment]
+    composition._deepseek_http = Close("deepseek")  # type: ignore[assignment]
+    composition._web_http = Close("web")  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError):
+        await composition._close_resources()
+    assert calls == ["business", "milvus", "redis", "postgres", "deepseek", "web"]
+    with pytest.raises(RuntimeError):
+        await composition._close_resources()
+    assert calls == ["business", "milvus", "redis", "postgres", "deepseek", "web"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_close_failure_retains_ownership_and_is_not_success() -> None:
+    from atlasrag.runtime.coordinator import (
+        ApplicationCoordinator,
+        CoordinatorDependencies,
+    )
+    from atlasrag.runtime.health import HealthRegistry
+
+    async def ok() -> None:
+        return None
+
+    gate = RuntimeGate()
+    await gate.mark_serving()
+    health = HealthRegistry(
+        mode=lambda: gate.mode,
+        postgres=ok,
+        milvus=ok,
+        redis=ok,
+        embedding=ok,
+    )
+    released = False
+
+    class Ownership:
+        def acquire(self) -> None:
+            return None
+
+        def release(self) -> None:
+            nonlocal released
+            released = True
+
+    async def close() -> None:
+        raise RuntimeError("close failed")
+
+    class Freshness:
+        async def recover_if_due(self) -> None:
+            return None
+
+    class Maintenance:
+        async def run(self) -> object:
+            raise AssertionError
+
+        async def recover_blocked(self) -> object:
+            raise AssertionError
+
+    deps = CoordinatorDependencies(
+        ownership=Ownership(),  # type: ignore[arg-type]
+        gate=gate,
+        tasks=InFlightTaskRegistry(),
+        health=health,
+        freshness=Freshness(),  # type: ignore[arg-type]
+        maintenance=Maintenance(),  # type: ignore[arg-type]
+        retrieval=lambda request: None,  # type: ignore[arg-type,return-value]
+        reconcile=lambda: None,  # type: ignore[arg-type,return-value]
+        source_safety=lambda: None,  # type: ignore[arg-type,return-value]
+        verify=lambda: None,  # type: ignore[arg-type,return-value]
+        close_resources=close,
+        shutdown_timeout_seconds=0.1,
+        ownership_acquired=True,
+    )
+    coordinator = ApplicationCoordinator(deps)
+    with pytest.raises(RuntimeError):
+        await coordinator.shutdown()
+    assert not released
+    assert coordinator._shutdown_done is False

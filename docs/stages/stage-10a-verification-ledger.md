@@ -1,18 +1,23 @@
 # Stage 10-A Offline Verification Ledger
 
-Status: **PARTIAL**. Thirty deterministic Stage 10 tests pass; several mandatory
+Status: **PARTIAL**. Thirty-five deterministic Stage 10 tests pass; several mandatory
 matrices remain MISSING_TEST. No offline PASS is claimed for missing rows.
 
-## A-R1 Production composition
+## A-R1 Production composition — COMPLETE (offline, fake technical boundaries)
 
 | Scenario | Test | Result |
 |---|---|---|
 | Default builder assembles Part I/II services | `test_default_builder_constructs_existing_part_i_and_part_ii_services` | PASS |
 | Default production entry exists | `test_default_production_composition_is_available` | PASS |
-| Shared fields (MinerU/HTTPs) present | same | PASS |
-| Composition-to-coordinator startup with technical fakes | — | MISSING_TEST |
-| Partial bootstrap rollback through composition | — | MISSING_TEST |
-| Single ownership at composition boundary | coordinator regression only | PARTIAL |
+| Full default startup reaches SERVING | `test_default_production_startup_and_shutdown_with_fake_boundaries` | PASS |
+| One pool/Milvus/Redis/Qwen/reranker | same (constructor counters) | PASS |
+| GuardedMinerU uses shared guard | same (ParserRouter capture) | PASS |
+| Ownership acquired/released once | same | PASS |
+| Bootstrap failure rollback + ownership release | `test_bootstrap_failure_rolls_back_and_releases_ownership` | PASS |
+| CPU reranker degradation, no CUDA fallback | `test_cpu_config_degrades_reranker_without_cuda_fallback` | PASS |
+| Cleanup failure attempts all resources | `test_composition_cleanup_attempts_all_resources_and_is_repeat_safe` | PASS |
+| Close failure retains ownership, no false success | `test_shutdown_close_failure_retains_ownership_and_is_not_success` | PASS |
+| Repeated cleanup safe | cleanup regression | PASS |
 
 ## A-R2 Admission, health, shutdown
 
@@ -67,7 +72,7 @@ matrices remain MISSING_TEST. No offline PASS is claimed for missing rows.
 
 | Check | Result |
 |---|---|
-| `make test-stage10` | PASS — 30 tests |
+| `make test-stage10` | PASS — 35 tests |
 | `pytest` full | PASS — 3324 passed, 1 skipped, 108 deselected |
 | ruff / mypy / architecture / format / diff | PASS |
 | Real isolated infrastructure | NOT_EXECUTED (Stage 10-B) |

@@ -205,8 +205,6 @@ class ApplicationCoordinator:
             settled = await self._deps.tasks.wait_empty(timeout=0.0)
         if not settled:
             raise RuntimeShutdownFailedError
-        try:
-            await self._deps.close_resources()
-        finally:
-            self._deps.ownership.release()
-            self._shutdown_done = True
+        await self._deps.close_resources()
+        self._deps.ownership.release()
+        self._shutdown_done = True
