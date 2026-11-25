@@ -89,3 +89,32 @@ verification ledger and completion document.
 
 Independent review remains UNAVAILABLE. No review status is upgraded and
 Stage 10-C is not started.
+
+---
+
+## Stage 10-A A-R4 update (deterministic evidence only)
+
+R10-02 gap G-05 (ambiguous Redis/PostgreSQL outcomes) now has deterministic
+offline evidence:
+
+- Ambiguous writes: `test_submitted_write_outcome_matrix`,
+  `test_dependency_error_without_execution_detail_is_unknown`,
+  `test_ambiguous_write_is_never_deleted_by_cleanup`.
+- Concurrent same-key: `test_concurrent_same_key_misses_both_publish_and_last_value_is_valid`,
+  `test_canceled_same_key_request_does_not_delete_other_valid_entry`,
+  `test_ambiguous_same_key_write_preserves_other_valid_entry`.
+- Marker ambiguity and invalidation: `test_marker_commit_applied_with_lost_ack_is_conservatively_bypassed`,
+  `test_confirmatory_read_failure_remains_conservative`,
+  `test_confirmatory_true_marker_keeps_cache_bypassed`,
+  `test_complete_invalidation_precedes_marker_clear_and_confirmation`.
+- Redis outage/recovery: `test_redis_outage_bypasses_cache_and_recovery_removes_stale_entries`.
+- Maintenance/cache exclusion and settlement: `test_maintenance_waits_for_delayed_write_and_invalidates_it`,
+  `test_shutdown_stalled_write_fails_then_recovers_after_settlement`.
+- Recovery throttling: `test_due_callers_waiting_behind_held_recovery_run_once`.
+
+Two A-R4 defects (A-R4-F01, A-R4-F02) were confirmed and fixed; regressions
+were executed against the reverted pre-fix code path. The F-03 regression is
+retained with the corrected conservative outcome.
+
+Independent review remains UNAVAILABLE. No review status is upgraded and
+Stage 10-C is not started.

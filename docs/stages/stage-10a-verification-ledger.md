@@ -1,7 +1,7 @@
 # Stage 10-A Offline Verification Ledger
 
-Status: **PARTIAL**. One hundred twenty-three deterministic Stage 10 tests
-pass. A-R1, A-R2 and A-R3 are COMPLETE offline; A-R4, A-R5 and A-R6 remain
+Status: **PARTIAL**. One hundred ninety-six deterministic Stage 10 tests
+pass. A-R1, A-R2, A-R3 and A-R4 are COMPLETE offline; A-R5 and A-R6 remain
 incomplete, and no offline PASS is claimed for missing rows. Real isolated
 infrastructure remains Stage 10-B; independent review remains Stage 10-C.
 
@@ -295,20 +295,201 @@ The A-R2 test `test_unsafe_maintenance_outcome_is_not_overridden_by_healthy_prob
 was corrected to assert the authoritative semantics: dependency probes remain
 HEALTHY, but `knowledge_verified` and `hard_healthy` are false after UNSAFE.
 
-## A-R4 Query Cache and freshness
+## A-R4 Query Cache, freshness and concurrent cache correctness — COMPLETE (offline)
+
+All A-R4 tests use the real `RedisCacheProvider` over a stateful raw-Redis
+transport fake, the real `SessionQueryCache`, `CacheFreshnessBarrier`,
+retrieval/`RagCore` wrappers, `RuntimeGate`, `MaintenanceCoordinator` and
+`ApplicationCoordinator`. PostgreSQL marker state uses an explicit transaction
+fake with committed/working state, rollback and ambiguous-commit injection
+(`tests/stage10/cache_support.py`).
+
+### AR4-01 — Query Cache identity and eligibility
+
+Files: `tests/stage10/test_ar4_identity.py`, existing `tests/stage8/test_boundary_cache.py`, `tests/stage8/test_cache_provenance.py`
 
 | Scenario | Test | Result |
 |---|---|---|
-| Classified Redis dependency failure | `test_cache_commit_classifies_redis_failure_without_raising` | PASS |
-| Applied write, bad acknowledgement | `test_cache_commit_applied_write_with_bad_ack_is_unknown` | PASS |
-| Cancellation during commit settlement | `test_cache_commit_cancellation_settles_write_and_propagates` | PASS |
-| Marker true invalidates before clear | `test_marker_true_invalidates_before_clear` | PASS |
-| Partial invalidation keeps marker | `test_partial_invalidation_keeps_marker_true` | PASS |
-| Canonical marker corruption propagates | `test_canonical_marker_error_propagates` | PASS |
-| Concurrent recovery serialized | `test_concurrent_recovery_is_serialized` | PASS |
-| PG marker-clear failure/ambiguous commit | — | MISSING_TEST |
-| Cache-hit through query lease | `test_cache_hit_while_serving_traverses_application_admission` (A-R2 boundary evidence only; cache protocol unchanged) | PASS (admission) / A-R4 matrix pending |
-| Concurrent same-key/cross-session | — | MISSING_TEST |
+| Same session/exact request hits; different sessions independent | `test_same_session_exact_request_hits_and_other_sessions_are_independent` | PASS |
+| Changed query / changed filters produce distinct identity | `test_changed_query_and_changed_filters_have_distinct_identity` | PASS |
+| Runtime fingerprint is part of identity | `test_runtime_fingerprint_is_part_of_identity` | PASS |
+| Prepare submits no write | `test_prepare_does_not_submit_a_redis_write` | PASS |
+| Only completed local eligible results | `test_completed_local_result_is_the_only_eligible_result` | PASS |
+| Web/unknown provenance, time-sensitive, oversized bypass | `test_web_provenance_time_sensitivity_and_oversize_bypass`, `test_web_derived_citation_is_not_cacheable` | PASS |
+| Time-sensitive lookup bypasses Redis | `test_time_sensitive_lookup_bypasses_redis` | PASS |
+| Disabled cache performs no GET/SET | `test_disabled_cache_performs_no_redis_operations_and_freshness_still_runs`, existing `test_disabled_cache_skips_reads_even_with_existing_entry` | PASS |
+| Frozen key and session-isolated hash | `test_frozen_key_contract_and_session_isolated_identity` | PASS |
+| Existing policy/provenance matrices retained | Stage 8 tests above | PASS |
+
+### AR4-02 — Prepare and commit boundary
+
+File: `tests/stage10/test_ar4_commit.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Cancellation during preparation submits no write | `test_cancellation_during_preparation_submits_no_write` | PASS |
+| Cancellation immediately before commit submits no write | `test_cancellation_immediately_before_commit_submits_no_write` | PASS |
+| Acknowledged commit stores | `test_acknowledged_commit_stores_one_entry` | PASS |
+| Cancellation during submitted write settles then propagates | `test_cancellation_during_submitted_write_settles_then_propagates` | PASS |
+| Repeated cancellation settles without hanging | `test_repeated_cancellation_during_write_settles_without_hanging` | PASS |
+| Cancellation after acknowledgement keeps a valid entry | `test_cancellation_after_write_acknowledgement_keeps_valid_entry` | PASS |
+| Store wrapper reports ambiguous outcome as false | `test_store_wrapper_reports_false_for_unknown_outcome` | PASS |
+| Actual retrieval graph stores then hits | `test_actual_retrieval_graph_stores_then_hits` | PASS |
+| Canceled request is not reported successful | `test_canceled_application_request_is_not_reported_successful` | PASS |
+| Existing F-03/invalid-ack/cancellation regressions | `tests/stage10/test_cache_commit.py` | PASS |
+
+### AR4-03 — Ambiguous Redis write outcomes
+
+File: `tests/stage10/test_ar4_commit.py`
+
+| Submitted outcome | Test case | Result |
+|---|---|---|
+| Applied + valid ack → STORED | `test_submitted_write_outcome_matrix[store-STORED-True]` | PASS |
+| Applied + timeout → UNKNOWN at provider | `test_submitted_write_outcome_matrix[apply_timeout-UNKNOWN-True]` | PASS |
+| Applied + connection loss → UNKNOWN | `test_submitted_write_outcome_matrix[apply_connection-UNKNOWN-True]` | PASS |
+| Applied + malformed ack → UNKNOWN | `test_submitted_write_outcome_matrix[apply_bad_ack-UNKNOWN-True]` | PASS |
+| Server rejection / connection failure before application → conservatively UNKNOWN | `test_submitted_write_outcome_matrix[reject-UNKNOWN-False]`, `[unavailable_before-UNKNOWN-False]` | PASS |
+| No write attempted (ineligible/disabled/untrusted) → no commit | `test_no_write_attempt_paths_report_no_stored_outcome` | PASS |
+| Dependency error with no execution detail → UNKNOWN | `test_dependency_error_without_execution_detail_is_unknown` | PASS |
+| Programming/invariant errors propagate | `test_programming_error_propagates_from_commit` | PASS |
+| Ambiguous write is not deleted by cleanup | `test_ambiguous_write_is_never_deleted_by_cleanup` | PASS |
+
+Current adapter errors cannot prove non-execution for a submitted SET, so
+submitted transport failures are conservatively UNKNOWN; BYPASSED is restricted
+to no-attempt paths. This is recorded as a limitation, not certainty.
+
+### AR4-04 — Concurrent same-key requests and session isolation
+
+File: `tests/stage10/test_ar4_commit.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Both miss before writes; both publish; last valid value wins | `test_concurrent_same_key_misses_both_publish_and_last_value_is_valid` | PASS |
+| One canceled before commit does not delete the other entry | `test_canceled_same_key_request_does_not_delete_other_valid_entry` | PASS |
+| Ambiguous write plus valid write preserves a valid entry | `test_ambiguous_same_key_write_preserves_other_valid_entry` | PASS |
+| Different sessions do not leak values | `test_concurrent_different_sessions_do_not_leak_values` | PASS |
+| Incomplete results never publish concurrently | `test_incomplete_results_never_publish_under_concurrency` | PASS |
+
+### AR4-05 — Persisted marker and invalidation ordering
+
+File: `tests/stage10/test_ar4_freshness.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Marker false trusts without invalidation | `test_marker_false_is_trusted_without_invalidation` | PASS |
+| Only `atlasrag:query:*` is invalidated; Parent/unrelated keys survive | `test_invalidation_removes_only_query_namespace` | PASS |
+| Multi-page SCAN and multiple UNLINK batches | `test_multi_page_scan_and_multiple_unlink_batches` | PASS |
+| Empty namespace clears marker | `test_empty_query_namespace_still_clears_marker` | PASS |
+| Invalidation failure keeps marker and bypasses reads/writes | `test_invalidation_failure_keeps_marker_and_bypasses_cache` | PASS |
+| Partial invalidation / malformed page / invalid key / scan loop / timeout | `test_partial_invalidation_failure_is_bypassed`, `test_invalid_invalidation_responses_keep_marker`, `test_invalidation_timeout_keeps_marker` | PASS |
+| Cancellation during invalidation keeps marker true | `test_cancellation_during_invalidation_keeps_marker_true` | PASS |
+| Complete invalidation precedes marker clear and confirmation | `test_complete_invalidation_precedes_marker_clear_and_confirmation` | PASS |
+
+### AR4-06 — PostgreSQL marker failure and ambiguous commit
+
+File: `tests/stage10/test_ar4_freshness.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Marker read unavailable/timeout bypasses reads and writes | `test_marker_read_unavailable_bypasses_cache_reads_and_writes`, `test_marker_read_timeout_bypasses` | PASS |
+| Canonical marker corruption propagates | `test_canonical_marker_corruption_propagates` | PASS |
+| Marker clear set failure keeps marker true | `test_marker_set_failure_keeps_marker_true` | PASS |
+| Commit failure rolls back | `test_marker_commit_failure_rolls_back` | PASS |
+| Commit applied with lost ack is conservatively BYPASSED, then persisted marker authorizes only an empty/invalidated cache | `test_marker_commit_applied_with_lost_ack_is_conservatively_bypassed` | PASS |
+| Confirmatory read failure stays conservative | `test_confirmatory_read_failure_remains_conservative` | PASS |
+| Confirmatory read true keeps bypass | `test_confirmatory_true_marker_keeps_cache_bypassed` | PASS |
+| Confirmed false after complete invalidation restores trust | `test_confirmed_false_after_complete_invalidation_reestablishes_trust` | PASS |
+
+### AR4-07 — Redis outage and recovery
+
+File: `tests/stage10/test_ar4_lifecycle.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Redis unavailable + marker true: serving continues, all cache reads/writes bypassed; recovery invalidates stale entries before trust | `test_redis_outage_bypasses_cache_and_recovery_removes_stale_entries` | PASS |
+| Marker true at restart invalidates before admission | `test_restart_with_marker_true_invalidates_before_cache_trust` | PASS |
+
+### AR4-08 — Concurrent recovery and throttling
+
+Files: `tests/stage10/test_ar4_freshness.py`, existing `tests/stage10/test_freshness.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Concurrent due callers serialize into one recovery | `test_concurrent_due_recovery_is_single_flight` | PASS |
+| Callers already waiting on a held recovery lock do not repeat it | `test_due_callers_waiting_behind_held_recovery_run_once` | PASS |
+| Concurrent failed recovery is attempted once | `test_concurrent_failed_due_recovery_is_attempted_once` | PASS |
+| Failure is throttled; retry after interval succeeds | `test_failed_recovery_is_throttled_then_retried` | PASS |
+| Explicit `enforce` is not skipped by lazy throttling | `test_enforce_is_not_throttled_by_lazy_recovery` | PASS |
+| Existing serialization regression retained | `test_concurrent_recovery_is_serialized` | PASS |
+
+### AR4-09 — Maintenance, cache commit and late operations
+
+File: `tests/stage10/test_ar4_lifecycle.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Lookup/write occur only while the query lease is active | `test_cache_lookup_and_write_occur_while_query_lease_is_active` | PASS |
+| Maintenance waits for a delayed submitted write; the write is then invalidated before serving | `test_maintenance_waits_for_delayed_write_and_invalidates_it` | PASS |
+| Drain timeout aborts maintenance and preserves the valid stalled query | `test_maintenance_drain_timeout_preserves_stalled_query` | PASS |
+| Invalidation stall keeps admission closed until proven | `test_invalidation_stall_keeps_admission_closed_until_proven` | PASS |
+| Canceled invalidation blocks runtime and keeps marker true | `test_cancelled_invalidation_blocks_runtime_and_keeps_marker_true` | PASS |
+| Unsafe maintenance cannot authorize cache use | `test_unsafe_maintenance_result_cannot_authorize_cache_use` | PASS |
+| Lazy recovery cannot overlap maintenance mutation | `test_lazy_recovery_cannot_overlap_maintenance_mutation` | PASS |
+
+The submitted write settles inside the query lease (`_settle_write` shields and
+awaits the write task); a delayed write therefore prevents maintenance from
+entering, and shutdown retains resources. No delayed write was observed after a
+completed freshness barrier.
+
+### AR4-10 — Bounded settlement and cancellation
+
+Files: `tests/stage10/test_ar4_commit.py`, `tests/stage10/test_ar4_lifecycle.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Stalled write keeps commit pending, then cancellation propagates after settlement | `test_stalled_write_cannot_return_a_stored_outcome` | PASS |
+| Repeated cancellation during settlement | `test_repeated_cancellation_during_write_settles_without_hanging` | PASS |
+| Shutdown fails, retains resources/ownership and the lease until the write settles; later shutdown succeeds | `test_shutdown_stalled_write_fails_then_recovers_after_settlement` | PASS |
+| Drain timeout does not release the query lease | `test_maintenance_drain_timeout_preserves_stalled_query` | PASS |
+| No retry loop: one submitted SET attempt per commit | `test_submitted_write_outcome_matrix` (`set_calls == 1`) | PASS |
+
+Composition inspection: the Redis client is created with default redis-py
+socket timeout/retry settings (no explicit socket timeout or retry policy).
+Bounded caller waiting is the coordinator timeout; it does not prove remote
+non-execution, so settlement failure retains resources rather than claiming
+success.
+
+### AR4-11 — Namespace isolation and disabled cache
+
+Files: `tests/stage10/test_ar4_freshness.py`, `tests/stage10/test_ar4_identity.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Query namespace only; Parent/unrelated keys preserved; no FLUSH | `test_invalidation_removes_only_query_namespace` | PASS |
+| Multi-page/multi-batch invalidation complete | `test_multi_page_scan_and_multiple_unlink_batches` | PASS |
+| Malformed/invalid namespace responses rejected | `test_invalid_invalidation_responses_keep_marker` | PASS |
+| Disabled cache performs no lookup/publication but freshness still runs | `test_disabled_cache_performs_no_redis_operations_and_freshness_still_runs` | PASS |
+| Later enablement requires established freshness | same test (marker cleared before enabled cache is used) | PASS |
+
+### AR4-12 — Complete runtime cache lifecycle
+
+File: `tests/stage10/test_ar4_lifecycle.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Safe startup → Session A miss/store/hit → Session B independent miss → maintenance → marker true/invalidation/trust → old result not returned → new result generated | `test_full_session_cache_lifecycle_and_maintenance_invalidation` | PASS |
+| Restart over durable marker=true invalidates before cache trust and regenerates | `test_restart_with_marker_true_invalidates_before_cache_trust` | PASS |
+| Redis outage path with stale entries and controlled recovery | `test_redis_outage_bypasses_cache_and_recovery_removes_stale_entries` | PASS |
+
+### A-R4 confirmed defects and regressions
+
+| ID | Defect | Regression(s) | Pre-fix result |
+|---|---|---|---|
+| A-R4-F01 | `SessionQueryCache.commit` classified a submitted Redis `DependencyError` as BYPASSED, falsely asserting non-execution when SET may have applied | `test_cache_commit_classifies_redis_failure_without_raising` (expectation corrected), `test_dependency_error_without_execution_detail_is_unknown`, `test_submitted_write_outcome_matrix[apply_timeout/apply_connection/reject/unavailable_before]` | BYPASSED for applied-write timeout/connection failures |
+| A-R4-F02 | Lazy recovery checked its due throttle before entering the enforcement lock, so callers already queued on a held recovery could each repeat recovery | `test_due_callers_waiting_behind_held_recovery_run_once` | five redundant BYPASSED attempts instead of one |
+
+The F-03 regression remains intact (cache failures do not escape settlement and
+are not reported STORED); its expected outcome is now the conservative UNKNOWN.
 
 ## A-R5 Parent Cache
 
@@ -322,11 +503,11 @@ HEALTHY, but `knowledge_verified` and `hard_healthy` are false after UNSAFE.
 
 | Check | Result |
 |---|---|
-| `make test-stage10` | PASS — 123 tests |
-| `pytest` full | PASS — 3417 passed, 1 skipped, 108 deselected |
+| `make test-stage10` | PASS — 196 tests |
+| `pytest` full | PASS — 3490 passed, 1 skipped, 108 deselected |
 | ruff / mypy / architecture / format / diff | PASS |
 | Real isolated infrastructure | NOT_EXECUTED (Stage 10-B) |
 | Independent review | NOT_EXECUTED (Stage 10-C) |
 
-A-R6 remains PENDING: the offline suites pass, but A-R4/A-R5 matrices are still
-incomplete and Stage 10-B/10-C evidence is absent.
+A-R6 remains PENDING: the offline suites pass, but the A-R5 Parent Cache matrix
+and Stage 10-B/10-C evidence are absent.

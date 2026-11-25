@@ -1,8 +1,9 @@
 # Stage 10-A Implementation Completion
 
-Status: **A-R1, A-R2 and A-R3 COMPLETE offline. Stage 10-A remains PARTIAL
-because A-R4..A-R6 matrices are incomplete. Stage 10 overall remains PARTIAL;
-acceptance remains UNSATISFIED; PR #11 remains open/unmerged.**
+Status: **A-R1, A-R2, A-R3 and A-R4 COMPLETE offline. Stage 10-A remains
+PARTIAL because the A-R5 Parent Cache matrix and A-R6 reconciliation remain
+incomplete. Stage 10 overall remains PARTIAL; acceptance remains UNSATISFIED;
+PR #11 remains open/unmerged.**
 
 ## 10-A1 Production business composition
 
@@ -95,8 +96,8 @@ reverted pre-fix path):
   when the runtime is SHUTTING_DOWN.
 
 A-R1 and A-R2 regressions (including cleanup ordering and ownership retention)
-remain passing. G-01, G-02, G-03 and the deterministic portion of G-04 now have
-offline evidence; this is not independent review and does not close Stage 10-C.
+remain passing. G-01..G-04 and the deterministic portion of G-05 now have offline evidence;
+this is not independent review and does not close Stage 10-C.
 
 ## 10-A6 A-R3 interrupted deletion and startup safety
 
@@ -140,17 +141,68 @@ verification before canonical deletion, marker set inside the canonical
 transaction, no startup scan/sync, no automatic deletion for missing sources,
 no new mode, no new schema, no second recovery algorithm.
 
-## 10-A7 Startup/cache remaining matrices
+## 10-A7 A-R4 Query Cache, freshness and concurrent cache correctness
 
-Startup source availability and interrupted-deletion matrices are complete
-under A-R3. Redis ambiguity, marker-clear failure, Parent miss/TABLE and
-freshness failure matrices remain required deterministic work (A-R4/A-R5).
+Added `tests/stage10/cache_support.py` plus four focused modules using the real
+`RedisCacheProvider` over a stateful raw-Redis transport fake and an explicit
+marker transaction fake:
 
-## 10-A8 verification
+- `tests/stage10/test_ar4_identity.py` — AR4-01 identity/eligibility.
+- `tests/stage10/test_ar4_commit.py` — AR4-02/03/04 prepare, ambiguity, concurrency.
+- `tests/stage10/test_ar4_freshness.py` — AR4-05/06/08/11 invalidation, marker, recovery, namespace.
+- `tests/stage10/test_ar4_lifecycle.py` — AR4-07/09/10/12 runtime lifecycle, exclusion and settlement.
 
-- `make test-stage10`: PASS — 123 tests.
-- `make verify`: PASS — 3417 passed, 1 skipped, 108 deselected.
-- `ruff check .`, `ruff format --check .`, strict `mypy` (375 files),
+Confirmed A-R4 defects fixed (each regression executed against the reverted
+pre-fix path):
+
+- **A-R4-F01** — `SessionQueryCache.commit` classified a submitted Redis
+  `DependencyError` as BYPASSED, claiming non-execution although SET may have
+  applied (timeout/lost connection). Fix: submitted dependency failures are
+  conservatively UNKNOWN; BYPASSED is reserved for no-attempt paths. The F-03
+  regression keeps its core assertion (no exception escapes settlement and no
+  STORED claim) with the corrected outcome.
+- **A-R4-F02** — Lazy recovery checked the due throttle outside the enforcement
+  lock, so callers already queued on a held recovery could each repeat
+  invalidation. Fix: re-check due eligibility inside the same lock as
+  enforcement. A regression holds the lock during a delayed invalidation and
+  proves one recovery attempt instead of five.
+
+Verified lifecycle outcomes:
+
+- Delayed/late submitted SETs settle inside the query lease; maintenance cannot
+  enter while the write may still publish; the write is invalidated before
+  serving. Drain timeout preserves the valid query and aborts maintenance.
+- Shutdown with a stalled write raises `RuntimeShutdownFailedError`, retains
+  resources/ownership and the query lease; after settlement a later shutdown
+  succeeds.
+- Redis outage with marker=true keeps serving with all cache reads/writes
+  bypassed; controlled recovery invalidates stale entries, clears the marker
+  and restores normal population. Redis failure does not block otherwise safe
+  knowledge.
+- Marker ambiguity is conservative: applied-with-lost-ack is reported BYPASSED,
+  but the persisted PostgreSQL marker remains the sole authority for trust;
+  trust is only exercised after complete invalidation and a confirming read.
+- Canonical marker corruption propagates; invalidation is limited to
+  `atlasrag:query:*` (Parent and unrelated keys preserved, no FLUSH).
+
+Assumptions recorded: Redis remains disposable derived storage; the supported
+lifecycle does not protect against an arbitrary stale Redis snapshot restored
+externally. The Redis client uses default redis-py socket timeout/retry
+settings; bounded caller waiting is provided by the coordinator timeout and
+does not prove remote non-execution.
+
+## 10-A8 Remaining Parent Cache matrix
+
+Startup source availability, interrupted-deletion and Query Cache/freshness
+matrices are complete under A-R3/A-R4. The Parent Cache miss/fill, Redis
+unavailable, malformed payload, stale revision, ordering, TABLE and disabled
+matrix remains required deterministic work (A-R5).
+
+## 10-A9 verification
+
+- `make test-stage10`: PASS — 196 tests.
+- `make verify`: PASS — 3490 passed, 1 skipped, 108 deselected.
+- `ruff check .`, `ruff format --check .`, strict `mypy` (380 files),
   `make architecture-check`, `git diff --check`: PASS.
 - Stage 9 raw artifact integrity: 12/12 SHA-256 and size matches.
 - Real isolated PostgreSQL/Milvus/Redis and real GPU evidence: NOT_EXECUTED

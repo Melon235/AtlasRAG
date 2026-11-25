@@ -136,7 +136,9 @@ class SessionQueryCache:
         except ProviderResponseError:
             return CacheCommitOutcome.UNKNOWN
         except DependencyError:
-            return CacheCommitOutcome.BYPASSED
+            # The SET coroutine was submitted, but a transport failure does not
+            # establish that Redis did not execute it. Classify conservatively.
+            return CacheCommitOutcome.UNKNOWN
         return CacheCommitOutcome.STORED
 
     async def store(

@@ -66,7 +66,8 @@ def _prepared() -> PreparedCacheWrite:
 @pytest.mark.asyncio
 async def test_cache_commit_classifies_redis_failure_without_raising() -> None:
     outcome = await _cache(_Redis()).commit(_prepared())
-    assert outcome is CacheCommitOutcome.BYPASSED
+    # A submitted SET whose transport failed cannot be proven not to have run.
+    assert outcome is CacheCommitOutcome.UNKNOWN
 
 
 @pytest.mark.asyncio

@@ -41,36 +41,44 @@ class CacheFreshnessBarrier:
 
     async def enforce(self) -> CacheFreshnessState:
         async with self._lock:
-            self._last_attempt = monotonic()
-            try:
-                required = await self._marker_required()
-            except CanonicalDataError:
-                raise
-            except DependencyError:
-                return CacheFreshnessState.BYPASSED
-            if not required:
-                return CacheFreshnessState.TRUSTED
-            try:
-                await self._redis.invalidate_queries()
-            except (DependencyError, ProviderResponseError):
-                return CacheFreshnessState.BYPASSED
-            try:
-                async with self._uow_factory() as unit:
-                    metadata = await unit.runtime_metadata.set_query_cache_invalidation_required(
+            return await self._enforce_locked()
+
+    async def _enforce_locked(self) -> CacheFreshnessState:
+        self._last_attempt = monotonic()
+        try:
+            required = await self._marker_required()
+        except CanonicalDataError:
+            raise
+        except DependencyError:
+            return CacheFreshnessState.BYPASSED
+        if not required:
+            return CacheFreshnessState.TRUSTED
+        try:
+            await self._redis.invalidate_queries()
+        except (DependencyError, ProviderResponseError):
+            return CacheFreshnessState.BYPASSED
+        try:
+            async with self._uow_factory() as unit:
+                metadata = (
+                    await unit.runtime_metadata.set_query_cache_invalidation_required(
                         False
                     )
-                    if metadata.query_cache_invalidation_required:
-                        raise CanonicalDataError
-                    await unit.commit()
-                if await self._marker_required():
-                    return CacheFreshnessState.BYPASSED
-            except CanonicalDataError:
-                raise
-            except (DependencyError, ProviderResponseError):
+                )
+                if metadata.query_cache_invalidation_required:
+                    raise CanonicalDataError
+                await unit.commit()
+            if await self._marker_required():
                 return CacheFreshnessState.BYPASSED
-            return CacheFreshnessState.TRUSTED
+        except CanonicalDataError:
+            raise
+        except (DependencyError, ProviderResponseError):
+            return CacheFreshnessState.BYPASSED
+        return CacheFreshnessState.TRUSTED
 
     async def recover_if_due(self) -> CacheFreshnessState | None:
-        if monotonic() - self._last_attempt < self._retry_interval:
-            return None
-        return await self.enforce()
+        # The due check must be inside the same lock as enforcement so several
+        # callers cannot all pass the same stale check and repeat recovery.
+        async with self._lock:
+            if monotonic() - self._last_attempt < self._retry_interval:
+                return None
+            return await self._enforce_locked()
