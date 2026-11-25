@@ -52,6 +52,7 @@ class CoordinatorDependencies:
     close_resources: Callable[[], Awaitable[None]] = field(default=lambda: _noop())
     shutdown_timeout_seconds: float = 30.0
     cache_recovery_inside_lease: bool = True
+    ownership_acquired: bool = False
 
 
 async def _noop() -> None:
@@ -64,6 +65,7 @@ class ApplicationCoordinator:
         self._started = False
         self._shutdown_done = False
         self._last_health_generation = 0
+        self._ownership_acquired_here = False
 
     @property
     def gate(self) -> RuntimeGate:
@@ -81,7 +83,9 @@ class ApplicationCoordinator:
 
     async def _start(self) -> None:
         try:
-            self._deps.ownership.acquire()
+            if not self._deps.ownership_acquired:
+                self._deps.ownership.acquire()
+                self._ownership_acquired_here = True
             await self._deps.open_resources()
             reconciliation = await self._deps.reconcile()
             if reconciliation.outcome is ReconciliationOutcome.BLOCKED:
@@ -109,7 +113,8 @@ class ApplicationCoordinator:
             try:
                 await self._deps.close_resources()
             finally:
-                self._deps.ownership.release()
+                if self._ownership_acquired_here:
+                    self._deps.ownership.release()
             if isinstance(error, asyncio.CancelledError):
                 raise
             raise RuntimeBootstrapFailedError from error

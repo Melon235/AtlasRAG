@@ -36,8 +36,15 @@ async def _settle_write(write: asyncio.Task[object]) -> None:
             await asyncio.shield(write)
         except asyncio.CancelledError:
             continue
+        except BaseException:
+            break
     if not write.cancelled():
-        write.exception()
+        # The caller classifies failures; settlement must not raise out of
+        # the cancellation-cleanup boundary.
+        try:
+            write.result()
+        except BaseException:
+            pass
 
 
 class SessionQueryCache:

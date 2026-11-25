@@ -93,7 +93,7 @@ class ParentContextService:
                 )
                 if (
                     header is None
-                    or header.chunk_type is not ChunkType.TEXT_PARENT
+                    or header.chunk_type.value != ChunkType.TEXT_PARENT.value
                     or header.document_id != ref.document_id
                     or header.revision_id != ref.revision_id
                     or header.chunk_id != ref.context_id

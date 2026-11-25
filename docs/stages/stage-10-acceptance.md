@@ -24,7 +24,7 @@ SATISFIED; unavailable infrastructure/GPU evidence is marked PARTIAL.
 | S10-14 | PARTIAL | TEXT_PARENT cache and canonical header; Parent tests not yet added |
 | S10-15 | PARTIAL | Guarded providers/guard; MinerU boundary not wired; no real GPU evidence |
 | S10-16 | PARTIAL | Composition initializes one model; no real model initialization test |
-| S10-17 | SATISFIED (offline) | Health snapshot/soft-unknown test; no delayed-probe integration |
+| S10-17 | PARTIAL | Health snapshot/soft-unknown test; no delayed-probe integration |
 | S10-18 | PARTIAL | Coordinator task drain/cancel/close; no unsettled-worker integration |
 | S10-19 | PARTIAL | 3306 pass offline; isolated real-infrastructure suite not executed |
 | S10-20 | SATISFIED | Architecture checks, scope tests updated, Stage 9 artifacts preserved |

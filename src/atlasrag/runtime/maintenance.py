@@ -29,7 +29,11 @@ class MaintenanceCoordinator:
         if result.serving_safety is not ServingSafety.SAFE_TO_SERVE:
             await lease.block()
             return result
-        await self._freshness.enforce()
+        try:
+            await self._freshness.enforce()
+        except BaseException:
+            await lease.block()
+            raise
         await lease.complete(safe=True)
         return result
 

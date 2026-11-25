@@ -172,6 +172,7 @@ class ApplicationComposition:
                 verify=business.verify,
                 close_resources=self._close_resources,
                 shutdown_timeout_seconds=config.maintenance.shutdown_timeout_seconds,
+                ownership_acquired=True,
             )
             coordinator = ApplicationCoordinator(deps)
             await coordinator._start()
