@@ -6,9 +6,9 @@ incrementally through independently verified implementation stages.
 The authoritative design is
 [`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md).
 
-**Current implementation stage: Stage 9 — Part III: Benchmark**
+**Current implementation stage: Stage 10 — Part IV: Application Runtime Foundation**
 
-**Status: Stage 9 PARTIAL — harness implemented; formal benchmark BLOCKED**
+**Status: Stage 10 PARTIAL — runtime foundation implemented; isolated infrastructure and real GPU acceptance pending**
 
 Stage 9 adds an external benchmark harness under `benchmarks/`, with frozen
 dataset snapshot validation, modality-filtered Open RAGBench metadata, corpus
@@ -17,10 +17,10 @@ manifests/validity, and static isolation checks. Formal FULL_CORPUS acceptance i
 blocked by the verified 396/604 document-profile conflict and resource limits;
 no benchmark quality/latency score is claimed.
 
-The Stage 9 report is
-[`docs/stages/stage-09-part-iii-benchmark.md`](docs/stages/stage-09-part-iii-benchmark.md).
-Stage 8 remains closed at `bda75fe`; Stage 9 is partial and its PR is open and
-unmerged.
+The Stage 10 report is
+[`docs/stages/stage-10-part-iv-application-runtime.md`](docs/stages/stage-10-part-iv-application-runtime.md).
+Stage 9 is closed under its amended acceptance scope; Stage 10 remains partial
+pending isolated infrastructure and real GPU/system verification.
 
 ## Setup
 

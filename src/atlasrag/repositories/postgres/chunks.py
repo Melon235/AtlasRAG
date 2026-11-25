@@ -8,6 +8,7 @@ from psycopg import AsyncConnection
 from psycopg.rows import DictRow
 from psycopg.types.json import Jsonb
 
+from atlasrag.domain.base import FrozenModel
 from atlasrag.domain.errors import CanonicalDataError, InvariantViolationError
 from atlasrag.repositories.postgres.errors import (
     marks_uow_failed,
@@ -19,6 +20,19 @@ from atlasrag.repositories.postgres.errors import (
     validate_rowcount,
 )
 from atlasrag.repositories.postgres.records import StoredChunk, StoredChunkType
+
+
+class CanonicalChunkHeader(FrozenModel):
+    """Identity/type/provenance metadata without canonical content."""
+
+    chunk_id: str
+    document_id: str
+    revision_id: str
+    chunk_type: StoredChunkType
+    parent_id: str | None = None
+    section_path: tuple[str, ...] = ()
+    source_anchor: dict[str, object] | None = None
+
 
 _COLUMNS = """
     chunk_id,
@@ -227,6 +241,31 @@ class ChunkRepository:
         if row is None:
             return None
         return validate_canonical_row(StoredChunk, row)
+
+    @marks_uow_failed
+    async def get_canonical_context_header(
+        self, document_id: str, revision_id: str, chunk_id: str
+    ) -> CanonicalChunkHeader | None:
+        self._guard()
+        scope = (
+            require_canonical_id(document_id),
+            require_canonical_id(revision_id),
+            require_canonical_id(chunk_id),
+        )
+        with postgres_error_boundary():
+            cursor = await self._connection.execute(
+                """
+                SELECT chunk_id, document_id, revision_id, chunk_type, parent_id,
+                       section_path, source_anchor
+                FROM chunks
+                WHERE document_id = %s AND revision_id = %s AND chunk_id = %s
+                """,
+                scope,
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        return CanonicalChunkHeader.model_validate(row)
 
     @marks_uow_failed
     async def get_canonical_context(

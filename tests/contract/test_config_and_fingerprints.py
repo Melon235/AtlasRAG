@@ -19,6 +19,7 @@ from atlasrag.config.models import (
     PartIConfig,
     RetrievalConfig,
     RuntimeConfig,
+    RuntimeOperationalConfig,
 )
 
 
@@ -251,6 +252,20 @@ def runtime_config(**changes: object) -> RuntimeConfig:
                 "cache",
                 "maintenance",
                 "observability",
+                "runtime",
+            },
+        ),
+        (
+            RuntimeOperationalConfig,
+            {
+                "startup_attempts",
+                "startup_retry_delay_seconds",
+                "health_probe_timeout_seconds",
+                "health_refresh_interval_seconds",
+                "gpu_concurrency",
+                "cache_recovery_interval_seconds",
+                "postgres_pool_min_size",
+                "postgres_pool_max_size",
             },
         ),
     ],

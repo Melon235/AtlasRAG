@@ -15,11 +15,11 @@ green remote CI result.
 
 ## Current stage
 
-- **Stage:** Stage 9 — Part III: Benchmark
-- **Status:** Stage 9 PASS UNDER AMENDED ACCEPTANCE SCOPE — primary metrics complete; formal scope deferrals approved; original five-metric panel 43/100 PARTIAL
+- **Stage:** Stage 10 — Part IV: Application Runtime Foundation
+- **Status:** Stage 10 PARTIAL — runtime foundation implemented; isolated infrastructure and real GPU acceptance pending
 - **Report:**
-  [stage-09-part-iii-benchmark.md](stage-09-part-iii-benchmark.md)
-- **Next:** Stage 10 — NOT STARTED
+  [stage-10-part-iv-application-runtime.md](stage-10-part-iv-application-runtime.md)
+- **Next:** Stage 10 acceptance completion — no Stage 11 started
 
 Stage 7 implements SearXNG JSON search, SSRF-safe fetch/sanitize/budgets,
 direct and batch-summary Web evidence strategies, structured DeepSeek

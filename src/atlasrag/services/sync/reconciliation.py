@@ -33,6 +33,7 @@ from atlasrag.services.sync.models import (
     ReconciliationResult,
     RecoveryBoundary,
     RecoveryTarget,
+    SourceAvailability,
 )
 from atlasrag.services.sync.ports import SyncUnitOfWork, SyncUnitOfWorkFactory
 
@@ -130,6 +131,12 @@ class StartupReconciliationService:
             return _SourceState.AVAILABLE, content_hash(source)
         except (OSError, RuntimeError, ValueError):
             return _SourceState.UNAVAILABLE, None
+
+    def classify_source(
+        self, document: StoredDocument
+    ) -> tuple[SourceAvailability, str | None]:
+        state, digest = self._source_state(document)
+        return SourceAvailability(state.name), digest
 
     async def _read(self, unit: SyncUnitOfWork, document_id: str) -> _DocState | None:
         document = await unit.documents.get_by_id(document_id)

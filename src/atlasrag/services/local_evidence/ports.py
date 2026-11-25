@@ -41,5 +41,11 @@ class ChunkBatchReader(Protocol):
         self, chunk_ids: Sequence[str]
     ) -> tuple[StoredChunk, ...]: ...
 
+    async def get_by_id(self, chunk_id: str) -> StoredChunk | None: ...
+
+    async def get_canonical_context_header(
+        self, document_id: str, revision_id: str, chunk_id: str
+    ) -> object | None: ...
+
 
 LocalEvidenceUnitOfWorkFactory = SyncUnitOfWorkFactory

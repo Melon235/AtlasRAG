@@ -1,9 +1,12 @@
-"""Session Query Cache read/write with persisted freshness trust checks."""
+"""Session Query Cache with explicit completed-result commit boundary."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 
 from atlasrag.application.hashing import request_hash
 from atlasrag.domain.errors import DependencyError, ProviderResponseError
@@ -13,6 +16,28 @@ from atlasrag.providers.cache.models import CachedQueryResult
 from atlasrag.providers.cache.redis import RedisCacheProvider
 from atlasrag.services.cache.policy import QueryCachePolicy
 from atlasrag.services.sync.ports import SyncUnitOfWorkFactory
+
+
+class CacheCommitOutcome(StrEnum):
+    STORED = "STORED"
+    BYPASSED = "BYPASSED"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class PreparedCacheWrite:
+    request: UserTurnRequest
+    payload: CachedQueryResult
+
+
+async def _settle_write(write: asyncio.Task[object]) -> None:
+    while not write.done():
+        try:
+            await asyncio.shield(write)
+        except asyncio.CancelledError:
+            continue
+    if not write.cancelled():
+        write.exception()
 
 
 class SessionQueryCache:
@@ -54,22 +79,22 @@ class SessionQueryCache:
             return None
         return cached.final_response
 
-    async def store(
+    async def prepare(
         self,
         request: UserTurnRequest,
         result: RagCoreResult,
         *,
         web_invoked: bool | None = None,
-    ) -> bool:
+    ) -> PreparedCacheWrite | None:
         if web_invoked is None:
-            return False
+            return None
         if type(web_invoked) is not bool:
             raise ValueError("web_invoked must be boolean")
         decision = self._policy.decide(request, result, web_invoked=web_invoked)
         if not decision.eligible:
-            return False
+            return None
         if not await self._trusted():
-            return False
+            return None
         payload = CachedQueryResult(
             created_at=self._clock(),
             final_response=result.final_response,
@@ -78,18 +103,39 @@ class SessionQueryCache:
             len(payload.model_dump_json().encode("utf-8"))
             > self._policy.max_entry_bytes
         ):
-            return False
-        try:
-            await self._redis.put_query(
-                request.session_id,
+            return None
+        return PreparedCacheWrite(request=request, payload=payload)
+
+    async def commit(self, prepared: PreparedCacheWrite) -> CacheCommitOutcome:
+        write = asyncio.create_task(
+            self._redis.put_query(
+                prepared.request.session_id,
                 self._runtime_fingerprint,
-                request_hash(request),
-                payload,
+                request_hash(prepared.request),
+                prepared.payload,
                 ttl_seconds=self._ttl_seconds,
             )
+        )
+        await _settle_write(write)
+        if write.cancelled():
+            return CacheCommitOutcome.UNKNOWN
+        try:
+            write.result()
         except (DependencyError, ProviderResponseError):
+            return CacheCommitOutcome.BYPASSED
+        return CacheCommitOutcome.STORED
+
+    async def store(
+        self,
+        request: UserTurnRequest,
+        result: RagCoreResult,
+        *,
+        web_invoked: bool | None = None,
+    ) -> bool:
+        prepared = await self.prepare(request, result, web_invoked=web_invoked)
+        if prepared is None:
             return False
-        return True
+        return await self.commit(prepared) is CacheCommitOutcome.STORED
 
     async def _trusted(self) -> bool:
         try:

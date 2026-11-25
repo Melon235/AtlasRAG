@@ -1,6 +1,6 @@
 """Frozen, explicit runtime configuration contracts."""
 
-from typing import Annotated
+from typing import Annotated, Self
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -12,6 +12,7 @@ from pydantic import (
     StrictStr,
     TypeAdapter,
     field_validator,
+    model_validator,
 )
 
 from atlasrag._canonical import validate_unicode_scalar_text
@@ -191,6 +192,19 @@ class ObservabilityConfig(FrozenModel):
     _nonblank_values = field_validator("log_level", "log_directory")(_validate_nonblank)
 
 
+class RuntimeOperationalConfig(FrozenModel):
+    """Operational runtime settings excluded from semantic fingerprints."""
+
+    startup_attempts: PositiveStrictInt = 3
+    startup_retry_delay_seconds: PositiveReal = 1.0
+    health_probe_timeout_seconds: PositiveReal = 3.0
+    health_refresh_interval_seconds: PositiveReal = 10.0
+    gpu_concurrency: PositiveStrictInt = 1
+    cache_recovery_interval_seconds: PositiveReal = 10.0
+    postgres_pool_min_size: PositiveStrictInt = 2
+    postgres_pool_max_size: PositiveStrictInt = 16
+
+
 class RuntimeConfig(FrozenModel):
     """Validated aggregate configuration frozen at runtime startup."""
 
@@ -202,3 +216,29 @@ class RuntimeConfig(FrozenModel):
     cache: CacheConfig
     maintenance: MaintenanceConfig
     observability: ObservabilityConfig
+    runtime: RuntimeOperationalConfig = Field(default_factory=RuntimeOperationalConfig)
+
+    @model_validator(mode="after")
+    def _validate_operational(self) -> Self:
+        runtime = self.runtime
+        if runtime.startup_attempts > 10:
+            raise ValueError("startup_attempts must be at most 10")
+        if runtime.startup_retry_delay_seconds > 300:
+            raise ValueError("startup_retry_delay_seconds must be at most 300")
+        if runtime.health_probe_timeout_seconds > 30:
+            raise ValueError("health_probe_timeout_seconds must be at most 30")
+        if runtime.health_refresh_interval_seconds > 300:
+            raise ValueError("health_refresh_interval_seconds must be at most 300")
+        if runtime.cache_recovery_interval_seconds > 300:
+            raise ValueError("cache_recovery_interval_seconds must be at most 300")
+        if runtime.gpu_concurrency > 4:
+            raise ValueError("gpu_concurrency must be at most 4")
+        minimum = 2 * self.maintenance.max_document_concurrency + 2
+        if runtime.postgres_pool_max_size < minimum:
+            raise ValueError(
+                "postgres_pool_max_size must be at least "
+                "2 * max_document_concurrency + 2"
+            )
+        if runtime.postgres_pool_min_size > runtime.postgres_pool_max_size:
+            raise ValueError("postgres_pool_min_size must not exceed max size")
+        return self

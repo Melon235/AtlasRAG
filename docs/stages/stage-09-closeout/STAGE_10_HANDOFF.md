@@ -30,3 +30,12 @@ replacement definition is invented here.
 
 Do not implement or scaffold Stage 10 until a canonical Stage 10 definition is
 provided/approved.
+
+---
+
+## Superseding note (Stage 10 implementation)
+
+A canonical Stage 10 design and partial implementation now exist at
+`docs/stages/stage-10-part-iv-application-runtime.md`. This historical handoff
+is retained for provenance; its earlier "definition not found / not started"
+statements describe the Stage 9 closeout state, not current Stage 10 progress.
