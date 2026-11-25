@@ -52,7 +52,12 @@ class InFlightTaskRegistry:
     async def wait_empty(self, *, timeout: float) -> bool:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, timeout)
-        while self._tasks:
+        while True:
+            for task in tuple(self._tasks):
+                if task.done():
+                    self.unregister(task)
+            if not self._tasks:
+                return True
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return False
@@ -63,7 +68,6 @@ class InFlightTaskRegistry:
             )
             for task in done:
                 self.unregister(task)
-        return True
 
     def cancel_all(self) -> None:
         for task in tuple(self._tasks):

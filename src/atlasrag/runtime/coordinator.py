@@ -10,14 +10,16 @@ from uuid import uuid4
 from atlasrag.domain.errors import (
     RuntimeBootstrapFailedError,
     RuntimeShutdownFailedError,
+    RuntimeShuttingDownError,
 )
 from atlasrag.domain.observation import observation_invocation
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.domain.results import FinalResponse
 from atlasrag.runtime.cache_freshness import CacheFreshnessBarrier
 from atlasrag.runtime.gate import RuntimeGate
-from atlasrag.runtime.health import HealthRegistry
+from atlasrag.runtime.health import HealthRegistry, HealthSnapshot
 from atlasrag.runtime.maintenance import MaintenanceCoordinator
+from atlasrag.runtime.modes import RuntimeMode
 from atlasrag.runtime.ownership import RuntimeOwnershipLock
 from atlasrag.runtime.tasks import InFlightTaskRegistry, TaskKind
 from atlasrag.services.sync.models import (
@@ -66,6 +68,7 @@ class ApplicationCoordinator:
         self._shutdown_done = False
         self._last_health_generation = 0
         self._ownership_acquired_here = False
+        self._shutdown_lock = asyncio.Lock()
 
     @property
     def gate(self) -> RuntimeGate:
@@ -74,6 +77,20 @@ class ApplicationCoordinator:
     @property
     def tasks(self) -> InFlightTaskRegistry:
         return self._deps.tasks
+
+    def _begin_operation(self, kind: TaskKind) -> asyncio.Task[object]:
+        """Track the current task as owning runtime resources until settlement."""
+
+        current = asyncio.current_task()
+        if current is None:
+            raise RuntimeError("runtime operation requires an asyncio task")
+        try:
+            self._deps.tasks.register(current, kind)
+        except RuntimeError:
+            if self._deps.gate.mode is RuntimeMode.SHUTTING_DOWN:
+                raise RuntimeShuttingDownError from None
+            raise
+        return current
 
     @classmethod
     async def start(cls, deps: CoordinatorDependencies) -> ApplicationCoordinator:
@@ -106,7 +123,10 @@ class ApplicationCoordinator:
             self._deps.health.set_knowledge_verified(True)
             await self._deps.gate.mark_serving()
             snapshot = await self._deps.health.refresh()
-            await self._deps.gate.set_admission_ready(snapshot.hard_healthy)
+            await self._deps.gate.set_admission_ready(
+                snapshot.hard_healthy,
+                lifecycle_generation=snapshot.lifecycle_generation,
+            )
             self._last_health_generation = snapshot.generation
             self._started = True
         except BaseException as error:
@@ -120,20 +140,21 @@ class ApplicationCoordinator:
             raise RuntimeBootstrapFailedError from error
 
     async def run_query(self, request: UserTurnRequest) -> QueryResponseEnvelope:
-        current = asyncio.current_task()
-        if current is None:
-            raise RuntimeError("query requires an asyncio task")
-        self._deps.tasks.register(current, TaskKind.HEALTH)
+        current = self._begin_operation(TaskKind.HEALTH)
         try:
             snapshot = await self._deps.health.refresh_if_stale()
             if snapshot.generation > self._last_health_generation:
                 self._last_health_generation = snapshot.generation
-                await self._deps.gate.set_admission_ready(snapshot.hard_healthy)
+                if snapshot.runtime is RuntimeMode.SERVING:
+                    await self._deps.gate.set_admission_ready(
+                        snapshot.hard_healthy,
+                        lifecycle_generation=snapshot.lifecycle_generation,
+                    )
         finally:
             self._deps.tasks.unregister(current)
         lease = await self._deps.gate.acquire_query()
         try:
-            self._deps.tasks.register(current, TaskKind.QUERY)
+            current = self._begin_operation(TaskKind.QUERY)
         except BaseException:
             await lease.release()
             raise
@@ -145,14 +166,13 @@ class ApplicationCoordinator:
                 response = await self._deps.retrieval(request)
                 return QueryResponseEnvelope(trace_id=invocation, response=response)
         finally:
-            self._deps.tasks.unregister(current)
-            await lease.release()
+            try:
+                await lease.release()
+            finally:
+                self._deps.tasks.unregister(current)
 
     async def run_maintenance(self) -> SyncResult:
-        current = asyncio.current_task()
-        if current is None:
-            raise RuntimeError("maintenance requires an asyncio task")
-        self._deps.tasks.register(current, TaskKind.MAINTENANCE)
+        current = self._begin_operation(TaskKind.MAINTENANCE)
         try:
             result = await self._deps.maintenance.run()
             await self._refresh_admission_after_maintenance()
@@ -161,10 +181,7 @@ class ApplicationCoordinator:
             self._deps.tasks.unregister(current)
 
     async def recover(self) -> SyncResult:
-        current = asyncio.current_task()
-        if current is None:
-            raise RuntimeError("recovery requires an asyncio task")
-        self._deps.tasks.register(current, TaskKind.MAINTENANCE)
+        current = self._begin_operation(TaskKind.MAINTENANCE)
         try:
             result = await self._deps.maintenance.recover_blocked()
             await self._refresh_admission_after_maintenance()
@@ -175,36 +192,48 @@ class ApplicationCoordinator:
     async def _refresh_admission_after_maintenance(self) -> None:
         snapshot = await self._deps.health.refresh()
         self._last_health_generation = snapshot.generation
-        if snapshot.runtime.value == "SERVING":
-            await self._deps.gate.set_admission_ready(snapshot.hard_healthy)
+        if snapshot.runtime is RuntimeMode.SERVING:
+            await self._deps.gate.set_admission_ready(
+                snapshot.hard_healthy,
+                lifecycle_generation=snapshot.lifecycle_generation,
+            )
 
-    async def health(self) -> object:
-        return await self._deps.health.refresh()
+    async def health(self) -> HealthSnapshot:
+        current = self._begin_operation(TaskKind.HEALTH)
+        try:
+            return await self._deps.health.refresh()
+        finally:
+            self._deps.tasks.unregister(current)
 
     async def readiness(self) -> bool:
-        return await self._deps.health.readiness()
+        current = self._begin_operation(TaskKind.HEALTH)
+        try:
+            return await self._deps.health.readiness()
+        finally:
+            self._deps.tasks.unregister(current)
 
     async def shutdown(self) -> None:
-        if self._shutdown_done:
-            return
-        await self._deps.gate.begin_shutdown()
-        await self._deps.tasks.close()
-        settled = await self._deps.tasks.wait_empty(
-            timeout=self._deps.shutdown_timeout_seconds
-        )
-        if not settled:
-            self._deps.tasks.cancel_all()
-            remaining = self._deps.tasks.snapshot()
-            if remaining:
-                _, pending = await asyncio.wait(
-                    remaining,
-                    timeout=self._deps.shutdown_timeout_seconds,
-                )
-                if pending:
-                    raise RuntimeShutdownFailedError
-            settled = await self._deps.tasks.wait_empty(timeout=0.0)
-        if not settled:
-            raise RuntimeShutdownFailedError
-        await self._deps.close_resources()
-        self._deps.ownership.release()
-        self._shutdown_done = True
+        async with self._shutdown_lock:
+            if self._shutdown_done:
+                return
+            await self._deps.gate.begin_shutdown()
+            await self._deps.tasks.close()
+            settled = await self._deps.tasks.wait_empty(
+                timeout=self._deps.shutdown_timeout_seconds
+            )
+            if not settled:
+                self._deps.tasks.cancel_all()
+                remaining = self._deps.tasks.snapshot()
+                if remaining:
+                    _, pending = await asyncio.wait(
+                        remaining,
+                        timeout=self._deps.shutdown_timeout_seconds,
+                    )
+                    if pending:
+                        raise RuntimeShutdownFailedError
+                settled = await self._deps.tasks.wait_empty(timeout=0.0)
+            if not settled:
+                raise RuntimeShutdownFailedError
+            await self._deps.close_resources()
+            self._deps.ownership.release()
+            self._shutdown_done = True

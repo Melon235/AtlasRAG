@@ -32,11 +32,17 @@ class HealthSnapshot:
     reranker: DependencyHealth
     query_cache: str
     generation: int
+    lifecycle_generation: int
     checked_at: datetime
     monotonic_at: float
 
 
 Probe = Callable[[], Awaitable[None]]
+LifecycleGeneration = Callable[[], int]
+
+
+def _starting_generation() -> int:
+    return 0
 
 
 class HealthRegistry:
@@ -54,8 +60,14 @@ class HealthRegistry:
         reranker: Probe | None = None,
         probe_timeout: float = 3.0,
         refresh_interval: float = 10.0,
+        lifecycle_generation: LifecycleGeneration | None = None,
     ) -> None:
         self._mode = mode
+        self._lifecycle_generation = (
+            _starting_generation
+            if lifecycle_generation is None
+            else lifecycle_generation
+        )
         self._probes = {
             "postgres": postgres,
             "milvus": milvus,
@@ -90,6 +102,7 @@ class HealthRegistry:
 
     async def refresh(self) -> HealthSnapshot:
         async with self._refresh_lock:
+            lifecycle = self._lifecycle_generation()
             values = await asyncio.gather(*(self._probe(name) for name in self._probes))
             status = dict(zip(self._probes, values, strict=True))
             hard = (
@@ -111,6 +124,7 @@ class HealthRegistry:
                 reranker=status["reranker"],
                 query_cache="UNKNOWN",
                 generation=self._generation,
+                lifecycle_generation=lifecycle,
                 checked_at=datetime.now(UTC),
                 monotonic_at=monotonic(),
             )
@@ -128,4 +142,8 @@ class HealthRegistry:
 
     async def readiness(self) -> bool:
         snapshot = await self.refresh_if_stale()
-        return snapshot.runtime is RuntimeMode.SERVING and snapshot.hard_healthy
+        if snapshot.lifecycle_generation != self._lifecycle_generation():
+            snapshot = await self.refresh()
+        if snapshot.lifecycle_generation != self._lifecycle_generation():
+            return False
+        return self._mode() is RuntimeMode.SERVING and snapshot.hard_healthy

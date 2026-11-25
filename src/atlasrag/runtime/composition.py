@@ -173,6 +173,7 @@ class ApplicationComposition:
                 reranker=_initialized if guarded_reranker is not None else _unavailable,
                 probe_timeout=config.runtime.health_probe_timeout_seconds,
                 refresh_interval=config.runtime.health_refresh_interval_seconds,
+                lifecycle_generation=lambda: gate.lifecycle_generation,
             )
             assert self._pool is not None
             pool = self._pool

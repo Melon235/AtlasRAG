@@ -80,6 +80,8 @@ class RuntimeGate:
         self._admission_ready = False
         self._maintenance: MaintenanceLease | None = None
         self._shutdown = False
+        self._lifecycle_generation = 0
+        self._admission_before_maintenance = False
 
     @property
     def mode(self) -> RuntimeMode:
@@ -89,13 +91,31 @@ class RuntimeGate:
     def active_queries(self) -> int:
         return self._active_queries
 
+    @property
+    def lifecycle_generation(self) -> int:
+        """Epoch of admission-authority transitions, sampled by health probes."""
+
+        return self._lifecycle_generation
+
+    def _advance_lifecycle(self) -> None:
+        self._lifecycle_generation += 1
+
     def _check_not_shutdown(self) -> None:
         if self._shutdown or self._mode is RuntimeMode.SHUTTING_DOWN:
             raise RuntimeShuttingDownError
 
-    async def set_admission_ready(self, ready: bool) -> None:
+    async def set_admission_ready(
+        self, ready: bool, *, lifecycle_generation: int | None = None
+    ) -> None:
+        """Apply an admission decision, ignoring decisions from older epochs."""
+
         async with self._condition:
             self._check_not_shutdown()
+            if (
+                lifecycle_generation is not None
+                and lifecycle_generation != self._lifecycle_generation
+            ):
+                return
             self._admission_ready = ready
             self._condition.notify_all()
 
@@ -106,12 +126,15 @@ class RuntimeGate:
                 raise RuntimeNotReadyError
             self._mode = RuntimeMode.SERVING
             self._admission_ready = False
+            self._advance_lifecycle()
             self._condition.notify_all()
 
     async def mark_blocked(self) -> None:
         async with self._condition:
             if self._mode is RuntimeMode.SHUTTING_DOWN:
                 return
+            if self._mode is not RuntimeMode.BLOCKED:
+                self._advance_lifecycle()
             self._mode = RuntimeMode.BLOCKED
             self._admission_ready = False
             self._maintenance = None
@@ -142,7 +165,9 @@ class RuntimeGate:
             if self._maintenance is not None:
                 raise MaintenanceBusyError
             self._mode = RuntimeMode.DRAINING
+            self._admission_before_maintenance = self._admission_ready
             self._admission_ready = False
+            self._advance_lifecycle()
             lease = MaintenanceLease(self, MaintenanceOrigin.SERVING)
             self._maintenance = lease
             self._condition.notify_all()
@@ -156,7 +181,9 @@ class RuntimeGate:
             if self._maintenance is not None:
                 raise MaintenanceBusyError
             self._mode = RuntimeMode.DRAINING
+            self._admission_before_maintenance = self._admission_ready
             self._admission_ready = False
+            self._advance_lifecycle()
             lease = MaintenanceLease(self, MaintenanceOrigin.BLOCKED)
             self._maintenance = lease
             self._condition.notify_all()
@@ -183,6 +210,7 @@ class RuntimeGate:
             if self._maintenance is not lease or self._mode is not RuntimeMode.DRAINING:
                 raise MaintenanceBusyError
             self._mode = RuntimeMode.MAINTENANCE
+            self._advance_lifecycle()
             self._condition.notify_all()
 
     async def complete_maintenance(
@@ -199,6 +227,7 @@ class RuntimeGate:
             self._maintenance = None
             self._mode = RuntimeMode.SERVING if safe else RuntimeMode.BLOCKED
             self._admission_ready = False
+            self._advance_lifecycle()
             self._condition.notify_all()
 
     async def block_from_maintenance(self, lease: MaintenanceLease) -> None:
@@ -208,6 +237,7 @@ class RuntimeGate:
             self._maintenance = None
             if self._mode is not RuntimeMode.SHUTTING_DOWN:
                 self._mode = RuntimeMode.BLOCKED
+                self._advance_lifecycle()
             self._admission_ready = False
             self._condition.notify_all()
 
@@ -221,15 +251,22 @@ class RuntimeGate:
             if self._mode is not RuntimeMode.DRAINING:
                 self._mode = RuntimeMode.BLOCKED
                 self._admission_ready = False
+                self._advance_lifecycle()
             elif lease.origin is MaintenanceOrigin.SERVING:
+                # No mutation occurred; restore the pre-drain state exactly.
                 self._mode = RuntimeMode.SERVING
+                self._admission_ready = self._admission_before_maintenance
+                self._advance_lifecycle()
             else:
                 self._mode = RuntimeMode.BLOCKED
                 self._admission_ready = False
+                self._advance_lifecycle()
             self._condition.notify_all()
 
     async def begin_shutdown(self) -> None:
         async with self._condition:
+            if self._mode is not RuntimeMode.SHUTTING_DOWN:
+                self._advance_lifecycle()
             self._shutdown = True
             self._mode = RuntimeMode.SHUTTING_DOWN
             self._admission_ready = False
