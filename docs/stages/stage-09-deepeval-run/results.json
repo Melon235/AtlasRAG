@@ -1,0 +1,73 @@
+{
+  "label": "DEEPEVAL_REAL_EVALUATION",
+  "panel": "evaluation_panel_20",
+  "queries": 20,
+  "e2e_completed": 20,
+  "e2e_technical_failures": 0,
+  "capture_citation_counts": [
+    1,
+    5,
+    3,
+    4,
+    2,
+    3,
+    4,
+    1,
+    1,
+    3,
+    1,
+    3,
+    4,
+    2,
+    1,
+    4,
+    2,
+    2,
+    2,
+    1
+  ],
+  "citation_valid_count": 20,
+  "provider_usage": {
+    "production_attempts": 45,
+    "production_input_tokens": 72981,
+    "production_output_tokens": 13329,
+    "judge_input_tokens_credit": 100357,
+    "judge_output_tokens_credit": 54114,
+    "ledger_attempts": 200,
+    "ledger_tokens": 240781,
+    "ledger_cost_usd_peak_bound": 0.367252,
+    "production_cost_usd_peak_bound": 0.037889,
+    "judge_cost_usd_peak_bound": 0.329363
+  },
+  "metrics": {
+    "faithfulness": {
+      "evaluated": 18,
+      "mean": 0.9907,
+      "text": 0.9881,
+      "text_table": 1.0
+    },
+    "answer_relevancy": {
+      "evaluated": 17,
+      "mean": 0.9145,
+      "text": 0.8991,
+      "text_table": 0.9643
+    }
+  },
+  "coverage": {
+    "faithfulness": {
+      "evaluated": 18,
+      "not_evaluable": 2
+    },
+    "answer_relevancy": {
+      "evaluated": 17,
+      "not_evaluable": 3
+    }
+  },
+  "not_run": [
+    "contextual_relevancy",
+    "contextual_precision",
+    "contextual_recall"
+  ],
+  "budget_limit_hit": "attempt cap 200; no further calls",
+  "reference_answers": "joined externally for evaluation; not stored in production captures"
+}

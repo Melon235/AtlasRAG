@@ -12,6 +12,15 @@ from atlasrag.application.answer import AnswerRunner
 from atlasrag.application.local_evidence import LocalEvidenceRunner
 from atlasrag.application.web_evidence import WebEvidenceRunner
 from atlasrag.domain.enums import AnswerExecutionOutcome
+from atlasrag.domain.observation import (
+    NULL_OBSERVER,
+    ObservationStage,
+    ProductionObservation,
+    ProductionObserver,
+    current_invocation_id,
+    deliver_observation,
+    observation_attempt,
+)
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.domain.results import FinalResponse, RagCoreResult
 from atlasrag.domain.web import WebEvidenceRequest
@@ -36,6 +45,7 @@ class RagCoreServices:
     answer_input: AnswerInputBuilder
     answer: AnswerRunner
     completion: CompletionAssessor
+    observer: ProductionObserver = NULL_OBSERVER
 
 
 def build_rag_core_subgraph(
@@ -53,14 +63,30 @@ def build_rag_core_subgraph(
     async def local_evidence(state: RagCoreState) -> dict[str, object]:
         request = state["current_local_request"]
         attempt = int(state.get("local_attempt_index", 0)) + 1
-        result = await services.local_evidence.run(request)
+        with observation_attempt(attempt):
+            result = await services.local_evidence.run(request)
         return {
             "local_attempt_index": attempt,
             "local_result": result,
         }
 
     async def route_local_evidence(state: RagCoreState) -> dict[str, object]:
-        # The conditional edge owns the decision; keep this node a thin marker.
+        decision = services.routing.decide(
+            base=state["base_local_request"],
+            current=state["current_local_request"],
+            result=state["local_result"],
+            attempt_index=state["local_attempt_index"],
+        )
+        deliver_observation(
+            services.observer,
+            ProductionObservation(
+                stage=ObservationStage.ROUTING,
+                status=decision.action.value,
+                degraded=state["local_result"].execution_status.value != "OK",
+                invocation_id=current_invocation_id(),
+                attempt_index=state["local_attempt_index"],
+            ),
+        )
         return {}
 
     def after_route(state: RagCoreState) -> str:
@@ -108,12 +134,35 @@ def build_rag_core_subgraph(
 
     async def answer(state: RagCoreState) -> dict[str, object]:
         final_response, outcome = await services.answer.run(state["answer_input"])
+        deliver_observation(
+            services.observer,
+            ProductionObservation(
+                stage=ObservationStage.ANSWER,
+                status=outcome.value,
+                selected_identities=tuple(
+                    citation.citation_id for citation in final_response.citations
+                ),
+                degraded=outcome is AnswerExecutionOutcome.SAFE_FAILURE,
+                invocation_id=current_invocation_id(),
+                attempt_index=state["local_attempt_index"],
+            ),
+        )
         return {
             "final_response": final_response,
             "answer_outcome": outcome,
         }
 
     async def safe_failure(state: RagCoreState) -> dict[str, object]:
+        deliver_observation(
+            services.observer,
+            ProductionObservation(
+                stage=ObservationStage.ANSWER,
+                status=AnswerExecutionOutcome.SAFE_FAILURE.value,
+                degraded=True,
+                invocation_id=current_invocation_id(),
+                attempt_index=state["local_attempt_index"],
+            ),
+        )
         return {
             "final_response": FinalResponse(
                 answer_text=_SAFE_FAILURE_TEXT, citations=()

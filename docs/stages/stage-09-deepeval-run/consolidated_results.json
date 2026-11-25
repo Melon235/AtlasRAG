@@ -1,0 +1,171 @@
+{
+  "label": "DEEPEVAL_PANEL_20_PARTIAL",
+  "panel": "evaluation_panel_20",
+  "queries": 20,
+  "metrics": {
+    "faithfulness": {
+      "overall": {
+        "evaluated": 20,
+        "mean": 0.9917
+      },
+      "text": {
+        "evaluated": 16,
+        "mean": 0.9896
+      },
+      "text_table": {
+        "evaluated": 4,
+        "mean": 1.0
+      }
+    },
+    "answer_relevancy": {
+      "overall": {
+        "evaluated": 20,
+        "mean": 0.9273
+      },
+      "text": {
+        "evaluated": 16,
+        "mean": 0.918
+      },
+      "text_table": {
+        "evaluated": 4,
+        "mean": 0.9643
+      }
+    },
+    "contextual_relevancy": {
+      "overall": {
+        "evaluated": 3,
+        "mean": 0.2587
+      },
+      "text": {
+        "evaluated": 3,
+        "mean": 0.2587
+      },
+      "text_table": {
+        "evaluated": 0,
+        "mean": null
+      }
+    },
+    "contextual_precision": {
+      "overall": {
+        "evaluated": 0,
+        "mean": null
+      },
+      "text": {
+        "evaluated": 0,
+        "mean": null
+      },
+      "text_table": {
+        "evaluated": 0,
+        "mean": null
+      }
+    },
+    "contextual_recall": {
+      "overall": {
+        "evaluated": 0,
+        "mean": null
+      },
+      "text": {
+        "evaluated": 0,
+        "mean": null
+      },
+      "text_table": {
+        "evaluated": 0,
+        "mean": null
+      }
+    }
+  },
+  "coverage": {
+    "faithfulness": {
+      "evaluated": 20,
+      "total": 20,
+      "status": "COMPLETE"
+    },
+    "answer_relevancy": {
+      "evaluated": 20,
+      "total": 20,
+      "status": "COMPLETE"
+    },
+    "contextual_relevancy": {
+      "evaluated": 3,
+      "total": 20,
+      "status": "PARTIAL"
+    },
+    "contextual_precision": {
+      "evaluated": 0,
+      "total": 20,
+      "status": "PARTIAL"
+    },
+    "contextual_recall": {
+      "evaluated": 0,
+      "total": 20,
+      "status": "PARTIAL"
+    }
+  },
+  "lowest": [
+    {
+      "score": 0.0821917808219178,
+      "metric": "contextual_relevancy",
+      "query_id": "01063042-ba62-4c90-8cb6-9ac5df7adb2a",
+      "reason": "The score is 0.08 because the retrieval context is largely irrelevant, with most statements discussing unrelated topics such as channel estimation and specific XAI frameworks, as noted in the reasons (e.g., 'The statement discusses DL-based channel estimation in wireless communications, which is unr"
+    },
+    {
+      "score": 0.2413793103448276,
+      "metric": "contextual_relevancy",
+      "query_id": "0c4e0d90-93a7-4e4f-ad8b-3fcd9ff609b1",
+      "reason": "The score is 0.24 because most of the retrieval context is irrelevant, with reasons such as 'This statement discusses limitations of the analysis regarding data sampling assumptions' and 'This is an acknowledgement of funding support', which do not address the question. However, a few statements dir"
+    },
+    {
+      "score": 0.4523809523809524,
+      "metric": "contextual_relevancy",
+      "query_id": "0de97b35-39b2-4811-af3d-1b87bafcee9e",
+      "reason": "The score is 0.45 because the retrieval context contains many statements about opposite conditions (e.g., 'LU \u2264 x or L \u2264 x + \u00afl(A\u00af + \u2113)') and unrelated cases (e.g., '\u03b3* \u2208 (0, s]'), but it does include relevant statements such as 'From here on, suppose instead that LU > x and L > x + \u00afl(A\u00af + \u2113)' and "
+    },
+    {
+      "score": 0.7692307692307693,
+      "metric": "answer_relevancy",
+      "query_id": "aa00c321-111d-482a-aaa9-e932a7419d66",
+      "reason": "The score is 0.77 because the response includes several statements about finite exceptional cases and specific finite examples that do not directly address the role of countability in Stone spaces and their complexes, which is the core of the question."
+    },
+    {
+      "score": 0.7777777777777778,
+      "metric": "answer_relevancy",
+      "query_id": "01063042-ba62-4c90-8cb6-9ac5df7adb2a",
+      "reason": "The score is 0.78 because the output includes irrelevant statements that discuss interpretability based on model design and provide an example of decision tree interpretability, rather than directly defining the four main concepts of XAI as asked."
+    },
+    {
+      "score": 0.8,
+      "metric": "answer_relevancy",
+      "query_id": "0c4e0d90-93a7-4e4f-ad8b-3fcd9ff609b1",
+      "reason": "The score is 0.80 because the response is mostly relevant, but it includes a statement about the perturbed cosine router improving rates to polynomial order, which is not directly relevant to whether expert estimation rates can be as slow as O_P(1/log^\u03c4(n))."
+    },
+    {
+      "score": 0.8,
+      "metric": "answer_relevancy",
+      "query_id": "9516e24e-b4d5-4010-a384-715f2ce71ec6",
+      "reason": "The score is 0.80 because the response correctly addresses the question but includes a statement that focuses on Laplace's equation in a specific region rather than Poisson's equation generally, making it slightly less directly relevant."
+    },
+    {
+      "score": 0.8333333333333334,
+      "metric": "answer_relevancy",
+      "query_id": "62843ef9-c5ff-44f5-a965-1bd2a024a5ff",
+      "reason": "The score is 0.83 because the response is mostly relevant, but it includes some irrelevant statements about speaker similarity and accent-conversion accuracy that are not directly tied to pronunciation improvement."
+    }
+  ],
+  "new_batch": {
+    "attempts": 42,
+    "input_tokens": 86914,
+    "output_tokens": 175031,
+    "tokens": 261945,
+    "cost_usd_peak_bound": 0.787038,
+    "max_attempts": 320,
+    "max_tokens": 500000,
+    "max_cost": 0.8,
+    "stop_reason": "conservative cost reserve reached"
+  },
+  "prior_batch": {
+    "attempts": 200,
+    "tokens": 240781,
+    "cost_usd_peak_bound": 0.367252
+  },
+  "citation_validation": "MARKER_ONLY"
+}

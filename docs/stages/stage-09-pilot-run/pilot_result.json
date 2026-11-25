@@ -1,0 +1,77 @@
+{
+  "label": "OPEN_RAGBENCH_PILOT",
+  "dataset_revision": "63f6b052ff83508b08e242db42263ee708815c26",
+  "queries": 10,
+  "repetitions": 1,
+  "cases": 10,
+  "attempt_view": "FINAL_LOCAL_ATTEMPT",
+  "run_id": "pilot-5c07faadf58249a7a0300bdf19ee2994",
+  "run_validity": "VALID",
+  "provider_usage": {
+    "calls": 21,
+    "cost_usd_peak_bound": 0.017342,
+    "elapsed_seconds": 53.628,
+    "input_tokens": 34592,
+    "output_tokens": 5804,
+    "total_tokens": 40396
+  },
+  "document_metrics": {
+    "DENSE": {
+      "hit5": 1.0,
+      "recall5": 1.0,
+      "hit10": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0
+    },
+    "BM25": {
+      "hit5": 1.0,
+      "recall5": 1.0,
+      "hit10": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0
+    },
+    "FUSION": {
+      "hit5": 1.0,
+      "recall5": 1.0,
+      "hit10": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0
+    },
+    "RERANKER": {
+      "hit5": 1.0,
+      "recall5": 1.0,
+      "hit10": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0
+    }
+  },
+  "strict_evidence": "UNAVAILABLE_PROVENANCE",
+  "pdfs_downloaded": 10,
+  "pdfs_ingested": 10,
+  "stage5": "SAFE_TO_SERVE",
+  "web_calls": 0,
+  "cache_gets": 0,
+  "cache_sets": 0,
+  "notes": [
+    "10-query pilot, not a full Open RAGBench score",
+    "one selected qrel document per query",
+    "strict Parent/Table evidence unavailable",
+    "a prior verification run consumed 20 calls; this final run consumed 21, total 41 across both runs"
+  ],
+  "pdf_sha256": {
+    "2403.00422v2.pdf": "2ba829ea9b247a8ac1a236a29b425ad515437b586f646a7cadbfa943338c1c9e",
+    "2403.08753v2.pdf": "be3daac1c36743a049045cea49664fb3dba5a86ded32e05218f6105a40c61be2",
+    "2403.13015v2.pdf": "863246a921a15bc1f7ac625202801571b93cd948f32c86c1767730667066de0a",
+    "2404.18137v2.pdf": "8d8df18ca888886dd88e9329b0e3684ded5cf4cf30ecdfb4f2fb1695d285e9a5",
+    "2410.14317v2.pdf": "ea5602a47840d9de7860819be50491e39fdb38eb69b83c512b9dc041201ac9ab",
+    "2410.14997v2.pdf": "4bea0001aaa303a5361c525cbfd24a27dc78b831fa5c30a54d0a4d00a5ff8848",
+    "2411.11841v3.pdf": "eac67e77e851811dac9b86955f236ea291ffc5e3ccbe2170d75c7b41d49de83c",
+    "2412.04468v2.pdf": "5fff8ff2ee969b8da38efec27d40a68c9751204b91aeb622c3e503beb333cdc5",
+    "2412.13914v3.pdf": "b974b8b15fac5ba830cf4537cf3707f9917b59b5d2e0a9e63e418b9c1ee60fe5",
+    "2412.14624v2.pdf": "92fbd300f6603864b20e1df920f820b1afe73d0423589d55fb0eb881dcc420f5"
+  }
+}

@@ -1,0 +1,177 @@
+{
+  "label": "DIAGNOSTIC_SUBCORPUS_50_FINAL",
+  "execution_label": "RETRIEVAL_ONLY_DIAGNOSTIC",
+  "queries": 30,
+  "documents": 50,
+  "targets": 30,
+  "distractors": 20,
+  "overall": {
+    "DENSE": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 73.79
+    },
+    "BM25": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 18.27
+    },
+    "FUSION": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 12.25
+    },
+    "RERANKER": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 349.72
+    }
+  },
+  "text": {
+    "DENSE": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 79.06
+    },
+    "BM25": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 18.17
+    },
+    "FUSION": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 12.28
+    },
+    "RERANKER": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 352.79
+    }
+  },
+  "text_table": {
+    "DENSE": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 52.71
+    },
+    "BM25": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 18.69
+    },
+    "FUSION": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 12.12
+    },
+    "RERANKER": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 337.44
+    }
+  },
+  "gold_ranks": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "reranker_vs_fusion": {
+    "helpful": 0,
+    "hurt": 0,
+    "unchanged": 30,
+    "mean_rank_delta": 0
+  },
+  "notes": [
+    "50 real PDFs READY with 5 deterministic replacements for parser failures",
+    "30 queries, no paid calls",
+    "document-level only"
+  ]
+}

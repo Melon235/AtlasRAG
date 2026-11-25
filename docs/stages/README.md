@@ -15,11 +15,11 @@ green remote CI result.
 
 ## Current stage
 
-- **Stage:** Stage 8 — Part II: RagCore / Cache
-- **Status:** Stage 8 COMPLETE — pull request #9 open and unmerged
+- **Stage:** Stage 9 — Part III: Benchmark
+- **Status:** Stage 9 PASS UNDER AMENDED ACCEPTANCE SCOPE — primary metrics complete; formal scope deferrals approved; original five-metric panel 43/100 PARTIAL
 - **Report:**
-  [stage-08-part-ii-rag-core-cache.md](stage-08-part-ii-rag-core-cache.md)
-- **Next:** Stage 9 — Part III: Benchmark — NOT STARTED
+  [stage-09-part-iii-benchmark.md](stage-09-part-iii-benchmark.md)
+- **Next:** Stage 10 — NOT STARTED
 
 Stage 7 implements SearXNG JSON search, SSRF-safe fetch/sanitize/budgets,
 direct and batch-summary Web evidence strategies, structured DeepSeek

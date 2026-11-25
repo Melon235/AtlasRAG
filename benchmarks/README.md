@@ -18,4 +18,4 @@ benchmark-specific fields:
 - `leaderboard_score`
 - `experiment_id`
 
-Stage 0 provides no benchmark implementation.
+Stage 9 provides an external, partial benchmark harness. Production code must not import it.

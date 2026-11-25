@@ -114,6 +114,9 @@ def _translate_mineru_failure(
 class MinerUParser:
     """Parse PDFs through the local full-page MinerU flash SDK route."""
 
+    def __init__(self, *, allow_real_layout: bool = False) -> None:
+        self._allow_real_layout = allow_real_layout
+
     async def parse(
         self,
         source: SourceFile,
@@ -164,7 +167,12 @@ class MinerUParser:
             InvariantViolationError | ProviderResponseError | None
         ) = None
         try:
-            return normalize_mineru_output(payload, source, context)
+            return normalize_mineru_output(
+                payload,
+                source,
+                context,
+                allow_real_layout=self._allow_real_layout,
+            )
         except InvariantViolationError:
             normalization_failure = InvariantViolationError()
         except Exception:

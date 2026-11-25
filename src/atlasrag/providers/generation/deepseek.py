@@ -60,6 +60,7 @@ class DeepSeekGenerationProvider(GenerationProvider):
         self._max_retries = max_retries
         self._max_tokens = max_tokens
         self._endpoint = endpoint
+        self.usage: list[dict[str, int]] = []
 
     async def generate(self, input: GenerationInput) -> GenerationResult:
         payload = {
@@ -118,6 +119,15 @@ class DeepSeekGenerationProvider(GenerationProvider):
             raise DependencyUnavailableError from None
         try:
             body = response.json()
+            usage = body.get("usage")
+            if isinstance(usage, dict):
+                self.usage.append(
+                    {
+                        "prompt_tokens": int(usage.get("prompt_tokens", 0)),
+                        "completion_tokens": int(usage.get("completion_tokens", 0)),
+                        "total_tokens": int(usage.get("total_tokens", 0)),
+                    }
+                )
             choices = body["choices"]
             content = choices[0]["message"]["content"]
             if not isinstance(content, str):
@@ -291,6 +301,7 @@ class DeepSeekQueryRewriteProvider:
         self._client = client
         self._max_retries = max_retries
         self._endpoint = endpoint
+        self.usage: list[dict[str, int]] = []
 
     async def rewrite(
         self, query: str, *, now: str, timezone_name: str
@@ -349,7 +360,17 @@ class DeepSeekQueryRewriteProvider:
         if response is None:
             raise DependencyUnavailableError
         try:
-            content = response.json()["choices"][0]["message"]["content"]
+            body = response.json()
+            usage = body.get("usage")
+            if isinstance(usage, dict):
+                self.usage.append(
+                    {
+                        "prompt_tokens": int(usage.get("prompt_tokens", 0)),
+                        "completion_tokens": int(usage.get("completion_tokens", 0)),
+                        "total_tokens": int(usage.get("total_tokens", 0)),
+                    }
+                )
+            content = body["choices"][0]["message"]["content"]
             parsed = json.loads(content)
             return QueryRewriteOutput.model_validate(parsed)
         except (ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError):

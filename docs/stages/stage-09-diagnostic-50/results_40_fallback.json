@@ -1,0 +1,147 @@
+{
+  "label": "DIAGNOSTIC_SUBCORPUS_40_FALLBACK",
+  "parent_label": "DIAGNOSTIC_SUBCORPUS_50",
+  "execution_label": "RETRIEVAL_ONLY_DIAGNOSTIC",
+  "queries": 25,
+  "documents": 40,
+  "targets": 25,
+  "distractors": 15,
+  "overall": {
+    "DENSE": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 130.47
+    },
+    "BM25": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 18.92
+    },
+    "FUSION": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 12.73
+    },
+    "RERANKER": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 370.48
+    }
+  },
+  "text": {
+    "DENSE": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 153.04
+    },
+    "BM25": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 19.79
+    },
+    "FUSION": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 12.78
+    },
+    "RERANKER": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 375.38
+    }
+  },
+  "text_table": {
+    "DENSE": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 59.02
+    },
+    "BM25": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 16.16
+    },
+    "FUSION": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 12.6
+    },
+    "RERANKER": {
+      "hit1": 1.0,
+      "hit5": 1.0,
+      "hit10": 1.0,
+      "recall5": 1.0,
+      "recall10": 1.0,
+      "mrr10": 1.0,
+      "ndcg10": 1.0,
+      "latency_ms_mean": 354.97
+    }
+  },
+  "reranker_vs_fusion": {
+    "helpful": 0,
+    "hurt": 0,
+    "unchanged": 25,
+    "mean_rank_delta": 0
+  },
+  "notes": [
+    "original 50-document target blocked by 5 PDF parser/normalizer failures",
+    "40-document fallback predeclared after parser failures and before retrieval outcomes",
+    "no DeepSeek, Web, Query Cache, or Parent Cache calls",
+    "document-level metrics only"
+  ]
+}

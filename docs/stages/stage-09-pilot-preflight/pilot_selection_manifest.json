@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "dataset": "vectara/open_ragbench",
+  "dataset_revision": "63f6b052ff83508b08e242db42263ee708815c26",
+  "license": "CC-BY-NC-4.0",
+  "snapshot_manifest_sha256": "9bd32f022f59310f1baaf58c0a2e8fc1645ec8e44edd1b9dba02abe0ce55a78e",
+  "status": "PILOT_PREFLIGHT_ONLY",
+  "selection_rule": "3 text-table supported queries first by ascending query_id with unique qrel documents, then ascending text queries with unique qrels until 10 unique PDFs; one query per document.",
+  "limits": {
+    "pdfs": 10,
+    "queries": 10,
+    "deepseek_calls": 40,
+    "combined_tokens": 100000,
+    "wall_time_hours": 2
+  },
+  "selected": [
+    {
+      "query_id": "010ee499-211a-4195-a32b-15ce468c3588",
+      "official_document_id": "2403.00422v2",
+      "section_id": 17,
+      "relevance": 1,
+      "modality": "text-table",
+      "source_url": "https://arxiv.org/pdf/2403.00422v2",
+      "local_source_path": "2403.00422v2.pdf",
+      "derived_local_document_id": "doc_6cd9703f6c02425c5eb872a5298185121df1dddf1294348bf683596683a4fc55"
+    },
+    {
+      "query_id": "0287d988-d09b-4051-9118-4c8831f48390",
+      "official_document_id": "2410.14317v2",
+      "section_id": 8,
+      "relevance": 1,
+      "modality": "text-table",
+      "source_url": "https://arxiv.org/pdf/2410.14317v2",
+      "local_source_path": "2410.14317v2.pdf",
+      "derived_local_document_id": "doc_e21df4b46ae48485125c100b4f5d6178fa1f2bbf5e943505b0c2966c440b710f"
+    },
+    {
+      "query_id": "0430d651-4b95-4b8e-99df-c7bdfadad756",
+      "official_document_id": "2412.04468v2",
+      "section_id": 7,
+      "relevance": 1,
+      "modality": "text-table",
+      "source_url": "https://arxiv.org/pdf/2412.04468v2",
+      "local_source_path": "2412.04468v2.pdf",
+      "derived_local_document_id": "doc_6fcd6b0d77bd521b331c5ca8692ea179875e73e723e7adcfa530248638edf173"
+    },
+    {
+      "query_id": "0037d2b2-ab5a-435a-8554-c2e7fd81b390",
+      "official_document_id": "2404.18137v2",
+      "section_id": 0,
+      "relevance": 1,
+      "modality": "text",
+      "source_url": "https://arxiv.org/pdf/2404.18137v2",
+      "local_source_path": "2404.18137v2.pdf",
+      "derived_local_document_id": "doc_cb1ddf52ca81886d57e0bf11ac5be3aac71e92ce945b7934815295c2ecaa3000"
+    },
+    {
+      "query_id": "006b56ae-7929-469b-8c12-0f5aa361ff14",
+      "official_document_id": "2412.14624v2",
+      "section_id": 6,
+      "relevance": 1,
+      "modality": "text",
+      "source_url": "https://arxiv.org/pdf/2412.14624v2",
+      "local_source_path": "2412.14624v2.pdf",
+      "derived_local_document_id": "doc_e909d58c9f2beb1bd516ef7aa00b551fa486c612dfdd3210fd64d0484e1488ab"
+    },
+    {
+      "query_id": "00707172-75cc-498a-b86d-6cacf6917d78",
+      "official_document_id": "2410.14997v2",
+      "section_id": 6,
+      "relevance": 1,
+      "modality": "text",
+      "source_url": "https://arxiv.org/pdf/2410.14997v2",
+      "local_source_path": "2410.14997v2.pdf",
+      "derived_local_document_id": "doc_348aa63eaa78a4feafa5e16202bee5b7c584162eeea2cc7b1e4ef4065c209572"
+    },
+    {
+      "query_id": "0081a5c8-9910-44fc-984d-2d5bf8cbcee9",
+      "official_document_id": "2403.13015v2",
+      "section_id": 26,
+      "relevance": 1,
+      "modality": "text",
+      "source_url": "https://arxiv.org/pdf/2403.13015v2",
+      "local_source_path": "2403.13015v2.pdf",
+      "derived_local_document_id": "doc_da9320988e85d9a97c700a893b1e2ec8d0146d7f574f5db805a0804de0a5112c"
+    },
+    {
+      "query_id": "00d954d0-d8b6-40ab-9506-3d5e99ac929f",
+      "official_document_id": "2412.13914v3",
+      "section_id": 0,
+      "relevance": 1,
+      "modality": "text",
+      "source_url": "https://arxiv.org/pdf/2412.13914v3",
+      "local_source_path": "2412.13914v3.pdf",
+      "derived_local_document_id": "doc_cd007e8db5763b990cd111c4e5320a74c44d02228815dac5d4d7340952fcb4c1"
+    },
+    {
+      "query_id": "00e79d03-bcc8-4f18-8f51-88c4b79decc0",
+      "official_document_id": "2411.11841v3",
+      "section_id": 3,
+      "relevance": 1,
+      "modality": "text",
+      "source_url": "https://arxiv.org/pdf/2411.11841v3",
+      "local_source_path": "2411.11841v3.pdf",
+      "derived_local_document_id": "doc_6f6c2c89caf4669269dd5b7d7d12dcd2ae64ba89846130c79b627708440f619b"
+    },
+    {
+      "query_id": "00f1f703-087e-4808-b838-07c819e68335",
+      "official_document_id": "2403.08753v2",
+      "section_id": 11,
+      "relevance": 1,
+      "modality": "text",
+      "source_url": "https://arxiv.org/pdf/2403.08753v2",
+      "local_source_path": "2403.08753v2.pdf",
+      "derived_local_document_id": "doc_404505592d7ce62d2cff3917d83674843b3c244796991d99e205d070d984a50e"
+    }
+  ],
+  "snapshot_files": [
+    {
+      "relative_path": "queries.json",
+      "sha256": "13822fc7efd6889eaf20a6809adfff1cf040699ec2254131a897850b922cac6f",
+      "size_bytes": 602835
+    },
+    {
+      "relative_path": "qrels.json",
+      "sha256": "c2ad02c5461402e643cb363e7ae562b7bba4a3f5a4e7a5149707365c82848580",
+      "size_bytes": 302689
+    },
+    {
+      "relative_path": "answers.json",
+      "sha256": "2ab51b9e773ed10259043ad869789aa1621af601591da73d34db3551a2d662bd",
+      "size_bytes": 653040
+    },
+    {
+      "relative_path": "pdf_urls.json",
+      "sha256": "e67b8246918ef1e92250b9c0b58cd830a58d68f9bc288dda01db53cdbc8d4298",
+      "size_bytes": 54002
+    }
+  ],
+  "source_accessibility": {
+    "2403.00422v2": {
+      "status": "VERIFIED_METADATA_ONLY",
+      "http": "200",
+      "content_type": "application/pdf"
+    },
+    "2410.14317v2": {
+      "status": "VERIFIED_METADATA_ONLY",
+      "http": "200",
+      "content_type": "application/pdf"
+    },
+    "2412.04468v2": {
+      "status": "VERIFIED_METADATA_ONLY",
+      "http": "200",
+      "content_type": "application/pdf"
+    },
+    "2404.18137v2": {
+      "status": "VERIFIED_METADATA_ONLY",
+      "http": "200",
+      "content_type": "application/pdf"
+    },
+    "2412.14624v2": {
+      "status": "VERIFIED_METADATA_ONLY",
+      "http": "200",
+      "content_type": "application/pdf"
+    },
+    "2410.14997v2": {
+      "status": "VERIFIED_METADATA_ONLY",
+      "http": "200",
+      "content_type": "application/pdf"
+    },
+    "2403.13015v2": {
+      "status": "VERIFIED_METADATA_ONLY",
+      "http": "200",
+      "content_type": "application/pdf"
+    },
+    "2412.13914v3": {
+      "status": "VERIFIED_METADATA_ONLY",
+      "http": "200",
+      "content_type": "application/pdf"
+    },
+    "2411.11841v3": {
+      "status": "VERIFIED_METADATA_ONLY",
+      "http": "200",
+      "content_type": "application/pdf"
+    },
+    "2403.08753v2": {
+      "status": "VERIFIED_METADATA_ONLY",
+      "http": "200",
+      "content_type": "application/pdf"
+    }
+  },
+  "source_accessibility_note": "HEAD requests only; no PDF bodies downloaded. Status is metadata-only, not parse/index proof."
+}

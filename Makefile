@@ -136,3 +136,14 @@ test-stage5-integration:
 
 stage5-verify:
 	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage5_verify.sh
+
+
+test-stage9:
+	uv run --frozen pytest tests/stage9 -q
+
+stage9-benchmark-smoke:
+	uv run --frozen pytest tests/stage9 -q
+
+stage9-verify:
+	$(MAKE) verify
+	$(MAKE) test-stage9

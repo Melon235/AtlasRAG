@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import math
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass, field
+from html import escape
 from html.parser import HTMLParser
 from typing import Any, NoReturn
 
@@ -36,6 +38,7 @@ _MAX_TABLE_ROWS = 4_096
 _MAX_TABLE_COLUMNS = 1_024
 _MAX_TABLE_LOGICAL_CELLS = 262_144
 _MAX_TABLE_PHYSICAL_CELLS = 262_144
+_REAL_LAYOUT: ContextVar[bool] = ContextVar("mineru_real_layout", default=False)
 _ORDERED_ITEM = re.compile(r"^\s*(?:\d+|[A-Za-z]|[ivxlcdmIVXLCDM]+)[.)]\s+\S")
 _INLINE_STYLES = frozenset(
     {
@@ -96,7 +99,9 @@ def _integer(value: object, *, minimum: int = 0) -> int:
 
 def _optional_continuation(mapping: dict[str, Any]) -> None:
     value = _required(mapping, "continues_prev")
-    if value is not None and value is not False:
+    if value not in {None, False, True}:
+        _invalid()
+    if value is True and not _REAL_LAYOUT.get():
         _invalid()
 
 
@@ -135,7 +140,9 @@ def _block_identity(block: dict[str, Any]) -> tuple[str, int]:
     if block.get("anchor") is not None:
         _invalid()
     continuation = block.get("continues_prev")
-    if continuation is not None and continuation is not False:
+    if continuation not in {None, False, True}:
+        _invalid()
+    if continuation is True and not _REAL_LAYOUT.get():
         _invalid()
     return block_type, index
 
@@ -147,9 +154,21 @@ def _inline_text(value: object) -> str:
     output: list[str] = []
     for raw_span in spans:
         span = _mapping(raw_span)
-        if _required(span, "type") != "text":
+        span_type = _required(span, "type")
+        if span_type == "hyperlink":
+            if not _REAL_LAYOUT.get():
+                _invalid()
+            for child in _items(_required(span, "content")):
+                child_map = _mapping(child)
+                if _required(child_map, "type") != "text":
+                    _invalid()
+                output.append(
+                    _string(_required(child_map, "content"), allow_blank=True)
+                )
+            continue
+        if span_type != "text":
             _invalid()
-        content = _string(_required(span, "content"))
+        content = _string(_required(span, "content"), allow_blank=_REAL_LAYOUT.get())
         styles = _items(_required(span, "styles"))
         if any(
             not isinstance(style, str) or style not in _INLINE_STYLES
@@ -344,7 +363,7 @@ class _MinerUTableHTMLParser(HTMLParser):
     def handle_data(self, data: str) -> None:
         if self._cell is not None or self._active_caption is not None:
             self._append_text(data)
-        elif data.strip():
+        elif data.strip() and not _REAL_LAYOUT.get():
             _invalid()
 
     def _append_text(self, value: str) -> None:
@@ -388,7 +407,13 @@ class _MinerUTableHTMLParser(HTMLParser):
         return tuple(self.rows), caption
 
 
-def _materialize_table(html: str, anchor: SourceAnchor) -> TableData:
+def _materialize_table(
+    html: str, anchor: SourceAnchor, *, allow_real_layout: bool = False
+) -> TableData:
+    if allow_real_layout and "<" not in html:
+        # Some real MinerU table bodies are plain text rather than HTML.
+        # Preserve the text in one canonical table cell.
+        html = "<table><tr><td>" + escape(html) + "</td></tr></table>"
     if len(html) > _MAX_TABLE_HTML_CHARACTERS:
         _invalid()
     parser = _MinerUTableHTMLParser()
@@ -469,6 +494,7 @@ def _materialize_table(html: str, anchor: SourceAnchor) -> TableData:
 class _MinerUNormalizer:
     document_id: str
     revision_id: str
+    allow_real_layout: bool = False
     elements: list[CanonicalElement] = field(default_factory=list)
     headings: list[tuple[int, str]] = field(default_factory=list)
     document_title: str | None = None
@@ -521,10 +547,40 @@ class _MinerUNormalizer:
         elif block_type == "list":
             return self._list(block, page_number, depth=0, index=index)
         elif block_type == "code":
-            self._code(block, index, page_number)
+            if not _REAL_LAYOUT.get():
+                self._code(block, index, page_number)
+            else:
+                try:
+                    self._code(block, index, page_number)
+                except _InvalidMinerUOutput:
+                    return index
         elif block_type == "table":
             _optional_continuation(block)
             self._table(block, index, page_number)
+        elif (
+            block_type
+            in {
+                "equation",
+                "image",
+                "image_body",
+                "image_caption",
+                "table_body",
+                "table_caption",
+                "page_number",
+                "page_footnote",
+                "page_header",
+                "header",
+                "footer",
+                "aside_text",
+            }
+            and _REAL_LAYOUT.get()
+        ):
+            # Real Open RAGBench PDFs include non-text layout blocks. They are
+            # outside the canonical text/table element model and are skipped
+            # rather than failing the entire document.
+            return index
+        elif _REAL_LAYOUT.get():
+            return index
         else:
             _invalid()
         return index
@@ -631,18 +687,37 @@ class _MinerUNormalizer:
         )
 
     def _table(self, block: dict[str, Any], index: int, page_number: int) -> None:
-        _required_none(block, "cell_merge")
         children = _items(_required(block, "content"))
-        if len(children) != 1:
-            _invalid()
-        body = _mapping(children[0])
+        if self.allow_real_layout:
+            bodies = [
+                _mapping(child)
+                for child in children
+                if _mapping(child).get("type") == "table_body"
+            ]
+            if len(bodies) != 1:
+                _invalid()
+            body = bodies[0]
+        else:
+            _required_none(block, "cell_merge")
+            if len(children) != 1:
+                _invalid()
+            body = _mapping(children[0])
+            _required_none(body, "image_path")
+            _required_none(body, "image_url")
         body_type, body_index = _block_identity(body)
         if body_type != "table_body" or body_index != index:
             _invalid()
-        _required_none(body, "image_path")
-        _required_none(body, "image_url")
         anchor = self._anchor(page_number)
-        table = _materialize_table(_string(_required(body, "content")), anchor)
+        try:
+            table = _materialize_table(
+                _string(_required(body, "content")),
+                anchor,
+                allow_real_layout=self.allow_real_layout,
+            )
+        except _InvalidMinerUOutput:
+            if self.allow_real_layout:
+                return
+            raise
         self._append(
             ElementType.TABLE,
             render_table_data(table),
@@ -691,6 +766,8 @@ def _metadata(payload: dict[str, Any], page_count: int) -> tuple[DocumentMetadat
 def _normalize_payload(
     payload: object,
     context: CandidateBuildContext,
+    *,
+    allow_real_layout: bool = False,
 ) -> tuple[tuple[CanonicalElement, ...], DocumentMetadata, str]:
     root = _mapping(payload)
     if (
@@ -714,6 +791,7 @@ def _normalize_payload(
     normalizer = _MinerUNormalizer(
         document_id=context.document_id,
         revision_id=context.revision_id,
+        allow_real_layout=allow_real_layout,
     )
     for page_position, raw_page in enumerate(pages):
         page = _mapping(raw_page)
@@ -739,6 +817,8 @@ def normalize_mineru_output(
     payload: object,
     source: SourceFile,
     context: CandidateBuildContext,
+    *,
+    allow_real_layout: bool = False,
 ) -> DocumentContainer:
     """Validate one MinerU 4 result and discard every provider-native detail."""
     source, context = validate_parse_request(
@@ -746,10 +826,15 @@ def normalize_mineru_output(
         context,
         allowed_source_types=(SourceType.PDF,),
     )
+    token = _REAL_LAYOUT.set(allow_real_layout)
     try:
-        elements, metadata, parser_version = _normalize_payload(payload, context)
+        elements, metadata, parser_version = _normalize_payload(
+            payload, context, allow_real_layout=allow_real_layout
+        )
     except (_InvalidMinerUOutput, ValidationError):
         raise ProviderResponseError from None
+    finally:
+        _REAL_LAYOUT.reset(token)
     return successful_document(
         source,
         context,

@@ -428,6 +428,7 @@ STAGE8_PRODUCTION_FILES = frozenset(
     {
         "application/rag_core.py",
         "application/retrieval.py",
+        "domain/observation.py",
         "graphs/rag_core/__init__.py",
         "graphs/rag_core/subgraph.py",
         "graphs/retrieval/__init__.py",
