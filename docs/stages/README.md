@@ -16,7 +16,7 @@ green remote CI result.
 ## Current stage
 
 - **Stage:** Stage 9 — Part III: Benchmark
-- **Status:** Stage 9 PARTIAL — harness implemented; formal benchmark BLOCKED
+- **Status:** Stage 9 PASS UNDER AMENDED ACCEPTANCE SCOPE — primary metrics complete; formal scope deferrals approved; original five-metric panel 43/100 PARTIAL
 - **Report:**
   [stage-09-part-iii-benchmark.md](stage-09-part-iii-benchmark.md)
 - **Next:** Stage 10 — NOT STARTED

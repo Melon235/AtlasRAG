@@ -1,5 +1,13 @@
 # Stage 9 — Part III: Benchmark Harness
 
+> **Owner-amended active status (2026-11-25):** **Stage 9 PASS UNDER AMENDED
+> ACCEPTANCE SCOPE.** The historical PARTIAL/BLOCKED status and sections below
+> are preserved as historical evidence. See
+> [`stage-09-closeout/CLOSEOUT_REPORT.md`](stage-09-closeout/CLOSEOUT_REPORT.md)
+> and [`OWNER_ACCEPTANCE_DECISION.md`](stage-09-closeout/OWNER_ACCEPTANCE_DECISION.md).
+> Original DeepEval panel remains 43/100 PARTIAL; FULL_CORPUS, NEGATIVE_ONLY,
+> Performance Runner and ablations are approved-deferred/transferred as recorded.
+
 ## 1. Status
 
 **PARTIAL — core dataset, snapshot, alignment, metric, manifest, and quality

@@ -72,3 +72,50 @@ silently rewritten.
 - Performance Runner/engineering latency metrics: not implemented.
 - Strategy/ablation experiments: not run.
 - Strict citation grounding: not implemented (MARKER_ONLY only).
+
+## Owner-approved amended matrix (final)
+
+Every original row is accounted for exactly once.
+
+| ID | Original status | Actual execution | Amended acceptance | Owner decision | Evidence | Remaining blocker |
+|---|---|---|---|---|---|---|
+| S9-01 | SATISFIED | Tests run | SATISFIED | — | make verify | none |
+| S9-02 | SATISFIED | Snapshot verified | SATISFIED | — | pinned metadata | none |
+| S9-03 | SATISFIED | Diagnostic filtering | SATISFIED | — | selection_final_50 | none |
+| S9-04 | SATISFIED | Boundary checks | SATISFIED | — | architecture-check | none |
+| S9-05 | SATISFIED | 30-query diagnostic | SATISFIED | — | results_final_50 | diagnostic scope only |
+| S9-06 | SATISFIED | 50/50 READY | SATISFIED | — | readiness_final_50 | diagnostic scope only |
+| S9-07 | SATISFIED | 20/20 Faith/AR | SATISFIED | Owner §3.1 | consolidated_results | panel scope only |
+| S9-08 | PARTIAL | 43/100 | APPROVED_DEFERRED (unexecuted remainder) | Owner §3.2 | consolidated_results | original panel remains PARTIAL |
+| S9-09 | PARTIAL | marker-only + resolver tests | SATISFIED (test-level; real-capture scope unavailable) | Owner §4.2/§4.3 | captures + 3 citation tests | limitation recorded, no observed violation |
+| S9-10 | PARTIAL | deterministic tests | SATISFIED (test-level) | — | test suite | no strict semantic grounding claim |
+| S9-11 | SATISFIED | isolated resources | SATISFIED | — | readiness/integration | diagnostic scope |
+| S9-12 | SATISFIED | Web/cache OFF | SATISFIED | Owner §3.3 | captures/report | none |
+| S9-13 | SATISFIED | provenance/hashes | SATISFIED | — | artifact_integrity | none |
+| S9-14 | SATISFIED | budget guard | SATISFIED | — | ledgers/errata | historical 41/40 incident retained |
+| S9-15 | SATISFIED | failure accounting | SATISFIED | — | captures | none |
+| S9-16 | PARTIAL | artifacts/hashes | SATISFIED (diagnostic reproducibility) | — | artifact_integrity | external dataset not redistributed |
+| S9-17 | UNSATISFIED | no Performance Runner | TRANSFERRED | Owner §3.6 | backlog | Part IV |
+| S9-18 | SATISFIED | CI/integration | SATISFIED | — | final workflows | none |
+| S9-19 | UNSATISFIED | not run | APPROVED_DEFERRED | Owner §3.4 | — | not FULL_CORPUS |
+| S9-20 | UNSATISFIED | blocked | APPROVED_DEFERRED | Owner §3.5 | — | partition unverified |
+| S9-21 | UNSATISFIED | not implemented | TRANSFERRED | Owner §3.6 | backlog | Part IV |
+| S9-22 | UNSATISFIED | not run | APPROVED_DEFERRED | Owner §3.7 | — | experimental evidence absent |
+| S9-23 | SATISFIED | PR open, Stage10 not started | SATISFIED | — | git/PR | none |
+| S9-24 | OWNER_APPROVAL_REQUIRED | decision recorded | SATISFIED | This decision | OWNER_ACCEPTANCE_DECISION | scope is amended |
+
+Final counts (24 rows):
+
+```text
+SATISFIED: 18
+PARTIAL: 0
+APPROVED_DEFERRED: 4
+TRANSFERRED: 2
+UNSATISFIED: 0
+NOT_APPLICABLE: 0
+UNKNOWN: 0
+TOTAL: 24
+```
+
+The prior 24-vs-23 discrepancy was the omitted `OWNER_APPROVAL_REQUIRED` row,
+not a missing requirement.

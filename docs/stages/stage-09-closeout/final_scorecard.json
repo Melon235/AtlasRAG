@@ -14,29 +14,82 @@
     "scope": "DIAGNOSTIC_SUBCORPUS_50_FINAL",
     "queries": 30,
     "documents": 50,
-    "modalities": {"text": 24, "text_table": 6},
+    "modalities": {
+      "text": 24,
+      "text_table": 6
+    },
     "granularity": "document",
     "metrics": {
-      "DENSE": {"recall10": 1.0, "ndcg10": 1.0, "mrr10": 1.0},
-      "BM25": {"recall10": 1.0, "ndcg10": 1.0, "mrr10": 1.0},
-      "FUSION": {"recall10": 1.0, "ndcg10": 1.0, "mrr10": 1.0},
-      "RERANKER": {"recall10": 1.0, "ndcg10": 1.0, "mrr10": 1.0}
+      "DENSE": {
+        "recall10": 1.0,
+        "ndcg10": 1.0,
+        "mrr10": 1.0
+      },
+      "BM25": {
+        "recall10": 1.0,
+        "ndcg10": 1.0,
+        "mrr10": 1.0
+      },
+      "FUSION": {
+        "recall10": 1.0,
+        "ndcg10": 1.0,
+        "mrr10": 1.0
+      },
+      "RERANKER": {
+        "recall10": 1.0,
+        "ndcg10": 1.0,
+        "mrr10": 1.0
+      }
     },
     "source": "docs/stages/stage-09-diagnostic-50/results_final_50.json"
   },
   "generation_quality": {
     "scope": "DEEPEVAL_PANEL_20",
     "panel_queries": 20,
-    "modalities": {"text": 16, "text_table": 4},
+    "modalities": {
+      "text": 16,
+      "text_table": 4
+    },
     "judge_model": "deepseek-flash",
     "deepeval_version": "4.2.4",
     "thinking_mode": "DISABLED",
     "metrics": {
-      "faithfulness": {"evaluated": 20, "planned": 20, "mean": 0.9917, "text": 0.9896, "text_table": 1.0, "status": "COMPLETE"},
-      "answer_relevancy": {"evaluated": 20, "planned": 20, "mean": 0.9273, "text": 0.918, "text_table": 0.9643, "status": "COMPLETE"},
-      "contextual_relevancy": {"evaluated": 3, "planned": 20, "mean": 0.2587, "text": 0.2587, "text_table": null, "status": "PARTIAL"},
-      "contextual_precision": {"evaluated": 0, "planned": 20, "mean": null, "status": "NOT_EXECUTED"},
-      "contextual_recall": {"evaluated": 0, "planned": 20, "mean": null, "status": "NOT_EXECUTED"}
+      "faithfulness": {
+        "evaluated": 20,
+        "planned": 20,
+        "mean": 0.9917,
+        "text": 0.9896,
+        "text_table": 1.0,
+        "status": "COMPLETE"
+      },
+      "answer_relevancy": {
+        "evaluated": 20,
+        "planned": 20,
+        "mean": 0.9273,
+        "text": 0.918,
+        "text_table": 0.9643,
+        "status": "COMPLETE"
+      },
+      "contextual_relevancy": {
+        "evaluated": 3,
+        "planned": 20,
+        "mean": 0.2587,
+        "text": 0.2587,
+        "text_table": null,
+        "status": "PARTIAL"
+      },
+      "contextual_precision": {
+        "evaluated": 0,
+        "planned": 20,
+        "mean": null,
+        "status": "NOT_EXECUTED"
+      },
+      "contextual_recall": {
+        "evaluated": 0,
+        "planned": 20,
+        "mean": null,
+        "status": "NOT_EXECUTED"
+      }
     },
     "total_successful_evaluations": 43,
     "total_planned_evaluations": 100,
@@ -48,20 +101,46 @@
     },
     "source": "docs/stages/stage-09-deepeval-run/consolidated_results.json"
   },
-  "citation_validation": {"status": "MARKER_ONLY", "cases": 20, "nonempty_marker_present": 20, "strict_grounding": "NOT_EXECUTED"},
+  "citation_validation": {
+    "status": "MARKER_ONLY",
+    "cases": 20,
+    "nonempty_marker_present": 20,
+    "strict_grounding": "NOT_EXECUTED",
+    "deterministic_resolver_tests": "PASS (3 focused tests)",
+    "real_capture_integrity": "UNAVAILABLE (markers/contexts insufficient)",
+    "semantic_grounding": "APPROVED_DEFERRED / NOT_EXECUTED"
+  },
   "budget": {
-    "original_batch": {"attempts": 200, "tokens": 240781, "peak_bound_cost_usd": 0.367252},
-    "judge_only_batch": {"attempts": 42, "max_attempts": 320, "input_tokens": 86914, "output_tokens": 175031, "tokens": 261945, "max_tokens": 500000, "ledger_cost_bound_usd": 0.787038, "max_cost_usd": 0.8, "stop_reason": "CONSERVATIVE_COST_RESERVATION_LIMIT", "provider_invoice": "UNAVAILABLE"},
+    "original_batch": {
+      "attempts": 200,
+      "tokens": 240781,
+      "peak_bound_cost_usd": 0.367252
+    },
+    "judge_only_batch": {
+      "attempts": 42,
+      "max_attempts": 320,
+      "input_tokens": 86914,
+      "output_tokens": 175031,
+      "tokens": 261945,
+      "max_tokens": 500000,
+      "ledger_cost_bound_usd": 0.787038,
+      "max_cost_usd": 0.8,
+      "stop_reason": "CONSERVATIVE_COST_RESERVATION_LIMIT",
+      "provider_invoice": "UNAVAILABLE"
+    },
     "historical_incident": "41 calls vs 40 cap in earlier pilot; see stage-09-pilot-run/ERRATA.md"
   },
   "status": {
-    "stage9": "PARTIAL",
+    "stage9": "PASS_UNDER_AMENDED_ACCEPTANCE_SCOPE",
     "deepeval_panel": "DEEPEVAL_PANEL_20_PARTIAL",
     "primary_generation_metrics": "COMPLETE",
     "retrieval_diagnostic": "ACCEPTED",
     "formal_full_corpus": "NOT_RUN",
-    "negative_only": "BLOCKED_UNVERIFIED_PARTITION",
-    "performance_runner": "NOT_IMPLEMENTED",
-    "ragas": "DEFERRED"
+    "negative_only": "NOT_EXECUTED / APPROVED_DEFERRED / BLOCKED_UNVERIFIED_PARTITION",
+    "performance_runner": "NOT_EXECUTED / TRANSFERRED_TO_PART_IV",
+    "ragas": "DEFERRED / NOT_EXECUTED",
+    "original_deepeval_panel": "DEEPEVAL_PANEL_20_PARTIAL",
+    "full_corpus": "NOT_EXECUTED / APPROVED_DEFERRED",
+    "ablations": "NOT_EXECUTED / APPROVED_DEFERRED"
   }
 }

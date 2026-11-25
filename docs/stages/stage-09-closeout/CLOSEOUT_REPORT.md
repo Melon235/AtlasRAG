@@ -86,3 +86,36 @@ git diff --check: PASS
 ```
 
 Raw artifact integrity: PASS (all hashes/sizes unchanged).
+
+## Owner finalization (amended acceptance)
+
+Owner decision: `OWNER_ACCEPTANCE_DECISION.md`.
+
+```text
+Stage 9: PASS UNDER AMENDED ACCEPTANCE SCOPE
+Original acceptance contract: SUPERSEDED IN PART (approved scope amendments)
+Original DeepEval panel: DEEPEVAL_PANEL_20_PARTIAL (43/100)
+Primary generation metrics: COMPLETE
+FULL_CORPUS: APPROVED_DEFERRED / NOT_EXECUTED
+NEGATIVE_ONLY: APPROVED_DEFERRED / NOT_EXECUTED / BLOCKED_UNVERIFIED_PARTITION
+Performance Runner: TRANSFERRED_TO_PART_IV / NOT_EXECUTED
+Ablations: APPROVED_DEFERRED / NOT_EXECUTED
+Ragas: DEFERRED / NOT_EXECUTED
+```
+
+Deterministic citation resolver tests: **3 passed**. Real-capture offline
+deterministic integrity is **UNAVAILABLE** because captures do not contain the
+full allowed-evidence mapping; no violation was observed and no result is
+fabricated. Semantic grounding is approved-deferred.
+
+The acceptance matrix now accounts for all 24 rows exactly once:
+18 SATISFIED, 0 PARTIAL, 4 APPROVED_DEFERRED, 2 TRANSFERRED, 0 UNSATISFIED,
+0 UNKNOWN. The old 24-vs-23 discrepancy was the omitted owner-approval row.
+
+## Citation validation evidence
+
+- `MARKER_VALIDATION`: 20/20 nonempty markers; MARKER_ONLY.
+- `DETERMINISTIC_CITATION_INTEGRITY`: existing production CitationResolver test
+  subset — **3 passed**, 11 deselected. Real-capture offline scope is
+  unavailable because captures lack the full allowed-evidence mapping.
+- `SEMANTIC_CITATION_GROUNDING`: APPROVED_DEFERRED / NOT_EXECUTED.
