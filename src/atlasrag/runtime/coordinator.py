@@ -132,7 +132,11 @@ class ApplicationCoordinator:
         finally:
             self._deps.tasks.unregister(current)
         lease = await self._deps.gate.acquire_query()
-        self._deps.tasks.register(current, TaskKind.QUERY)
+        try:
+            self._deps.tasks.register(current, TaskKind.QUERY)
+        except BaseException:
+            await lease.release()
+            raise
         invocation = uuid4().hex
         try:
             with observation_invocation(invocation):
@@ -192,8 +196,13 @@ class ApplicationCoordinator:
             self._deps.tasks.cancel_all()
             remaining = self._deps.tasks.snapshot()
             if remaining:
-                await asyncio.gather(*remaining, return_exceptions=True)
-            settled = await self._deps.tasks.wait_empty(timeout=1.0)
+                _, pending = await asyncio.wait(
+                    remaining,
+                    timeout=self._deps.shutdown_timeout_seconds,
+                )
+                if pending:
+                    raise RuntimeShutdownFailedError
+            settled = await self._deps.tasks.wait_empty(timeout=0.0)
         if not settled:
             raise RuntimeShutdownFailedError
         try:

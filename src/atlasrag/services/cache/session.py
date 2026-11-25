@@ -30,11 +30,13 @@ class PreparedCacheWrite:
     payload: CachedQueryResult
 
 
-async def _settle_write(write: asyncio.Task[object]) -> None:
+async def _settle_write(write: asyncio.Task[object]) -> bool:
+    cancelled = False
     while not write.done():
         try:
             await asyncio.shield(write)
         except asyncio.CancelledError:
+            cancelled = True
             continue
         except BaseException:
             break
@@ -45,6 +47,7 @@ async def _settle_write(write: asyncio.Task[object]) -> None:
             write.result()
         except BaseException:
             pass
+    return cancelled
 
 
 class SessionQueryCache:
@@ -123,12 +126,16 @@ class SessionQueryCache:
                 ttl_seconds=self._ttl_seconds,
             )
         )
-        await _settle_write(write)
+        cancelled = await _settle_write(write)
+        if cancelled:
+            raise asyncio.CancelledError
         if write.cancelled():
             return CacheCommitOutcome.UNKNOWN
         try:
             write.result()
-        except (DependencyError, ProviderResponseError):
+        except ProviderResponseError:
+            return CacheCommitOutcome.UNKNOWN
+        except DependencyError:
             return CacheCommitOutcome.BYPASSED
         return CacheCommitOutcome.STORED
 

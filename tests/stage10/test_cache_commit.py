@@ -6,7 +6,7 @@ from typing import Any, cast
 import pytest
 
 from atlasrag.domain.enums import EvidenceType, SourceKind
-from atlasrag.domain.errors import DependencyError, ErrorCode
+from atlasrag.domain.errors import DependencyError, ErrorCode, ProviderResponseError
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.domain.results import FinalLocalCitation, FinalResponse
 from atlasrag.providers.cache.models import CachedQueryResult
@@ -67,3 +67,34 @@ def _prepared() -> PreparedCacheWrite:
 async def test_cache_commit_classifies_redis_failure_without_raising() -> None:
     outcome = await _cache(_Redis()).commit(_prepared())
     assert outcome is CacheCommitOutcome.BYPASSED
+
+
+@pytest.mark.asyncio
+async def test_cache_commit_applied_write_with_bad_ack_is_unknown() -> None:
+    class Ambiguous:
+        async def put_query(self, *args: object, **kwargs: object) -> None:
+            raise ProviderResponseError()
+
+    outcome = await _cache(Ambiguous()).commit(_prepared())
+    assert outcome is CacheCommitOutcome.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_cache_commit_cancellation_settles_write_and_propagates() -> None:
+    import asyncio
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class Blocking:
+        async def put_query(self, *args: object, **kwargs: object) -> None:
+            started.set()
+            await release.wait()
+
+    task = asyncio.create_task(_cache(Blocking()).commit(_prepared()))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task

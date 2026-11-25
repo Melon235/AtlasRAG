@@ -110,3 +110,38 @@ async def test_health_registry_reports_soft_unknown_without_blocking() -> None:
     snapshot = await registry.refresh()
     assert snapshot.hard_healthy
     assert snapshot.searxng is DependencyHealth.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_empty_consistent_kb_is_safe(tmp_path: Path) -> None:
+    service = StartupSourceSafetyService(
+        _Factory(()),  # type: ignore[arg-type]
+        knowledge_directory=tmp_path,
+        reconciliation=_Classification(SourceAvailability.AVAILABLE),  # type: ignore[arg-type]
+    )
+    result = await service.check()
+    assert result.safe
+    assert result.checked_documents == 0
+
+
+@pytest.mark.asyncio
+async def test_unreadable_published_source_is_unsafe(tmp_path: Path) -> None:
+    service = StartupSourceSafetyService(
+        _Factory((_document(),)),  # type: ignore[arg-type]
+        knowledge_directory=tmp_path,
+        reconciliation=_Classification(SourceAvailability.UNAVAILABLE),  # type: ignore[arg-type]
+    )
+    result = await service.check()
+    assert not result.safe
+    assert result.unreadable_documents == 1
+
+
+@pytest.mark.asyncio
+async def test_inaccessible_root_is_a_hard_failure(tmp_path: Path) -> None:
+    service = StartupSourceSafetyService(
+        _Factory(()),  # type: ignore[arg-type]
+        knowledge_directory=tmp_path / "missing",
+        reconciliation=_Classification(SourceAvailability.AVAILABLE),  # type: ignore[arg-type]
+    )
+    with pytest.raises(FileNotFoundError):
+        await service.check()

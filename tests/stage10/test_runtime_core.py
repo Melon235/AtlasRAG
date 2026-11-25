@@ -291,3 +291,144 @@ async def test_coordinator_does_not_reacquire_preowned_lock() -> None:
     coordinator = ApplicationCoordinator(deps)
     await coordinator._start()
     assert gate.mode.value == "SERVING"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_unsettled_worker_retains_resources_and_raises() -> None:
+    from atlasrag.domain.errors import RuntimeShutdownFailedError
+    from atlasrag.runtime.coordinator import (
+        ApplicationCoordinator,
+        CoordinatorDependencies,
+    )
+    from atlasrag.runtime.health import HealthRegistry
+
+    async def ok() -> None:
+        return None
+
+    gate = RuntimeGate()
+    await gate.mark_serving()
+    health = HealthRegistry(
+        mode=lambda: gate.mode,
+        postgres=ok,
+        milvus=ok,
+        redis=ok,
+        embedding=ok,
+    )
+    registry = InFlightTaskRegistry()
+    closed = False
+    released = False
+
+    class Ownership:
+        def acquire(self) -> None:
+            return None
+
+        def release(self) -> None:
+            nonlocal released
+            released = True
+
+    async def close() -> None:
+        nonlocal closed
+        closed = True
+
+    class Freshness:
+        async def recover_if_due(self) -> None:
+            return None
+
+    class Maintenance:
+        async def run(self) -> object:
+            raise AssertionError
+
+        async def recover_blocked(self) -> object:
+            raise AssertionError
+
+    async def retrieval(request: object) -> object:
+        raise AssertionError
+
+    async def reconcile() -> object:
+        raise AssertionError
+
+    async def source() -> object:
+        raise AssertionError
+
+    async def verify() -> object:
+        raise AssertionError
+
+    deps = CoordinatorDependencies(
+        ownership=Ownership(),  # type: ignore[arg-type]
+        gate=gate,
+        tasks=registry,
+        health=health,
+        freshness=Freshness(),  # type: ignore[arg-type]
+        maintenance=Maintenance(),  # type: ignore[arg-type]
+        retrieval=retrieval,  # type: ignore[arg-type]
+        reconcile=reconcile,  # type: ignore[arg-type]
+        source_safety=source,  # type: ignore[arg-type]
+        verify=verify,  # type: ignore[arg-type]
+        close_resources=close,
+        shutdown_timeout_seconds=0.05,
+        ownership_acquired=True,
+    )
+    coordinator = ApplicationCoordinator(deps)
+
+    async def stubborn() -> None:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            # Deliberately settle after the shutdown deadline so shutdown
+            # must report failure while retaining resources.
+            await asyncio.sleep(0.2)
+
+    task = asyncio.create_task(stubborn())
+    registry.register(task, TaskKind.QUERY)
+    with pytest.raises(RuntimeShutdownFailedError):
+        await coordinator.shutdown()
+    assert not closed
+    assert not released
+    assert gate.mode.value == "SHUTTING_DOWN"
+    await task
+
+
+@pytest.mark.asyncio
+async def test_registration_failure_releases_query_lease() -> None:
+    from atlasrag.runtime.coordinator import (
+        ApplicationCoordinator,
+        CoordinatorDependencies,
+    )
+
+    class Health:
+        async def refresh_if_stale(self) -> object:
+            class Snapshot:
+                generation = 1
+                hard_healthy = True
+
+            return Snapshot()
+
+    class Ownership:
+        def acquire(self) -> None:
+            return None
+
+        def release(self) -> None:
+            return None
+
+    gate = RuntimeGate()
+    await gate.mark_serving()
+    await gate.set_admission_ready(True)
+    registry = InFlightTaskRegistry()
+    await registry.close()
+    deps = CoordinatorDependencies(
+        ownership=Ownership(),  # type: ignore[arg-type]
+        gate=gate,
+        tasks=registry,
+        health=Health(),  # type: ignore[arg-type]
+        freshness=object(),  # type: ignore[arg-type]
+        maintenance=object(),  # type: ignore[arg-type]
+        retrieval=lambda request: None,  # type: ignore[arg-type,return-value]
+        reconcile=lambda: None,  # type: ignore[arg-type,return-value]
+        source_safety=lambda: None,  # type: ignore[arg-type,return-value]
+        verify=lambda: None,  # type: ignore[arg-type,return-value]
+        ownership_acquired=True,
+    )
+    coordinator = ApplicationCoordinator(deps)
+    with pytest.raises(RuntimeError):
+        await coordinator.run_query(object())  # type: ignore[arg-type]
+    assert gate.active_queries == 0

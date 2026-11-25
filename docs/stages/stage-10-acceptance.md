@@ -21,7 +21,7 @@ SATISFIED; unavailable infrastructure/GPU evidence is marked PARTIAL.
 | S10-11 | SATISFIED | Recovery abort returns BLOCKED; transition test |
 | S10-12 | PARTIAL | Barrier implementation; no isolated PG/Redis failure matrix |
 | S10-13 | SATISFIED | Existing key/policy unchanged; existing tests pass |
-| S10-14 | PARTIAL | TEXT_PARENT cache and canonical header; Parent tests not yet added |
+| S10-14 | PARTIAL | TEXT_PARENT valid-hit test; miss/disabled/TABLE matrix missing |
 | S10-15 | PARTIAL | Guarded providers/guard; MinerU boundary not wired; no real GPU evidence |
 | S10-16 | PARTIAL | Composition initializes one model; no real model initialization test |
 | S10-17 | PARTIAL | Health snapshot/soft-unknown test; no delayed-probe integration |

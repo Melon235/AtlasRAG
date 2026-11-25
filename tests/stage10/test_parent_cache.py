@@ -11,6 +11,7 @@ from atlasrag.providers.cache.models import CachedParentContext
 from atlasrag.repositories.postgres.chunks import CanonicalChunkHeader
 from atlasrag.repositories.postgres.records import (
     IngestionStatus,
+    StoredChunk,
     StoredChunkType,
     StoredDocument,
 )
@@ -50,6 +51,20 @@ class _Chunks:
             section_path=("Intro",),
         )
 
+    async def list_by_ids(self, chunk_ids: tuple[str, ...]) -> tuple[StoredChunk, ...]:
+        return tuple([await self.get_by_id(chunk_id) for chunk_id in chunk_ids])
+
+    async def get_by_id(self, chunk_id: str) -> StoredChunk:
+        return StoredChunk(
+            chunk_id=chunk_id,
+            document_id=DOC,
+            revision_id=REV,
+            chunk_type=StoredChunkType.TEXT_PARENT,
+            content="  canonical parent  ",
+            section_path=("Intro",),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
 
 class _Documents:
     async def get_by_id(self, document_id: str) -> StoredDocument:
@@ -68,10 +83,15 @@ class _Unit:
 
 
 class _Cache:
-    def __init__(self) -> None:
+    def __init__(self, hit: bool = True) -> None:
         self.puts = 0
+        self.hit = hit
 
-    async def get_parent(self, revision_id: str, parent_id: str) -> CachedParentContext:
+    async def get_parent(
+        self, revision_id: str, parent_id: str
+    ) -> CachedParentContext | None:
+        if not self.hit:
+            return None
         return CachedParentContext(
             evidence_type=EvidenceType.TEXT_PARENT,
             context_id=CTX,
