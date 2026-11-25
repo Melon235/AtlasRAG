@@ -1,7 +1,8 @@
 # Stage 10-A Implementation Completion
 
-Status: **COMPLETE for production composition and deterministic verification;
-Stage 10 overall remains PARTIAL.**
+Status: **PARTIAL — default production composition and MinerU guard are
+implemented, but the mandatory offline concurrency/startup/cache matrices are
+not complete. Stage 10 overall remains PARTIAL.**
 
 ## 10-A1 Production business composition
 

@@ -29,4 +29,4 @@ SATISFIED; unavailable infrastructure/GPU evidence is marked PARTIAL.
 | S10-19 | PARTIAL | 3306 pass offline; isolated real-infrastructure suite not executed |
 | S10-20 | SATISFIED | Architecture checks, scope tests updated, Stage 9 artifacts preserved |
 
-Stage 10-A production composition and deterministic additions are complete. Stage 10 remains **PARTIAL** pending Stage 10-B real integration and Stage 10-C independent review.
+Stage 10-A production composition and a subset of deterministic additions are complete. Stage 10-A remains **PARTIAL** because mandatory offline concurrency/startup/cache matrices remain incomplete, and Stage 10 overall remains PARTIAL pending Stage 10-B real integration and Stage 10-C independent review.
