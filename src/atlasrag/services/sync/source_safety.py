@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -42,8 +43,18 @@ class StartupSourceSafetyService:
         self._knowledge_directory = knowledge_directory
         self._reconciliation = reconciliation
 
+    def _validated_root(self) -> Path:
+        root = self._knowledge_directory.resolve(strict=True)
+        if not root.is_dir():
+            raise NotADirectoryError(str(root))
+        # Reading one entry proves the directory is scannable without running a
+        # full startup scan; an inaccessible root is a hard bootstrap failure.
+        with os.scandir(root) as entries:
+            next(entries, None)
+        return root
+
     async def check(self) -> SourceSafetyResult:
-        self._knowledge_directory.resolve(strict=True)
+        self._validated_root()
         async with self._uow_factory() as unit:
             documents = await unit.documents.list()
         findings: list[SourceSafetyFinding] = []

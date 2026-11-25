@@ -106,6 +106,10 @@ class ApplicationCoordinator:
             await self._deps.open_resources()
             reconciliation = await self._deps.reconcile()
             if reconciliation.outcome is ReconciliationOutcome.BLOCKED:
+                if "KNOWLEDGE_DIRECTORY_UNAVAILABLE" in reconciliation.blocked_reasons:
+                    # An inaccessible knowledge root is a bootstrap failure, not
+                    # an initialized-but-unsafe BLOCKED runtime.
+                    raise RuntimeBootstrapFailedError
                 await self._deps.gate.mark_blocked()
                 self._started = True
                 return
@@ -175,6 +179,7 @@ class ApplicationCoordinator:
         current = self._begin_operation(TaskKind.MAINTENANCE)
         try:
             result = await self._deps.maintenance.run()
+            self._record_verification_safety(result)
             await self._refresh_admission_after_maintenance()
             return result
         finally:
@@ -184,10 +189,18 @@ class ApplicationCoordinator:
         current = self._begin_operation(TaskKind.MAINTENANCE)
         try:
             result = await self._deps.maintenance.recover_blocked()
+            self._record_verification_safety(result)
             await self._refresh_admission_after_maintenance()
             return result
         finally:
             self._deps.tasks.unregister(current)
+
+    def _record_verification_safety(self, result: SyncResult) -> None:
+        """Propagate the authoritative maintenance verdict into health state."""
+
+        self._deps.health.set_knowledge_verified(
+            result.serving_safety is ServingSafety.SAFE_TO_SERVE
+        )
 
     async def _refresh_admission_after_maintenance(self) -> None:
         snapshot = await self._deps.health.refresh()

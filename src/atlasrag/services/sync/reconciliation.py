@@ -7,11 +7,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum, auto
 from pathlib import Path
+from stat import S_ISDIR, S_ISREG
 
 from atlasrag.domain.errors import CanonicalDataError, InvariantViolationError
 from atlasrag.domain.ingestion.chunks import ChunkRecord
 from atlasrag.domain.ingestion.document import DocumentContainer
-from atlasrag.domain.ingestion.source import SourceFile
+from atlasrag.domain.ingestion.source import (
+    SourceFile,
+    canonical_relative_source_path,
+)
 from atlasrag.domain.ingestion.validation import ValidationOutcome
 from atlasrag.repositories.postgres.records import (
     IngestionStatus,
@@ -94,6 +98,43 @@ def _clear_building(
     )
 
 
+def classify_source(
+    root: Path, relative_source_path: str
+) -> tuple[SourceAvailability, str | None]:
+    """Return MISSING only for a confirmed absent regular source path.
+
+    Any inaccessible root, unreadable path, invalid identity, symlink or
+    non-regular entry is UNAVAILABLE so callers never authorize destructive
+    work from a failed existence check.
+    """
+
+    try:
+        root_info = root.stat()
+    except (OSError, RuntimeError):
+        return SourceAvailability.UNAVAILABLE, None
+    if not S_ISDIR(root_info.st_mode):
+        return SourceAvailability.UNAVAILABLE, None
+    try:
+        canonical = canonical_relative_source_path(relative_source_path)
+    except (TypeError, ValueError):
+        return SourceAvailability.UNAVAILABLE, None
+    candidate = root.joinpath(*canonical.split("/"))
+    try:
+        info = candidate.lstat()
+    except FileNotFoundError:
+        return SourceAvailability.MISSING, None
+    except (OSError, RuntimeError):
+        return SourceAvailability.UNAVAILABLE, None
+    if not S_ISREG(info.st_mode):
+        return SourceAvailability.UNAVAILABLE, None
+    try:
+        source = SourceFile.from_knowledge_directory(root, canonical)
+        digest = content_hash(source)
+    except (OSError, RuntimeError, ValueError):
+        return SourceAvailability.UNAVAILABLE, None
+    return SourceAvailability.AVAILABLE, digest
+
+
 class StartupReconciliationService:
     """Normalize durable boundaries; never plan, scan, or invent content."""
 
@@ -119,18 +160,10 @@ class StartupReconciliationService:
     def _source_state(
         self, document: StoredDocument
     ) -> tuple[_SourceState, str | None]:
-        root = self._knowledge_directory
-        parts = document.relative_source_path.split("/")
-        candidate = root.joinpath(*parts)
-        if not candidate.exists():
-            return _SourceState.MISSING, None
-        try:
-            source = SourceFile.from_knowledge_directory(
-                root, document.relative_source_path
-            )
-            return _SourceState.AVAILABLE, content_hash(source)
-        except (OSError, RuntimeError, ValueError):
-            return _SourceState.UNAVAILABLE, None
+        availability, digest = classify_source(
+            self._knowledge_directory, document.relative_source_path
+        )
+        return _SourceState[availability.value], digest
 
     def classify_source(
         self, document: StoredDocument

@@ -1,8 +1,8 @@
 # Stage 10-A Implementation Completion
 
-Status: **A-R1 and A-R2 COMPLETE offline. Stage 10-A remains PARTIAL because
-A-R3..A-R6 matrices are incomplete. Stage 10 overall remains PARTIAL; acceptance
-remains UNSATISFIED; PR #11 remains open/unmerged.**
+Status: **A-R1, A-R2 and A-R3 COMPLETE offline. Stage 10-A remains PARTIAL
+because A-R4..A-R6 matrices are incomplete. Stage 10 overall remains PARTIAL;
+acceptance remains UNSATISFIED; PR #11 remains open/unmerged.**
 
 ## 10-A1 Production business composition
 
@@ -94,21 +94,63 @@ reverted pre-fix path):
   closed registry. Fix: map closed registration to `RuntimeShuttingDownError`
   when the runtime is SHUTTING_DOWN.
 
-A-R1 regressions (including cleanup ordering and ownership retention) remain
-passing. G-01, G-02 and G-03 now have deterministic offline evidence; this is
-not independent review and does not close Stage 10-C.
+A-R1 and A-R2 regressions (including cleanup ordering and ownership retention)
+remain passing. G-01, G-02, G-03 and the deterministic portion of G-04 now have
+offline evidence; this is not independent review and does not close Stage 10-C.
 
-## 10-A6 Startup/cache partial matrices
+## 10-A6 A-R3 interrupted deletion and startup safety
 
-Added startup source tests and a Parent TEXT_PARENT hit test. Full interrupted
-deletion, Redis ambiguity, Parent miss/TABLE and freshness failure matrices
-remain required deterministic work (A-R3/A-R4/A-R5).
+Added `tests/stage10/ar3_support.py` plus three focused modules that keep the
+real Stage 5 deletion/reconciliation/source-safety/verification services, the
+real maintenance graph and the real coordinator boundaries, using the Stage 3
+transaction-aware PostgreSQL fake and an independently recorded Milvus
+projection fake:
 
-## 10-A7 verification
+- `tests/stage10/test_ar3_source_safety.py` — AR3-01, AR3-02, AR3-09.
+- `tests/stage10/test_ar3_interrupted_deletion.py` — AR3-03..AR3-07.
+- `tests/stage10/test_ar3_startup_recovery.py` — AR3-08, AR3-10.
 
-- `make test-stage10`: PASS — 83 tests.
-- `make verify`: PASS — 3377 passed, 1 skipped, 108 deselected.
-- `ruff check .`, `ruff format --check .`, strict `mypy` (370 files),
+Confirmed A-R3 defects fixed (each regression executed against the reverted
+pre-fix path):
+
+- **A-R3-F01** — A failed existence check authorized destructive deletion:
+  `Path.exists()` collapsed PermissionError, I/O failure, symlinks and invalid
+  paths to "missing", and deletion revalidation had no root or path validation.
+  Fix: a fail-closed `classify_source` used by reconciliation, source safety and
+  deletion; only a confirmed absent regular source authorizes deletion;
+  unreadable/unavailable sources report `SOURCE_UNAVAILABLE`.
+- **A-R3-F02** — Inaccessible or non-directory knowledge roots became an
+  initialized-BLOCKED runtime (or even SERVING for an unreadable empty root)
+  instead of the approved hard bootstrap failure. Fix: the coordinator maps
+  `KNOWLEDGE_DIRECTORY_UNAVAILABLE` to `RuntimeBootstrapFailedError`, and
+  `StartupSourceSafetyService` validates that the root is a directory and is
+  scannable before reporting safety.
+- **A-R3-F03** — Maintenance verdicts were not propagated into the health
+  registry, so a runtime blocked before initial verification could complete a
+  successful explicit recovery to SERVING yet remain unready and reject every
+  query; an authoritative UNSAFE verdict also left knowledge marked verified.
+  Fix: `run_maintenance`/`recover` record `knowledge_verified` from the
+  returned `ServingSafety` before refreshing admission. The A-R2
+  `test_unsafe_maintenance_outcome_is_not_overridden_by_healthy_probes`
+  assertion was corrected to state that probe health remains but verified
+  knowledge does not.
+
+Preserved contracts: Milvus-first/PostgreSQL-last deletion, exact absence
+verification before canonical deletion, marker set inside the canonical
+transaction, no startup scan/sync, no automatic deletion for missing sources,
+no new mode, no new schema, no second recovery algorithm.
+
+## 10-A7 Startup/cache remaining matrices
+
+Startup source availability and interrupted-deletion matrices are complete
+under A-R3. Redis ambiguity, marker-clear failure, Parent miss/TABLE and
+freshness failure matrices remain required deterministic work (A-R4/A-R5).
+
+## 10-A8 verification
+
+- `make test-stage10`: PASS — 123 tests.
+- `make verify`: PASS — 3417 passed, 1 skipped, 108 deselected.
+- `ruff check .`, `ruff format --check .`, strict `mypy` (375 files),
   `make architecture-check`, `git diff --check`: PASS.
 - Stage 9 raw artifact integrity: 12/12 SHA-256 and size matches.
 - Real isolated PostgreSQL/Milvus/Redis and real GPU evidence: NOT_EXECUTED

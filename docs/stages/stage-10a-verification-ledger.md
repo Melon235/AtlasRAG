@@ -1,9 +1,9 @@
 # Stage 10-A Offline Verification Ledger
 
-Status: **PARTIAL**. Eighty-three deterministic Stage 10 tests pass. A-R1 and
-A-R2 are COMPLETE offline; A-R3, A-R4, A-R5 and A-R6 remain incomplete, and no
-offline PASS is claimed for missing rows. Real isolated infrastructure remains
-Stage 10-B; independent review remains Stage 10-C.
+Status: **PARTIAL**. One hundred twenty-three deterministic Stage 10 tests
+pass. A-R1, A-R2 and A-R3 are COMPLETE offline; A-R4, A-R5 and A-R6 remain
+incomplete, and no offline PASS is claimed for missing rows. Real isolated
+infrastructure remains Stage 10-B; independent review remains Stage 10-C.
 
 ## A-R1 Production composition — COMPLETE (offline, fake technical boundaries)
 
@@ -150,17 +150,150 @@ compatible correction. No independent review evidence is claimed.
 | A-R2-F05 | Concurrent shutdown calls could both pass `_shutdown_done` and close resources twice | `test_concurrent_shutdown_calls_close_resources_once` | close callback invoked twice |
 | A-R2-F06 | Operations attempted after shutdown failed registration with generic `RuntimeError` instead of the stable `RuntimeShuttingDownError` | `test_shutdown_before_admission_rejects_new_work_without_retrieval` | `RuntimeError("task registry is closed")` |
 
-## A-R3 Startup source safety
+## A-R3 Interrupted deletion and startup safety — COMPLETE (offline)
+
+All A-R3 tests use the real `StartupReconciliationService`,
+`StartupSourceSafetyService`, `GlobalKnowledgeVerificationService`,
+`MissingSourceDeletionService`, `SyncServices`/`IndexSyncApplication`,
+`MaintenanceCoordinator` and `ApplicationCoordinator` over the Stage 3
+transaction-aware PostgreSQL fake (committed/working state, commit, rollback)
+and an independently recorded Milvus projection fake
+(`tests/stage10/ar3_support.py`). No final safety verdict is faked.
+
+### AR3-01 — Source availability contract
+
+File: `tests/stage10/test_ar3_source_safety.py`
 
 | Scenario | Test | Result |
 |---|---|---|
-| Missing published source | `test_source_safety_blocks_missing_published_source` | PASS |
-| Changed available source | `test_source_safety_allows_available_changed_source` | PASS |
-| Empty consistent KB | `test_empty_consistent_kb_is_safe` | PASS |
-| Unreadable source | `test_unreadable_published_source_is_unsafe` | PASS |
-| Inaccessible root hard failure | `test_inaccessible_root_is_a_hard_failure` | PASS |
-| Interrupted deletion before/after Milvus/PG | fake projection matrix | MISSING_TEST |
-| Required deletion failure + restart | fake sync/restart matrix | MISSING_TEST |
+| Available unchanged source: SERVING, no sync, query admitted | `test_startup_serves_available_unchanged_source_without_sync` | PASS |
+| Changed available source: last-good revision preserved, no rebuild | `test_changed_available_source_keeps_last_good_revision_without_rebuild` | PASS |
+| Confirmed missing published source: BLOCKED before verification | `test_confirmed_missing_published_source_blocks_startup` | PASS |
+| Unreadable published source: UNAVAILABLE finding, BLOCKED, no admission | `test_unreadable_published_source_blocks_startup` | PASS |
+| Document without published current revision: valid startup, no sync | `test_document_without_current_revision_does_not_block_startup` | PASS |
+| Empty internally consistent KB: SERVING, no sync | `test_empty_consistent_kb_serves` | PASS |
+
+Existing direct service tests (`test_source_safety_blocks_missing_published_source`,
+`test_source_safety_allows_available_changed_source`, `test_empty_consistent_kb_is_safe`,
+`test_unreadable_published_source_is_unsafe`,
+`test_inaccessible_root_is_a_hard_failure`) remain passing.
+
+### AR3-02 — Root accessibility and source classification
+
+File: `tests/stage10/test_ar3_source_safety.py`
+
+| Scenario | Test | Result |
+|---|---|---|
+| Confirmed missing file | `test_confirmed_missing_source_is_classified_missing` | PASS |
+| PermissionError is not confirmed absence | `test_permission_denied_source_is_unavailable_not_missing` | PASS |
+| I/O error is unreadable, not missing | `test_io_error_source_is_unavailable` | PASS |
+| Unavailable parent component | `test_unavailable_parent_directory_is_unavailable` | PASS |
+| Invalid/unsafe source identity | `test_invalid_source_identity_is_unavailable` | PASS |
+| Unreadable source cannot authorize deletion | `test_deletion_refuses_unreadable_source` | PASS |
+| Unavailable root cannot authorize deletion | `test_deletion_refuses_unavailable_knowledge_root` | PASS |
+| Invalid identity cannot authorize deletion | `test_deletion_refuses_invalid_source_identity` | PASS |
+| Missing root: hard bootstrap failure | `test_missing_knowledge_root_is_a_bootstrap_failure` | PASS |
+| Non-directory root: hard bootstrap failure | `test_non_directory_knowledge_root_is_a_bootstrap_failure` | PASS |
+| Unreadable root: hard bootstrap failure | `test_unreadable_knowledge_root_is_a_bootstrap_failure` | PASS |
+| BLOCKED reconciliation stays initialized-BLOCKED | `test_blocked_reconciliation_is_initialized_blocked_not_bootstrap_failure` | PASS |
+
+### AR3-03 — Interruption before Milvus deletion
+
+File: `tests/stage10/test_ar3_interrupted_deletion.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Cancelled at the pre-Milvus probe: both stores still match; fresh startup sees missing source, stays BLOCKED, runs no sync and deletes nothing; empty summaries remain SAFE but source safety blocks | `test_interruption_before_milvus_deletion_preserves_both_stores` | PASS |
+
+### AR3-04 — Milvus failure and partial deletion
+
+File: `tests/stage10/test_ar3_interrupted_deletion.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Milvus delete failure before removal: PG commit not attempted, `MILVUS_DELETE_FAILED`, UNSAFE, leases settle, restart BLOCKED | `test_milvus_delete_failure_keeps_canonical_state_and_blocks_serving` | PASS |
+| Remaining projection: `VISIBILITY_REMAINS`, UNSAFE, PG retained, restart BLOCKED; empty verification summary is not proof of deletion | `test_remaining_milvus_projection_is_unsafe_and_not_serving` | PASS |
+| Failed absence verification: PG retained, `MILVUS_DELETE_FAILED`, UNSAFE MISSING_RECORDS on restart | `test_failed_absence_verification_keeps_postgres_and_blocks_serving` | PASS |
+
+### AR3-05 — Interruption before PostgreSQL commit
+
+File: `tests/stage10/test_ar3_interrupted_deletion.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| A. Cancelled before the PostgreSQL transaction: Milvus absent+verified, PG row remains, marker false; restart BLOCKED, no republish, verification MISSING_RECORDS | `test_interruption_before_postgres_transaction_keeps_canonical_row` | PASS |
+| B. Interruption inside the PG transaction: rollback discards staged deletion, Milvus absent, PG row+marker intact | `test_interruption_inside_postgres_transaction_rolls_back` | PASS |
+| B. Commit failure: `POSTGRES_DELETE_FAILED`, rollback, restart BLOCKED and verification UNSAFE | `test_postgres_commit_failure_rolls_back_deletion_and_marker` | PASS |
+
+### AR3-06 — Successful deletion commit and restart
+
+File: `tests/stage10/test_ar3_interrupted_deletion.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Milvus absence scan precedes canonical deletion; document/elements/chunks removed; marker true; lease released; PG and marker committed together (rollback case in AR3-05B) | `test_successful_deletion_commits_marker_with_canonical_state` | PASS |
+| Interrupted after commit at final verification: durable deletion+marker survive; fresh restart SERVING on empty KB; startup verification precedes freshness, freshness sees marker true, then admission | `test_interruption_after_deletion_commit_restarts_to_serving` | PASS |
+
+### AR3-07 — Required deletion failure followed by restart
+
+File: `tests/stage10/test_ar3_interrupted_deletion.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Real chain: deletion failure → `DeletionSummary.failed` → global verification → UNSAFE → BLOCKED and admission closed; match-state restart stays BLOCKED by source safety while projections match | `test_failed_required_deletion_chain_blocks_runtime_before_restart` | PASS |
+| Mismatched restart: empty startup deletion summary cannot erase independently observed MISSING_RECORDS | `test_restart_with_mismatched_projection_is_unsafe_with_empty_summaries` | PASS |
+
+### AR3-08 — Source reappearance and incomplete scans
+
+File: `tests/stage10/test_ar3_startup_recovery.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Source reappears after planning/before deletion: `SOURCE_REAPPEARED`, no deletion, UNSAFE, durable state intact; restart is SERVING because the source is available | `test_source_reappearance_after_planning_blocks_deletion` | PASS |
+| Incomplete scan: `SCAN_PERMISSION_DENIED`, no build/delete side effects, runtime BLOCKED | `test_incomplete_scan_blocks_before_any_deletion` | PASS |
+| Stale canonical revision after planning: `STATE_CHANGED`, no deletion, UNSAFE, restart BLOCKED | `test_changed_canonical_revision_after_planning_blocks_deletion` | PASS |
+| Changed revision revalidation (existing) | `tests/stage5/test_deletion.py::test_changed_current_revision_is_not_deleted` | PASS |
+| Reappeared source revalidation (existing) | `tests/stage5/test_deletion.py::test_reappeared_source_blocks_deletion` | PASS |
+
+### AR3-09 — Authoritative startup safety
+
+| Condition | Test | Result |
+|---|---|---|
+| Reconciliation BLOCKED with matching projections | `test_blocked_reconciliation_is_initialized_blocked_not_bootstrap_failure` | PASS |
+| Source safety fails despite matching projections | `test_confirmed_missing_published_source_blocks_startup`, `test_interruption_before_milvus_deletion_preserves_both_stores` | PASS |
+| Global verification fails despite available sources | `test_global_verification_failure_is_not_overridden_by_source_safety` | PASS |
+| All safety conditions pass | `test_startup_serves_available_unchanged_source_without_sync` | PASS |
+| Empty internally consistent KB | `test_empty_consistent_kb_serves` | PASS |
+| Modified source with valid last-good revision | `test_changed_available_source_keeps_last_good_revision_without_rebuild` | PASS |
+| Orphan cleanup proven before serving | `test_orphan_projection_is_removed_before_serving` | PASS |
+| Attempted-but-unproven cleanup blocks serving | `test_unremoved_orphan_projection_blocks_serving` | PASS |
+| Hard bootstrap failures stay distinct from initialized BLOCKED | `test_missing_knowledge_root_is_a_bootstrap_failure`, `test_non_directory_knowledge_root_is_a_bootstrap_failure`, `test_unreadable_knowledge_root_is_a_bootstrap_failure` | PASS |
+
+### AR3-10 — Explicit BLOCKED recovery
+
+File: `tests/stage10/test_ar3_startup_recovery.py`
+
+| Invariant | Test | Result |
+|---|---|---|
+| Failed recovery: still BLOCKED, knowledge unverified, readiness false, no admission; durable deletion remains undone | `test_failed_explicit_recovery_keeps_blocked_and_admission_closed` | PASS |
+| Successful recovery: required deletion completed, freshness handled (marker true), knowledge verified, readiness true, query admission reopened; no direct BLOCKED→SERVING shortcut | `test_successful_explicit_recovery_verifies_knowledge_and_opens_admission` | PASS |
+| Restart after interrupted deletion never runs automatic sync; source safety keeps admission closed | `test_restart_after_interrupted_deletion_never_runs_automatic_sync` | PASS |
+| Frozen six-mode vocabulary | `test_runtime_mode_vocabulary_has_no_blocked_to_serving_shortcut` | PASS |
+
+### A-R3 confirmed defects and regressions
+
+Each regression was executed against the reverted pre-A-R3 code path; the
+pre-fix result is the observed failure. No independent review is claimed.
+
+| ID | Defect | Regression(s) | Pre-fix result |
+|---|---|---|---|
+| A-R3-F01 | Failed existence checks authorized destructive deletion: `Path.exists()` collapsed PermissionError/I/O failure/invalid paths to "missing", and deletion revalidation had no root/path validation | `test_permission_denied_source_is_unavailable_not_missing`, `test_io_error_source_is_unavailable`, `test_invalid_source_identity_is_unavailable`, `test_deletion_refuses_unreadable_source`, `test_deletion_refuses_unavailable_knowledge_root`, `test_deletion_refuses_invalid_source_identity` | MISSING/AVAILABLE classification and `DELETED` canonical+index records for an unreadable source |
+| A-R3-F02 | Inaccessible or non-directory knowledge roots became initialized-BLOCKED (or SERVING for an unreadable empty root) instead of the approved hard bootstrap failure; `StartupSourceSafetyService` only resolved the root | `test_missing_knowledge_root_is_a_bootstrap_failure`, `test_non_directory_knowledge_root_is_a_bootstrap_failure`, `test_unreadable_knowledge_root_is_a_bootstrap_failure` | `RuntimeBootstrapFailedError` not raised |
+| A-R3-F03 | Authoritative maintenance verdicts were not propagated into `HealthRegistry`, so an initially-BLOCKED runtime could complete successful explicit recovery to SERVING but remain unready and reject all queries; an UNSAFE verdict left knowledge marked verified | `test_successful_explicit_recovery_verifies_knowledge_and_opens_admission`, `test_failed_explicit_recovery_keeps_blocked_and_admission_closed` | readiness false after successful recovery; query admission closed |
+
+The A-R2 test `test_unsafe_maintenance_outcome_is_not_overridden_by_healthy_probes`
+was corrected to assert the authoritative semantics: dependency probes remain
+HEALTHY, but `knowledge_verified` and `hard_healthy` are false after UNSAFE.
 
 ## A-R4 Query Cache and freshness
 
@@ -189,11 +322,11 @@ compatible correction. No independent review evidence is claimed.
 
 | Check | Result |
 |---|---|
-| `make test-stage10` | PASS — 83 tests |
-| `pytest` full | PASS — 3377 passed, 1 skipped, 108 deselected |
+| `make test-stage10` | PASS — 123 tests |
+| `pytest` full | PASS — 3417 passed, 1 skipped, 108 deselected |
 | ruff / mypy / architecture / format / diff | PASS |
 | Real isolated infrastructure | NOT_EXECUTED (Stage 10-B) |
 | Independent review | NOT_EXECUTED (Stage 10-C) |
 
-A-R6 remains PENDING: the offline suites pass, but A-R3/A-R4/A-R5 matrices are
-still incomplete and Stage 10-B/10-C evidence is absent.
+A-R6 remains PENDING: the offline suites pass, but A-R4/A-R5 matrices are still
+incomplete and Stage 10-B/10-C evidence is absent.

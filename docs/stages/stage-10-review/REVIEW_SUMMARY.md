@@ -59,3 +59,33 @@ verification ledger and completion document.
 
 Independent review remains UNAVAILABLE. No review status is upgraded and
 Stage 10-C is not started.
+
+---
+
+## Stage 10-A A-R3 update (deterministic evidence only)
+
+R10-01 gap G-04 (interrupted deletion) now has deterministic offline evidence:
+
+- Interrupted before Milvus deletion: `test_interruption_before_milvus_deletion_preserves_both_stores`.
+- Milvus failure/partial/absence verification: `test_milvus_delete_failure_keeps_canonical_state_and_blocks_serving`,
+  `test_remaining_milvus_projection_is_unsafe_and_not_serving`,
+  `test_failed_absence_verification_keeps_postgres_and_blocks_serving`.
+- Interrupted before/inside PostgreSQL commit: `test_interruption_before_postgres_transaction_keeps_canonical_row`,
+  `test_interruption_inside_postgres_transaction_rolls_back`,
+  `test_postgres_commit_failure_rolls_back_deletion_and_marker`.
+- Successful commit and restart: `test_successful_deletion_commits_marker_with_canonical_state`,
+  `test_interruption_after_deletion_commit_restarts_to_serving`.
+- Failure chain and restart safety: `test_failed_required_deletion_chain_blocks_runtime_before_restart`,
+  `test_restart_with_mismatched_projection_is_unsafe_with_empty_summaries`.
+- Source reappearance/incomplete scans/stale plans: `test_source_reappearance_after_planning_blocks_deletion`,
+  `test_incomplete_scan_blocks_before_any_deletion`,
+  `test_changed_canonical_revision_after_planning_blocks_deletion`.
+- Explicit recovery: `test_failed_explicit_recovery_keeps_blocked_and_admission_closed`,
+  `test_successful_explicit_recovery_verifies_knowledge_and_opens_admission`.
+
+Three A-R3 defects (A-R3-F01..F03) were confirmed and fixed; regressions were
+executed against the reverted pre-fix code path. Details are in the Stage 10-A
+verification ledger and completion document.
+
+Independent review remains UNAVAILABLE. No review status is upgraded and
+Stage 10-C is not started.

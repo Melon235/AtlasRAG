@@ -321,7 +321,9 @@ async def test_unsafe_maintenance_outcome_is_not_overridden_by_healthy_probes() 
 
     assert harness.gate.mode.value == "BLOCKED"
     snapshot = await harness.coordinator.health()
-    assert snapshot.hard_healthy
+    assert snapshot.postgres is DependencyHealth.HEALTHY
+    assert snapshot.knowledge_verified is False
+    assert snapshot.hard_healthy is False
     assert await harness.coordinator.readiness() is False
     with pytest.raises(RuntimeNotReadyError):
         await harness.coordinator.run_query(request("session-q"))
