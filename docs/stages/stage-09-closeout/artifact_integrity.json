@@ -1,0 +1,50 @@
+{
+  "docs/stages/stage-09-deepeval-run/production_captures.jsonl": {
+    "sha256": "4ce79d0ce60389dbac3cc753f9500a0cbe96612f1b64aed092dbb52d77fea1e5",
+    "size": 274188
+  },
+  "docs/stages/stage-09-deepeval-run/deepeval_results.json": {
+    "sha256": "cbd2001822ea540b46846c41a03d0152861cad6550f1654bf0d4e31e260df828",
+    "size": 13626
+  },
+  "docs/stages/stage-09-deepeval-run/budget_ledger.json": {
+    "sha256": "c8b82d80188cf8b7f90f8f4d089de6ea70133f498a976964cdfe8a4a1343cd4c",
+    "size": 92
+  },
+  "docs/stages/stage-09-deepeval-run/judge_only_results.json": {
+    "sha256": "22ebc529318ba28e6073dd6256285191d94e5e4ef5d4f1dba309e2aba03709c3",
+    "size": 16135
+  },
+  "docs/stages/stage-09-deepeval-run/judge_only_ledger.json": {
+    "sha256": "d40bf3b02cacd019e787080c27ec8d560fbc29db218144dfdb6809773a892a91",
+    "size": 91
+  },
+  "docs/stages/stage-09-deepeval-run/consolidated_results.json": {
+    "sha256": "9779709cf4c0a754cc9dc9012f99cc839ac5432b49cbf6294c62e8e3266e217f",
+    "size": 5796
+  },
+  "docs/stages/stage-09-deepeval-run/results.json": {
+    "sha256": "9822bf7c76c69c59458e4f0225835445449df8b913f90c4220f97a0310f1babe",
+    "size": 1457
+  },
+  "docs/stages/stage-09-diagnostic-50/selection_final_50.json": {
+    "sha256": "9b6a6654ae626aa50593277bc74728e4b6fc69718a6656f923a0b31c38365a19",
+    "size": 19800
+  },
+  "docs/stages/stage-09-diagnostic-50/readiness_final_50.json": {
+    "sha256": "6622ad4d13b854c3fc2388d38deec963ba01c375d619b93b610f0629bfb59a39",
+    "size": 23263
+  },
+  "docs/stages/stage-09-diagnostic-50/observations_final_50.json": {
+    "sha256": "c8516ea66f41f3a9e7cea2d23927b86a3095c7332df74bbc6492d7671aea09ef",
+    "size": 290014
+  },
+  "docs/stages/stage-09-diagnostic-50/results_final_50.json": {
+    "sha256": "0a3e478a1677f04a82945d0c635b2a216b68cc849280ac2268cfdd22be09093a",
+    "size": 3103
+  },
+  "docs/stages/stage-09-diagnostic-50/evaluation_panel_20.json": {
+    "sha256": "a9479034216931e9a633543829acb04ce7e1492acb8d48a35f6e8b758a2d168a",
+    "size": 7976
+  }
+}
