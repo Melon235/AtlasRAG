@@ -12,6 +12,7 @@ from atlasrag.application.hashing import request_hash
 from atlasrag.domain.errors import DependencyError, ProviderResponseError
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.domain.results import FinalResponse, RagCoreResult
+from atlasrag.providers.cache.keys import is_cache_key_component_safe
 from atlasrag.providers.cache.models import CachedQueryResult
 from atlasrag.providers.cache.redis import RedisCacheProvider
 from atlasrag.services.cache.policy import QueryCachePolicy
@@ -162,6 +163,8 @@ class SessionQueryCache:
         )
 
     async def commit(self, prepared: PreparedCacheWrite) -> CacheCommitOutcome:
+        if not is_cache_key_component_safe(prepared.request.session_id):
+            return CacheCommitOutcome.BYPASSED
         key_hash = request_hash(prepared.request)
         if hasattr(self._redis, "put_fenced_query"):
             if self._require_write_fence and prepared.write_fence is None:

@@ -2,10 +2,11 @@
 
 ## Status
 
-**PARTIAL — Stage 10-A (A-R1 through A-R6 offline) and Stage 10-B (isolated real
-PostgreSQL/Milvus/Redis integration) COMPLETE. Stage 10-C (independent review)
-remains NOT_STARTED. Stage 10 overall acceptance remains UNSATISFIED (`PR #11`
-open/unmerged).**
+**PARTIAL — Stage 10-A (`A-R1`–`A-R6` offline), Stage 10-B (`12/12` isolated real
+PostgreSQL/Milvus/Redis integration), Stage 10-C1 (`FAIL`), and Stage 10-C2
+remediation COMPLETE. Stage 10-C3 (independent re-review) remains
+`READY / PENDING_INDEPENDENT_REVIEW`. Stage 10 overall acceptance remains
+UNSATISFIED (`PR #11` open/unmerged).**
 
 Stage 9 remains closed under its amended acceptance scope (12/12 artifacts
 verified). Stage 10 does not merge automatically.
@@ -138,10 +139,15 @@ local disposable-cache assumption is explicit.
   [`stage-10a-verification-ledger.md`](stage-10a-verification-ledger.md), and
   [`stage-10-acceptance.md`](stage-10-acceptance.md)).
 - **Stage 10-B (isolated real PostgreSQL/Milvus/Redis integration):**
-  COMPLETE (`11/11` real-infra tests pass; `AR4-T01` live Redis settlement
-  verified — see [`stage-10b-completion.md`](stage-10b-completion.md)).
-- **Stage 10-C (independent review):** NOT_STARTED (see
-  [`stage-10-review/REVIEW_SUMMARY.md`](stage-10-review/REVIEW_SUMMARY.md)).
+  COMPLETE (`12/12` real-infra tests pass with fail-closed `scripts/stage10_isolation.py`
+  ownership; `AR4-T01` live Redis settlement verified — see
+  [`stage-10b-completion.md`](stage-10b-completion.md)).
+- **Stage 10-C1 / Stage 10-C2 / Stage 10-C3 (independent review & remediation):**
+  Stage 10-C1 `FAIL` on `3a9de079` ([`stage-10-review/STAGE_10_C1_REVIEW.md`](stage-10-review/STAGE_10_C1_REVIEW.md)),
+  Stage 10-C2 remediation COMPLETE ([`stage-10-review/STAGE_10_C2_REMEDIATION.md`](stage-10-review/STAGE_10_C2_REMEDIATION.md)),
+  Stage 10-C3 `READY / PENDING_INDEPENDENT_REVIEW`
+  ([`stage-10-review/STAGE_10_C3_HANDOFF.md`](stage-10-review/STAGE_10_C3_HANDOFF.md);
+  see also [`stage-10-review/REVIEW_SUMMARY.md`](stage-10-review/REVIEW_SUMMARY.md)).
 - Real Qwen/BGE GPU initialization, MinerU guarded boundary measurement, RTX
   3070 VRAM/OOM and SDK subprocess settlement, OS signal delivery, launcher
   termination, and final API/CLI/streaming/backup/performance work remain

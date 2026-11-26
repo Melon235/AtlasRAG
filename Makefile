@@ -73,10 +73,10 @@ test-stage10:
 	uv run --frozen pytest tests/stage10 -q
 
 test-stage10-integration:
-	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage10_verify.sh --integration-only
+	scripts/stage10_verify.sh --integration-only
 
 stage10-verify:
-	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage10_verify.sh
+	scripts/stage10_verify.sh
 
 test-stage3:
 	uv run --frozen pytest tests/stage3 -q

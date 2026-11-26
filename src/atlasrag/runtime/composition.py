@@ -20,6 +20,7 @@ from atlasrag.domain.errors import (
     ConfigurationError,
     DependencyError,
     DependencyUnavailableError,
+    RuntimeBootstrapFailedError,
 )
 from atlasrag.domain.indexing.models import (
     EmbeddingModelIdentity,
@@ -213,12 +214,17 @@ async def _retry_startup_dependency(
     for attempt in range(1, attempts + 1):
         try:
             return await operation()
-        except _TRANSIENT_STARTUP_ERRORS:
+        except _TRANSIENT_STARTUP_ERRORS as primary:
             if on_failure is not None:
                 try:
                     await on_failure()
-                except BaseException:
-                    pass
+                except BaseException as cleanup:
+                    if isinstance(cleanup, asyncio.CancelledError):
+                        raise cleanup from primary
+                    primary.add_note(
+                        f"startup retry cleanup failure: {type(cleanup).__name__}"
+                    )
+                    raise RuntimeBootstrapFailedError from primary
             if attempt >= attempts:
                 raise
             await asyncio.sleep(delay_seconds)
@@ -264,11 +270,17 @@ class ApplicationComposition:
                 )
                 try:
                     await pool.open()
-                except BaseException:
+                except BaseException as primary:
                     try:
                         await pool.close()
-                    except BaseException:
-                        pass
+                    except BaseException as cleanup:
+                        if isinstance(cleanup, asyncio.CancelledError):
+                            raise cleanup from primary
+                        note = f"pool close cleanup failure: {type(cleanup).__name__}"
+                        primary.add_note(note)
+                        if isinstance(primary, asyncio.CancelledError):
+                            raise
+                        raise RuntimeBootstrapFailedError from primary
                     raise
                 return pool
 
@@ -416,6 +428,7 @@ class ApplicationComposition:
                 source_safety=business.source_safety,
                 verify=business.verify,
                 close_resources=self._close_resources,
+                begin_guard_shutdown=self._guard.begin_shutdown,
                 shutdown_timeout_seconds=config.maintenance.shutdown_timeout_seconds,
                 ownership_acquired=True,
             )
@@ -426,7 +439,13 @@ class ApplicationComposition:
             try:
                 await self._close_resources()
             except BaseException as cleanup:
-                primary.add_note(f"runtime cleanup failure: {type(cleanup).__name__}")
+                note = f"runtime cleanup failure: {type(cleanup).__name__}"
+                if note not in getattr(primary, "__notes__", ()):
+                    primary.add_note(note)
+                if isinstance(cleanup, asyncio.CancelledError) and not isinstance(
+                    primary, asyncio.CancelledError
+                ):
+                    raise cleanup from primary
             else:
                 self._ownership.release()
             raise
@@ -438,6 +457,7 @@ class ApplicationComposition:
             return
         self._closed = True
         first: BaseException | None = None
+        cancelled: asyncio.CancelledError | None = None
         operations = (
             ("business", self._business.close if self._business else None),
             ("milvus", self._milvus.close if self._milvus else None),
@@ -455,10 +475,25 @@ class ApplicationComposition:
             try:
                 await close()
             except BaseException as error:
+                if isinstance(error, asyncio.CancelledError):
+                    if cancelled is None:
+                        cancelled = error
+                    elif first is None:
+                        first = error
+                    else:
+                        first.add_note(
+                            f"runtime cleanup: {name}/{type(error).__name__}"
+                        )
+                    continue
                 if first is None:
                     first = error
                 else:
                     first.add_note(f"runtime cleanup: {name}/{type(error).__name__}")
+        if cancelled is not None:
+            if first is not None:
+                cancelled.add_note(f"runtime cleanup: {type(first).__name__}")
+            self._cleanup_error = cancelled
+            raise cancelled
         if first is not None:
             self._cleanup_error = first
             raise first

@@ -206,3 +206,11 @@ run `make test-stage10-integration`, details in
 Independent review remains UNAVAILABLE. No review status is upgraded, Stage 10-C
 remains **NOT_STARTED**, and Stage 10 overall acceptance remains
 **UNSATISFIED**.
+
+---
+
+## Stage 10-C1 Independent Review & Stage 10-C2 Remediation Update
+
+- **Stage 10-C1 (`3a9de079`):** **FAIL** — 6 release-blocking findings (`C10-RISK-01`, `F-R10-02-01`, `F-R10-01-01` + `R10-03-F02`, `F-R10-01-02`, `F-R10-01-03`, `F-R10-02-02`) plus preserved non-blocking observations (`R10-03-F03`/`R10-04-F02`, `R10-03-F04`, `R10-01-F04`, `R10-01-F05`, `OBS-R10-02-01..03`, `R10-03-F06`, `R10-03-F07`, `R10-04-F03`). See [`STAGE_10_C1_REVIEW.md`](STAGE_10_C1_REVIEW.md).
+- **Stage 10-C2 Remediation:** **COMPLETE** — all 6 blockers + `R10-03-F02` + `R10-04-F03` doc reconciliation resolved and verified (`make test-stage10`: `348 passed`; `make verify`: `3656 passed, 1 skipped`, `484` formatted files, `396` mypy files, `12/12` Stage 9 artifact integrity; `make test-stage10-integration`: `12 passed in 741.24s (0:12:21)` with fail-closed isolation and `remaining=0`). See [`STAGE_10_C2_REMEDIATION.md`](STAGE_10_C2_REMEDIATION.md).
+- **Stage 10-C3 Independent Re-Review:** **READY / PENDING_INDEPENDENT_REVIEW** (`G-10` remains **OPEN**, `PR #11` remains **OPEN / UNMERGED**). See [`STAGE_10_C3_HANDOFF.md`](STAGE_10_C3_HANDOFF.md).

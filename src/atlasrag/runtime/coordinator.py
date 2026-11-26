@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from atlasrag.domain.errors import (
     RuntimeBootstrapFailedError,
+    RuntimeNotReadyError,
     RuntimeShutdownFailedError,
     RuntimeShuttingDownError,
 )
@@ -52,6 +53,7 @@ class CoordinatorDependencies:
     verify: Callable[[], Awaitable[GlobalSafetyResult]]
     open_resources: Callable[[], Awaitable[None]] = field(default=lambda: _noop())
     close_resources: Callable[[], Awaitable[None]] = field(default=lambda: _noop())
+    begin_guard_shutdown: Callable[[], Awaitable[None]] = field(default=lambda: _noop())
     shutdown_timeout_seconds: float = 30.0
     cache_recovery_inside_lease: bool = True
     ownership_acquired: bool = False
@@ -99,10 +101,12 @@ class ApplicationCoordinator:
         return coordinator
 
     async def _start(self) -> None:
+        opened_or_closing = False
         try:
             if not self._deps.ownership_acquired:
                 self._deps.ownership.acquire()
                 self._ownership_acquired_here = True
+            opened_or_closing = True
             await self._deps.open_resources()
             reconciliation = await self._deps.reconcile()
             if reconciliation.outcome is ReconciliationOutcome.BLOCKED:
@@ -134,19 +138,41 @@ class ApplicationCoordinator:
             self._last_health_generation = snapshot.generation
             self._started = True
         except BaseException as error:
-            try:
-                await self._deps.close_resources()
-            finally:
-                if self._ownership_acquired_here:
-                    self._deps.ownership.release()
-            if isinstance(error, asyncio.CancelledError):
-                raise
+            cancelled = isinstance(error, asyncio.CancelledError)
+            if opened_or_closing:
+                try:
+                    await self._deps.close_resources()
+                except BaseException as cleanup_error:
+                    if isinstance(cleanup_error, asyncio.CancelledError):
+                        cancelled = True
+                    note = f"runtime cleanup failure: {type(cleanup_error).__name__}"
+                    if note not in getattr(error, "__notes__", ()):
+                        error.add_note(note)
+                else:
+                    if self._ownership_acquired_here:
+                        self._deps.ownership.release()
+            if cancelled:
+                if isinstance(error, asyncio.CancelledError):
+                    raise
+                raise asyncio.CancelledError from error
             raise RuntimeBootstrapFailedError from error
 
     async def run_query(self, request: UserTurnRequest) -> QueryResponseEnvelope:
         current = self._begin_operation(TaskKind.HEALTH)
         try:
             snapshot = await self._deps.health.refresh_if_stale()
+            if (
+                self._deps.gate.mode is RuntimeMode.SERVING
+                and snapshot.lifecycle_generation
+                != self._deps.gate.lifecycle_generation
+            ):
+                if not snapshot.hard_healthy:
+                    snapshot = await self._deps.health.refresh()
+                if (
+                    snapshot.lifecycle_generation
+                    != self._deps.gate.lifecycle_generation
+                ):
+                    raise RuntimeNotReadyError
             if snapshot.generation > self._last_health_generation:
                 self._last_health_generation = snapshot.generation
                 if snapshot.runtime is RuntimeMode.SERVING:
@@ -154,6 +180,11 @@ class ApplicationCoordinator:
                         snapshot.hard_healthy,
                         lifecycle_generation=snapshot.lifecycle_generation,
                     )
+            if (
+                self._deps.gate.mode is RuntimeMode.SERVING
+                and not snapshot.hard_healthy
+            ):
+                raise RuntimeNotReadyError
         finally:
             self._deps.tasks.unregister(current)
         lease = await self._deps.gate.acquire_query()
@@ -235,6 +266,7 @@ class ApplicationCoordinator:
                 timeout=self._deps.shutdown_timeout_seconds
             )
             if not settled:
+                await self._deps.begin_guard_shutdown()
                 self._deps.tasks.cancel_all()
                 remaining = self._deps.tasks.snapshot()
                 if remaining:
@@ -247,6 +279,7 @@ class ApplicationCoordinator:
                 settled = await self._deps.tasks.wait_empty(timeout=0.0)
             if not settled:
                 raise RuntimeShutdownFailedError
+            await self._deps.begin_guard_shutdown()
             await self._deps.close_resources()
             self._deps.ownership.release()
             self._shutdown_done = True

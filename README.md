@@ -8,7 +8,7 @@ The authoritative design is
 
 **Current implementation stage: Stage 10 — Part IV: Application Runtime Foundation (`stage/10-part-iv-application-runtime`)**
 
-**Status: Stage 10-A (`A-R1`–`A-R6`) COMPLETE offline; Stage 10 overall PARTIAL — isolated infrastructure (Stage 10-B) and independent review (Stage 10-C) pending (`PR #11` open/unmerged)**
+**Status: Stage 10-A (`A-R1`–`A-R6` offline), Stage 10-B (`12/12` isolated real infra), Stage 10-C1 (`FAIL`), and Stage 10-C2 remediation COMPLETE; Stage 10-C3 independent review PENDING (`PR #11` open/unmerged)**
 
 Stage 9 adds an external benchmark harness under `benchmarks/`, with frozen
 dataset snapshot validation, modality-filtered Open RAGBench metadata, corpus
@@ -26,9 +26,12 @@ acceptance matrix in
 and Stage 10-B handoff in
 [`docs/stages/stage-10b-handoff.md`](docs/stages/stage-10b-handoff.md).
 Stage 9 is closed under its amended acceptance scope (`12/12` preserved raw
-artifacts verified); Stage 10-A (`A-R1`–`A-R6`) is complete offline, while
-Stage 10 overall remains partial pending Stage 10-B isolated real infrastructure
-verification and Stage 10-C independent review (`PR #11` open/unmerged).
+artifacts verified); Stage 10-A (`A-R1`–`A-R6`), Stage 10-B (`12/12` isolated
+real PG/Milvus/Redis integration), Stage 10-C1 independent review (`FAIL`), and
+Stage 10-C2 remediation are complete, while Stage 10 overall acceptance remains
+partial (`UNSATISFIED`) pending Stage 10-C3 independent re-review
+([`docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md`](docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md),
+`PR #11` open/unmerged).
 
 ## Setup
 
@@ -171,11 +174,12 @@ make test-stage10-integration
 make stage10-verify
 ```
 
-`make test-stage10` is offline and deterministic (`304` Stage 10 tests covering
-`A-R1`–`A-R6`); `make test-stage10-integration` runs the `11` Stage 10-B real
-isolated PostgreSQL/Milvus/Redis tests via `scripts/stage10_verify.sh --integration-only`;
-`make stage10-verify` runs offline verification followed by real isolated
-Stage 10-B integration; independent review (Stage 10-C) remains pending.
+`make test-stage10` is offline and deterministic (`348` Stage 10 tests covering
+`A-R1`–`A-R6` and Stage 10-C2 regressions); `make test-stage10-integration`
+runs the `12` Stage 10-B real isolated PostgreSQL/Milvus/Redis tests via
+`scripts/stage10_verify.sh --integration-only`; `make stage10-verify` runs
+offline verification followed by real isolated Stage 10-B integration; Stage 10-C3
+independent re-review remains pending.
 
 Ordinary `make verify` remains network-free, Docker-free, parser-SDK-free,
 model-free, and independent of PostgreSQL, Redis, Milvus, and SearXNG.

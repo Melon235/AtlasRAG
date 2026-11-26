@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from atlasrag.domain.enums import RagCompletionStatus
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.domain.results import RagCoreResult
+from atlasrag.providers.cache.keys import is_cache_key_component_safe
 
 _LOCAL_ID = re.compile(r"^L[1-9][0-9]*$")
 _TIME_SENSITIVE = re.compile(
@@ -46,7 +47,11 @@ class QueryCachePolicy:
 
     def request_is_cacheable(self, request: UserTurnRequest) -> bool:
         """Apply request-level bypasses consistently to reads and writes."""
-        return self._enabled and _TIME_SENSITIVE.search(request.query) is None
+        return (
+            self._enabled
+            and is_cache_key_component_safe(request.session_id)
+            and _TIME_SENSITIVE.search(request.query) is None
+        )
 
     def decide(
         self,
@@ -60,9 +65,13 @@ class QueryCachePolicy:
         if type(web_invoked) is not bool:
             raise ValueError("web_invoked must be boolean or None")
         if not self.request_is_cacheable(request):
-            return CacheDecision(
-                False, "CACHE_DISABLED" if not self._enabled else "TIME_SENSITIVE"
-            )
+            if not self._enabled:
+                reason = "CACHE_DISABLED"
+            elif not is_cache_key_component_safe(request.session_id):
+                reason = "UNSAFE_CACHE_KEY_COMPONENT"
+            else:
+                reason = "TIME_SENSITIVE"
+            return CacheDecision(False, reason)
         if web_invoked:
             return CacheDecision(False, "WEB_INVOKED")
         if result.completion_status is RagCompletionStatus.SAFE_FAILURE:

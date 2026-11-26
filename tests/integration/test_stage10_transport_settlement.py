@@ -29,9 +29,16 @@ from integration.stage10_helpers import (
     patch_runtime_boundaries,
     send_raw_resp_to_redis,
     stage10_isolation_guard,
+    verify_stage10_service_ownership,
 )
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _require_stage10_ownership() -> None:
+    verify_stage10_service_ownership()
+
 
 DOC_V1 = (
     "# Transport Settlement Guide\n\n"

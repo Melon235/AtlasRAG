@@ -17,7 +17,7 @@ from atlasrag.services.indexing.records import build_expected_projection
 from atlasrag.services.indexing.representation import RepresentationBuilder
 from atlasrag.services.ingestion.mapping import (
     map_chunks_from_stored,
-    map_document_from_stored,
+    map_current_document_from_stored,
 )
 from atlasrag.services.ingestion.validation import validate_chunk_set
 from atlasrag.services.sync.models import (
@@ -94,7 +94,9 @@ async def _load_one(
     elements = await elements_repo.list_for_revision(stored.document_id, revision_id)
     stored_chunks = await chunks_repo.list_for_revision(stored.document_id, revision_id)
     try:
-        document = map_document_from_stored(stored, elements, revision_id=revision_id)
+        document = map_current_document_from_stored(
+            stored, elements, revision_id=revision_id
+        )
         chunks = map_chunks_from_stored(stored_chunks)
         if validate_chunk_set(document, chunks).outcome is ValidationOutcome.FAIL:
             raise CanonicalDataError

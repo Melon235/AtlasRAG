@@ -41,9 +41,16 @@ from integration.stage10_helpers import (
     parse_stage10_endpoints,
     patch_runtime_boundaries,
     stage10_isolation_guard,
+    verify_stage10_service_ownership,
 )
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _require_stage10_ownership() -> None:
+    verify_stage10_service_ownership()
+
 
 GUIDE_V1 = (
     "# AtlasRAG Runtime Guide\n\n"

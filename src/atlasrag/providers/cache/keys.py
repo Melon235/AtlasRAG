@@ -8,19 +8,25 @@ from atlasrag.domain.errors import InvariantViolationError
 QUERY_WRITE_FENCE_KEY = "atlasrag:fence:query_write"
 
 
-def _key_component(value: object) -> str:
+def is_cache_key_component_safe(value: object) -> bool:
+    """Return whether a value satisfies the strict Redis cache key component contract."""
+
     if not isinstance(value, str):
-        raise InvariantViolationError
+        return False
     try:
         validate_unicode_scalar_text(value)
     except ValueError:
-        raise InvariantViolationError from None
-    if (
+        return False
+    return not (
         not value
         or value != value.strip()
         or ":" in value
         or any(ord(character) < 32 or ord(character) == 127 for character in value)
-    ):
+    )
+
+
+def _key_component(value: object) -> str:
+    if not isinstance(value, str) or not is_cache_key_component_safe(value):
         raise InvariantViolationError
     return value
 

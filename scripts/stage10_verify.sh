@@ -17,77 +17,141 @@ if (($# > 1)) || [[ "${mode}" != "full" && "${mode}" != "--integration-only" ]];
     exit 2
 fi
 
-ATLASRAG_ENV_FILE=${ATLASRAG_ENV_FILE:-deploy/local/.env}
-COMPOSE_FILE=${COMPOSE_FILE:-deploy/local/compose.yaml}
-COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-atlasrag-stage10b-local}
-export ATLASRAG_ENV_FILE COMPOSE_PROJECT_NAME
-
-if [[ ! -f "${ATLASRAG_ENV_FILE}" ]]; then
-    printf '%s\n' "Stage 10-B integration requires env file: ${ATLASRAG_ENV_FILE}" >&2
-    exit 2
-fi
-
 if ! command -v docker >/dev/null 2>&1; then
     printf '%s\n' "Stage 10-B integration requires docker" >&2
     exit 2
 fi
 
-compose=(
-    docker compose
-    --env-file "${ATLASRAG_ENV_FILE}"
-    -f "${COMPOSE_FILE}"
-)
-services_started=0
+stage10_python=${STAGE10_PYTHON:-${repository_root}/.venv/bin/python}
+if [[ ! -x "${stage10_python}" ]]; then
+    stage10_python=python3
+fi
+
+COMPOSE_FILE=${COMPOSE_FILE:-deploy/local/compose.yaml}
+runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/atlasrag-stage10b.XXXXXX")
+meta_file=""
+cleanup_armed=0
+lock_pid=""
 
 cleanup() {
     exit_code=$?
     trap - EXIT INT TERM
-    if ((services_started)); then
-        if ((exit_code != 0)); then
-            "${compose[@]}" logs --no-color postgres redis etcd minio milvus || true
-        fi
+    if ((cleanup_armed)) && [[ -n "${meta_file}" && -f "${meta_file}" ]]; then
         cleanup_exit_code=0
-        "${compose[@]}" down -v --remove-orphans || cleanup_exit_code=$?
+        if ((exit_code != 0)); then
+            "${stage10_python}" scripts/stage10_isolation.py cleanup --meta "${meta_file}" --show-logs || cleanup_exit_code=$?
+        else
+            "${stage10_python}" scripts/stage10_isolation.py cleanup --meta "${meta_file}" || cleanup_exit_code=$?
+        fi
         if ((exit_code == 0 && cleanup_exit_code != 0)); then
             exit_code=${cleanup_exit_code}
         fi
     fi
+    if [[ -n "${lock_pid}" ]]; then
+        exec {LOCK_WRITE_FD}>&- || true
+        wait "${lock_pid}" 2>/dev/null || true
+    fi
+    rm -rf "${runtime_dir}"
     exit "${exit_code}"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# 1) Prepare isolated temporary configuration and reject conflicting shell overrides.
+meta_file=$("${stage10_python}" scripts/stage10_isolation.py prepare \
+    --runtime-dir "${runtime_dir}" \
+    --repository-root "${repository_root}" \
+    --project-name "${COMPOSE_PROJECT_NAME:-}" \
+    --run-id "${STAGE10_RUN_ID:-}")
+
+# Extract non-secret coordination fields cleanly via Python.
+eval "$("${stage10_python}" -c '
+import json, shlex, sys
+m = json.load(open(sys.argv[1]))
+for k in ("project_name", "run_id", "owner_token", "env_file", "override_file"):
+    print(f"meta_{k}={shlex.quote(m[k])}")
+' "${meta_file}")"
+
+# 2) Acquire exclusive project + run locks before touching Docker.
+lock_in_fifo="${runtime_dir}/lock.in"
+lock_out_fifo="${runtime_dir}/lock.out"
+mkfifo -m 600 "${lock_in_fifo}" "${lock_out_fifo}"
+"${stage10_python}" scripts/stage10_isolation.py hold-locks --meta "${meta_file}" <"${lock_in_fifo}" >"${lock_out_fifo}" &
+lock_pid=$!
+exec {LOCK_WRITE_FD}>"${lock_in_fifo}"
+exec {LOCK_READ_FD}<"${lock_out_fifo}"
+lock_status=""
+if ! IFS= read -r -u "${LOCK_READ_FD}" lock_status || [[ "${lock_status}" != "LOCKED" ]]; then
+    exec {LOCK_READ_FD}<&- || true
+    printf '%s\n' "Stage 10-B failed to acquire exclusive project/run lock" >&2
+    exit 2
+fi
+exec {LOCK_READ_FD}<&- || true
+
+# 3) Pre-flight empty project check BEFORE arming cleanup (refuses pre-existing state without down -v).
+COMPOSE_PROJECT_NAME="${meta_project_name}" \
+    "${stage10_python}" scripts/stage10_isolation.py preflight \
+    --meta "${meta_file}" \
+    --compose-file "${COMPOSE_FILE}"
+
 if [[ "${mode}" == "full" ]]; then
     make verify
     make test-stage10
 fi
 
-services_started=1
+export COMPOSE_PROJECT_NAME="${meta_project_name}"
+export ATLASRAG_ENV_FILE="${meta_env_file}"
+compose=(
+    docker compose
+    -p "${meta_project_name}"
+    --env-file "${meta_env_file}"
+    -f "${COMPOSE_FILE}"
+    -f "${meta_override_file}"
+)
+
+# Arm strictly run-owned cleanup ONLY after preflight succeeds.
+cleanup_armed=1
 "${compose[@]}" up -d --wait --wait-timeout 300 postgres redis etcd minio milvus
-uv run --env-file "${ATLASRAG_ENV_FILE}" --frozen \
+
+# 4) Verify Compose container identities, run_id labels, loopback bindings, and published ports.
+containers_json=$("${stage10_python}" scripts/stage10_isolation.py verify-containers \
+    --meta "${meta_file}" \
+    --compose-file "${COMPOSE_FILE}")
+eval "$("${stage10_python}" -c '
+import json, shlex, sys
+c = json.loads(sys.argv[1])
+mapping = {
+    "postgres": "cid_pg",
+    "redis": "cid_redis",
+    "milvus": "cid_milvus",
+    "etcd": "cid_etcd",
+    "minio": "cid_minio",
+}
+for svc, var in mapping.items():
+    print(f"{var}={shlex.quote(c[svc])}")
+' "${containers_json}")"
+
+# 5) Wait for PostgreSQL then establish positive per-service ownership markers.
+uv run --env-file "${meta_env_file}" --frozen \
     python scripts/wait_for_postgres.py
-uv run --env-file "${ATLASRAG_ENV_FILE}" --frozen python -c '
-import asyncio, os
-from redis.asyncio import Redis
-from pymilvus import MilvusClient
+uv run --env-file "${meta_env_file}" --frozen \
+    python scripts/stage10_isolation.py establish --meta "${meta_file}"
 
-async def wait_services() -> None:
-    client = Redis.from_url(os.environ["ATLASRAG_REDIS_URL"], decode_responses=False, socket_timeout=3.0)
-    try:
-        assert await client.ping() is True
-    finally:
-        await client.aclose()
-    mc = MilvusClient(uri=os.environ["ATLASRAG_MILVUS_URI"], timeout=10)
-    try:
-        mc.list_collections()
-    finally:
-        mc.close()
-
-asyncio.run(wait_services())
-'
-ATLASRAG_RUN_INTEGRATION=1 uv run \
-    --env-file "${ATLASRAG_ENV_FILE}" \
+# 6) Execute real Stage 10-B integration suite with positive per-service ownership proof.
+ATLASRAG_RUN_INTEGRATION=1 \
+ATLASRAG_STAGE10B_ISOLATED=1 \
+ATLASRAG_STAGE10B_RUN_ID="${meta_run_id}" \
+ATLASRAG_STAGE10B_OWNER_TOKEN="${meta_owner_token}" \
+ATLASRAG_STAGE10B_COMPOSE_PROJECT="${meta_project_name}" \
+ATLASRAG_STAGE10B_PG_CONTAINER="${cid_pg}" \
+ATLASRAG_STAGE10B_REDIS_CONTAINER="${cid_redis}" \
+ATLASRAG_STAGE10B_MILVUS_CONTAINER="${cid_milvus}" \
+ATLASRAG_STAGE10B_ETCD_CONTAINER="${cid_etcd}" \
+ATLASRAG_STAGE10B_MINIO_CONTAINER="${cid_minio}" \
+ATLASRAG_STAGE10B_ENV_FILE="${meta_env_file}" \
+uv run \
+    --env-file "${meta_env_file}" \
     --frozen \
     pytest \
     tests/integration/test_stage10_runtime_lifecycle.py \

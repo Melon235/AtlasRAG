@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 from pymilvus import MilvusClient  # type: ignore[import-untyped]
-from redis.asyncio import Redis
+from redis.asyncio import Redis as Redis
 
 from atlasrag.config.models import RuntimeConfig, RuntimeOperationalConfig
 from atlasrag.domain.indexing.models import EmbeddingModelIdentity
@@ -43,8 +43,28 @@ from integration.conftest import (
     _require_loopback_host,
     _required_environment,
 )
+from scripts.stage10_isolation import (
+    STAGE10_MILVUS_COLLECTION,
+    STAGE10_MILVUS_OWNER_COLLECTION,
+    STAGE10_PG_COMMENT_PREFIX,
+    STAGE10_REDIS_OWNER_KEY,
+    Stage10IsolationError,
+    resolve_and_validate_effective_env,
+)
+from scripts.stage10_isolation import (
+    verify_stage10_service_ownership as verify_stage10_service_ownership,
+)
 
-STAGE10B_REDIS_LEASE_KEY = "atlasrag:test:stage10b:exclusive-lease"
+STAGE10B_REDIS_OWNER_KEY = STAGE10_REDIS_OWNER_KEY
+_UNLINK_OWNED_REDIS_SCRIPT = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+    return -1
+end
+if #KEYS == 1 then
+    return 0
+end
+return redis.call('UNLINK', unpack(KEYS, 2, #KEYS))
+""".strip()
 
 
 def _normalized_vector(
@@ -403,20 +423,46 @@ async def send_raw_resp_to_redis(host: str, port: int, payload: bytes) -> bytes:
 def parse_stage10_endpoints() -> tuple[
     tuple[str, int, str, str, str], tuple[str, int], tuple[str, int]
 ]:
+    if os.environ.get("ATLASRAG_STAGE10B_ENV_FILE"):
+        resolve_and_validate_effective_env(
+            Path(os.environ["ATLASRAG_STAGE10B_ENV_FILE"]),
+            os.environ,
+            repository_root=Path(__file__).resolve().parents[2],
+        )
+
     pg_url = urlsplit(_required_environment("ATLASRAG_POSTGRES_DSN"))
+    if pg_url.scheme not in {"postgresql", "postgresql+psycopg"}:
+        raise Stage10IsolationError("ATLASRAG_POSTGRES_DSN must use postgresql")
     pg_host = _require_loopback_host(pg_url.hostname, "PostgreSQL")
     pg_port = int(pg_url.port or 5432)
     pg_db = pg_url.path.lstrip("/")
+    if not pg_db or pg_db == "postgres":
+        raise Stage10IsolationError("Stage 10-B PostgreSQL DB must not be postgres")
     pg_user = pg_url.username or "atlasrag"
     pg_password = pg_url.password or ""
 
     redis_url = urlsplit(_required_environment(REDIS_URL_ENV))
+    if redis_url.scheme not in {"redis", "rediss"}:
+        raise Stage10IsolationError("ATLASRAG_REDIS_URL must use redis/rediss")
     redis_host = _require_loopback_host(redis_url.hostname, "Redis")
     redis_port = int(redis_url.port or 6379)
+    if redis_url.query or redis_url.fragment or redis_url.path != "/0":
+        raise Stage10IsolationError(
+            "ATLASRAG_REDIS_URL must explicitly target isolated DB /0"
+        )
 
     milvus_url = urlsplit(_required_environment(MILVUS_URI_ENV))
+    if milvus_url.scheme not in {"http", "https"}:
+        raise Stage10IsolationError("ATLASRAG_MILVUS_URI must use http/https")
     milvus_host = _require_loopback_host(milvus_url.hostname, "Milvus")
     milvus_port = int(milvus_url.port or 19530)
+    if (
+        os.environ.get("ATLASRAG_MILVUS_COLLECTION", STAGE10_MILVUS_COLLECTION)
+        != STAGE10_MILVUS_COLLECTION
+    ):
+        raise Stage10IsolationError(
+            "ATLASRAG_MILVUS_COLLECTION must equal atlas_chunks for Stage 10-B"
+        )
 
     return (
         (pg_host, pg_port, pg_db, pg_user, pg_password),
@@ -557,9 +603,37 @@ def patch_runtime_boundaries(
     monkeypatch.setattr(httpx, "AsyncClient", make_http_client_factory(http_state))
 
 
-async def clear_stage10_redis_db0(host: str, port: int) -> None:
-    """Clean all keys on isolated Stage 10-B Redis DB 0 via SCAN + UNLINK (never FLUSHDB/FLUSHALL)."""
+def _require_stage10_redis_guard(host: str, port: int) -> str:
+    if os.environ.get("ATLASRAG_STAGE10B_ISOLATED") != "1":
+        raise Stage10IsolationError(
+            "Refusing Redis DB 0 cleanup without ATLASRAG_STAGE10B_ISOLATED=1"
+        )
+    owner_token = os.environ.get("ATLASRAG_STAGE10B_OWNER_TOKEN", "")
+    if not owner_token:
+        raise Stage10IsolationError(
+            "Refusing Redis DB 0 cleanup without ATLASRAG_STAGE10B_OWNER_TOKEN"
+        )
+    _require_loopback_host(host, "Redis")
+    raw_url = os.environ.get(REDIS_URL_ENV)
+    if raw_url:
+        parsed = urlsplit(raw_url)
+        env_host = _require_loopback_host(parsed.hostname, "Redis")
+        env_port = int(parsed.port or 6379)
+        if (
+            parsed.path != "/0"
+            or env_host.casefold() != host.casefold()
+            or env_port != port
+        ):
+            raise Stage10IsolationError(
+                "Stage 10-B Redis cleanup target does not match ATLASRAG_REDIS_URL (/0)"
+            )
+    return owner_token
 
+
+async def clear_stage10_redis_db0(host: str, port: int) -> None:
+    """Clean keys on verified Stage 10-B Redis DB 0 via atomic owner-checked Lua UNLINK."""
+
+    owner_token = _require_stage10_redis_guard(host, port)
     client = Redis.from_url(
         f"redis://{host}:{port}/0",
         decode_responses=False,
@@ -568,25 +642,94 @@ async def clear_stage10_redis_db0(host: str, port: int) -> None:
     )
     try:
         assert await client.ping() is True
+        actual_owner = await client.get(STAGE10B_REDIS_OWNER_KEY)
+        if actual_owner != owner_token.encode("utf-8"):
+            raise Stage10IsolationError(
+                "Stage 10-B Redis DB 0 owner token mismatch; refusing cleanup"
+            )
         cursor = 0
         seen: set[int] = set()
         while True:
             cursor, raw_keys = await client.scan(cursor=cursor, count=200)
-            if raw_keys:
-                await client.unlink(*raw_keys)
+            delete_keys = [
+                k
+                for k in raw_keys
+                if (k.decode("utf-8") if isinstance(k, bytes) else k)
+                != STAGE10B_REDIS_OWNER_KEY
+            ]
+            if delete_keys:
+                deleted = await client.eval(
+                    _UNLINK_OWNED_REDIS_SCRIPT,
+                    len(delete_keys) + 1,
+                    STAGE10B_REDIS_OWNER_KEY,
+                    *delete_keys,
+                    owner_token,
+                )
+                if deleted == -1:
+                    raise Stage10IsolationError(
+                        "Stage 10-B Redis DB 0 ownership changed during cleanup"
+                    )
             if cursor == 0:
                 break
             if cursor in seen:
                 raise RuntimeError("Redis SCAN repeated cursor during cleanup")
             seen.add(cursor)
-        assert await client.dbsize() == 0
+        assert await client.get(STAGE10B_REDIS_OWNER_KEY) == owner_token.encode("utf-8")
+        assert await client.dbsize() == 1
     finally:
         await client.aclose()
 
 
 def drop_stage10_milvus_collection(uri: str) -> None:
+    if os.environ.get("ATLASRAG_STAGE10B_ISOLATED") != "1":
+        raise Stage10IsolationError(
+            "Refusing Milvus collection drop without ATLASRAG_STAGE10B_ISOLATED=1"
+        )
+    run_id = os.environ.get("ATLASRAG_STAGE10B_RUN_ID", "")
+    if not run_id:
+        raise Stage10IsolationError(
+            "Refusing Milvus collection drop without ATLASRAG_STAGE10B_RUN_ID"
+        )
+    url = urlsplit(uri)
+    if url.scheme not in {"http", "https"}:
+        raise Stage10IsolationError("Stage 10-B Milvus URI must use HTTP(S)")
+    _require_loopback_host(url.hostname, "Milvus")
+    raw_env_uri = os.environ.get(MILVUS_URI_ENV)
+    if raw_env_uri:
+        env_url = urlsplit(raw_env_uri)
+        env_host = _require_loopback_host(env_url.hostname, "Milvus")
+        if (
+            url.scheme != env_url.scheme
+            or (url.hostname or "").casefold() != env_host.casefold()
+            or (url.port or 19530) != (env_url.port or 19530)
+        ):
+            raise Stage10IsolationError(
+                "Stage 10-B Milvus cleanup target does not match ATLASRAG_MILVUS_URI"
+            )
+    if (
+        os.environ.get("ATLASRAG_MILVUS_COLLECTION", STAGE10_MILVUS_COLLECTION)
+        != STAGE10_MILVUS_COLLECTION
+    ):
+        raise Stage10IsolationError(
+            "Stage 10-B Milvus collection mismatch; refusing drop"
+        )
+
+    expected_marker = f"{STAGE10_PG_COMMENT_PREFIX}{run_id}"
     client = MilvusClient(uri=uri, timeout=10.0)
     try:
+        if not client.has_collection(
+            collection_name=STAGE10_MILVUS_OWNER_COLLECTION, timeout=10.0
+        ):
+            raise Stage10IsolationError(
+                "Stage 10-B Milvus ownership sentinel collection absent; refusing drop"
+            )
+        desc = client.describe_collection(
+            collection_name=STAGE10_MILVUS_OWNER_COLLECTION, timeout=10.0
+        )
+        if desc.get("description") != expected_marker:
+            raise Stage10IsolationError(
+                "Stage 10-B Milvus ownership sentinel mismatch; refusing drop"
+            )
         if client.has_collection(collection_name=COLLECTION_NAME, timeout=10.0):
             client.drop_collection(collection_name=COLLECTION_NAME, timeout=10.0)
     finally:
@@ -600,8 +743,9 @@ async def stage10_isolation_guard(
     redis_port: int,
     milvus_uri: str,
 ) -> AsyncIterator[None]:
-    """Acquire/verify Stage 10-B DB 0 + atlas_chunks cleanup before and after each test."""
+    """Verify full per-service Stage 10-B ownership then isolate DB 0 + atlas_chunks."""
 
+    verify_stage10_service_ownership()
     await clear_stage10_redis_db0(redis_host, redis_port)
     await asyncio.to_thread(drop_stage10_milvus_collection, milvus_uri)
     primary: BaseException | None = None

@@ -1,10 +1,12 @@
 # Stage 10-B Completion: Real Isolated PostgreSQL, Milvus & Redis Integration
 
-Status: **Stage 10-B COMPLETE** (`11/11` real isolated integration tests PASS across `postgres:17.8-alpine`, `redis:8.2.10-alpine`, and `milvusdb/milvus:v2.6.20`).
-- **Stage 10-A (`A-R1`–`A-R6`):** COMPLETE (offline verified; `make test-stage10` = `304 passed`)
+Status: **Stage 10-B COMPLETE** (`12/12` real isolated integration tests PASS across `postgres:17.8-alpine`, `redis:8.2.10-alpine`, and `milvusdb/milvus:v2.6.20` after Stage 10-C2 remediation).
+- **Stage 10-A (`A-R1`–`A-R6` + C2 regressions):** COMPLETE (offline verified; `make test-stage10` = `348 passed`)
 - **`AR4-T01` (Redis Transport Settlement):** `OFFLINE_AND_REAL_INFRA_VERIFIED`
-- **Stage 10-B:** COMPLETE (real isolated infrastructure verification)
-- **Stage 10-C (Independent Review & Release Gate):** `READY` / `NOT_STARTED`
+- **Stage 10-B:** COMPLETE (fail-closed isolated real infrastructure verification, cleanup `remaining=0`)
+- **Stage 10-C1:** COMPLETE (`FAIL` on `3a9de079`)
+- **Stage 10-C2 (Remediation):** COMPLETE (`docs/stages/stage-10-review/STAGE_10_C2_REMEDIATION.md`)
+- **Stage 10-C3 (Independent Re-Review & Release Gate):** `READY` / `PENDING_INDEPENDENT_REVIEW`
 - **Stage 10 Overall / Acceptance:** `PARTIAL` / `UNSATISFIED` (`PR #11` remains OPEN and UNMERGED against `main`)
 
 ## 1. Environment & Strict Isolation Boundaries
@@ -18,7 +20,7 @@ Stage 10-B runs `ApplicationComposition` and `build_default_business` against re
 - **Ownership Lock & Knowledge Dir:** temporary `pytest` `tmp_path` directory (`0o700` lock dir via monkeypatched `canonical_lock_path` in test harness only, preserving fixed production lock resolution).
 - **Controlled Non-Infra Boundaries:** `FakeQwenEmbedding`, `FakeBgeReranker`, and `httpx.MockTransport` (`DeepSeek` rewrite/generation & `SearXNG` search/probe) keep Stage 10-B cost-free, GPU-free, and deterministic; `TcpFaultProxy` injects loopback TCP refuse, connection drop, and packet-hold stalls without touching shared services.
 
-## 2. Live Integration Matrix (`B10-03` through `B10-12`)
+## 2. Live Integration Matrix (`B10-03` through `B10-13`)
 
 | Package | Requirement / Scenario | Integration Test | Verified Invariants | Result |
 |---|---|---|---|---|
@@ -31,6 +33,7 @@ Stage 10-B runs `ApplicationComposition` and `build_default_business` against re
 | `B10-10` | Redis outage during maintenance & throttled delayed purge recovery | `tests/integration/test_stage10_cache_and_recovery.py::test_b10_10_redis_outage_during_maintenance_and_throttled_recovery` | Redis outage during `v1->v2` maintenance preserves `SERVING`/`readiness=True`, leaves PG marker `True`, serves `v2` (never stale `v1`) while offline & during recovery throttle window, then sweeps stale query entries, restores fence, and preserves `atlasrag:parent:*` once interval elapses | PASS |
 | `B10-11` | Interrupted deletion, restart `BLOCKED` & `recover()` convergence | `tests/integration/test_stage10_cache_and_recovery.py::test_b10_11_interrupted_deletion_block_restart_and_recover` | Failure before Milvus delete and partial failure between Milvus delete and PG commit both enter `BLOCKED` (`readiness=False`); restarted processes remain `BLOCKED` without auto-deleting; clean `recover()` converges remaining corpus to `SERVING` | PASS |
 | `B10-12` | Live dependency outage health, soft/hard classification & shutdown | `tests/integration/test_stage10_runtime_lifecycle.py::test_b10_12_live_dependency_health_degradation_and_shutdown` | BGE reranker failure, live Redis outage, and SearXNG HTTP 503 soft-degrade preserving `hard_healthy=True`/`readiness=True`; live Milvus outage and live PG outage via `TcpFaultProxy` drive `hard_healthy=False`/`readiness=False` and reject queries (`RuntimeNotReadyError`), recovering cleanly when passthrough resumes; `shutdown()` rejects subsequent readiness/queries (`RuntimeShuttingDownError`) | PASS |
+| `B10-13` (`F-R10-02-01`) | Last-good published `R1` surviving failed `R2` and interrupted `CHUNKING` `R3` over real PG/Milvus | `tests/integration/test_stage10_cache_and_recovery.py::test_b10_13_last_good_r1_survives_failed_and_interrupted_r2_over_real_pg_milvus` | Failed `R2` (`EMBEDDING`) and interrupted `R3` (`CHUNKING`) preserve valid `current_revision_id=R1` across restart verification (`SERVING`/`readiness=True`) and retrievability before subsequent clean `run_maintenance()` normalizes/resumes `R3` to `READY` | PASS |
 
 ## 3. Confirmed In-Scope Defects Resolved During Stage 10-B
 
@@ -49,10 +52,10 @@ Stage 10-B runs `ApplicationComposition` and `build_default_business` against re
 - Replaced the temporary `Makefile` `test-stage10-integration` offline alias with `scripts/stage10_verify.sh --integration-only` and updated `stage10-verify` to invoke `scripts/stage10_verify.sh`, while keeping `make test-stage10` and `make verify` purely offline.
 - Upgraded `.github/workflows/integration.yml` `stage10-runtime` job to build the pinned MinIO binary from official source, generate ephemeral local config with unique `COMPOSE_PROJECT_NAME`, run `make test-stage10-integration`, emit container logs on failure, and destroy volumes on `always()`. Covered by `tests/test_ci_workflow.py::test_stage10_ci_uses_isolated_real_services_and_cleanup`.
 
-## 5. Verification Summary & Stage 10-C Handoff
+## 5. Verification Summary & Stage 10-C3 Handoff
 
-- `make test-stage10-integration` (isolated Compose `postgres:17.8-alpine`, `redis:8.2.10-alpine`, `milvusdb/milvus:v2.6.20`): PASS — `11 passed` (`make verify` / `test-stage10` / `test-stage10-integration` verified cleanly on the final Stage 10-B tree with zero leaked containers/volumes).
-- `make test-stage10`: PASS — `304 passed`.
-- `make verify`: PASS — `3612 passed, 1 skipped` (`deepeval`), `119 deselected`, `ruff format --check .` (`478` files), `ruff check .`, `mypy src/atlasrag scripts tests` (`390` source files), `make architecture-check`, and `git diff --check`.
+- `make test-stage10-integration` (isolated Compose `postgres:17.8-alpine`, `redis:8.2.10-alpine`, `milvusdb/milvus:v2.6.20` with fail-closed `scripts/stage10_isolation.py` ownership & run-`run_id` cleanup): PASS — `12 passed in 741.24s (0:12:21)`, `remaining=0`.
+- `make test-stage10`: PASS — `348 passed`.
+- `make verify`: PASS — `3656 passed, 1 skipped` (`deepeval`), `120 deselected`, `ruff format --check .` (`484` files), `ruff check .`, `mypy src/atlasrag scripts tests` (`396` source files), `make architecture-check`, and `git diff --check`.
 - Stage 9 raw artifacts (`docs/stages/stage-09-closeout/artifact_integrity.json`): PASS — `12/12` SHA-256 and byte-size matches.
-- **Stage 10-C Handoff:** Perform independent multi-angle review (`R10-01`..`R10-04`, closing `G-10`) and verify remote CI + PR #11 readiness before any merge to `main`. Real Qwen/BGE CUDA weight loading / RTX 3070 VRAM checks, MinerU subprocess settlement, OS signal/launcher termination, and Stage 11 API/UI/benchmark/performance work remain deferred beyond Stage 10-B/C.
+- **Stage 10-C3 Handoff:** Perform independent multi-angle re-review (`docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md`, closing `G-10`) and verify remote CI + PR #11 readiness before any merge to `main`. Real Qwen/BGE CUDA weight loading / RTX 3070 VRAM checks, MinerU subprocess settlement, OS signal/launcher termination, and Stage 11 API/UI/benchmark/performance work remain deferred beyond Stage 10-B/C.

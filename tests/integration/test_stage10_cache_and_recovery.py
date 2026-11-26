@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -44,9 +45,16 @@ from integration.stage10_helpers import (
     parse_stage10_endpoints,
     patch_runtime_boundaries,
     stage10_isolation_guard,
+    verify_stage10_service_ownership,
 )
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _require_stage10_ownership() -> None:
+    verify_stage10_service_ownership()
+
 
 PARENT_AND_TABLE_DOC = (
     "# Telemetry Handbook\n\n"
@@ -696,5 +704,223 @@ async def test_b10_11_interrupted_deletion_block_restart_and_recover(
             ]
             assert cits
             assert cits[0].relative_source_path == "keep.md"
+        finally:
+            await coord3.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_b10_13_last_good_r1_survives_failed_and_interrupted_r2_over_real_pg_milvus(
+    postgres_dsn: str,
+    milvus_uri: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real PG/Milvus F-R10-02-01: failed/interrupted R2 preserves valid R1 as SERVING and retrievable."""
+    from pymilvus import MilvusClient  # type: ignore[import-untyped]
+
+    from atlasrag.domain.indexing.failures import EmbeddingInputLimitError
+    from atlasrag.providers.index.schema import COLLECTION_NAME
+    from atlasrag.repositories.postgres.records import FailedStage, IngestionStatus
+    from atlasrag.services.ingestion import persistence as persistence_module
+
+    _, (redis_host, redis_port), (milvus_host, milvus_port) = parse_stage10_endpoints()
+    knowledge_dir = tmp_path / "kb"
+    knowledge_dir.mkdir()
+    doc_path = knowledge_dir / "guide.md"
+    doc_v1 = (
+        "# Architecture Runbook\n\n"
+        "Version one establishes emerald-anchor-v1 as the published ground truth.\n"
+    )
+    doc_v2 = (
+        "# Architecture Runbook\n\n"
+        "Version two introduces crimson-candidate-v2 which fails during embedding.\n"
+    )
+    doc_v3 = (
+        "# Architecture Runbook\n\n"
+        "Version three introduces cobalt-resume-v3 parsed before interruption.\n"
+    )
+    doc_path.write_text(doc_v1, encoding="utf-8")
+    lock_file = tmp_path / "run" / "atlasrag.lock"
+    http_state = HttpMockState(answer_text="Emerald anchor v1 verified [L1].")
+
+    class ConditionalEmbedding(FakeQwenEmbedding):
+        fail_substring: str | None = None
+
+        async def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
+            if self.fail_substring and any(self.fail_substring in t for t in texts):
+                raise EmbeddingInputLimitError(actual_tokens=99999, max_tokens=8192)
+            return await super().embed(texts)
+
+    patch_runtime_boundaries(
+        monkeypatch,
+        lock_file=lock_file,
+        embedding_factory=lambda **_: ConditionalEmbedding(),
+        reranker_factory=lambda **_: FakeBgeReranker(),
+        http_state=http_state,
+    )
+    cfg = build_stage10_runtime_config(
+        postgres_dsn=postgres_dsn,
+        knowledge_directory=knowledge_dir,
+        redis_host=redis_host,
+        redis_port=redis_port,
+        milvus_host=milvus_host,
+        milvus_port=milvus_port,
+    )
+
+    async with stage10_isolation_guard(
+        redis_host=redis_host, redis_port=redis_port, milvus_uri=milvus_uri
+    ):
+        # 1) Publish R1 cleanly to real PG + Milvus.
+        coord1 = await ApplicationComposition(cfg).start()
+        r1_rev = ""
+        doc_id = ""
+        try:
+            pub_r1 = await coord1.run_maintenance()
+            assert pub_r1.outcome is SyncOutcome.SUCCESS
+            assert pub_r1.ready_builds == 1
+
+            pool = PostgresPool(postgres_dsn, min_size=1, max_size=4)
+            await pool.open()
+            try:
+                async with PostgresUnitOfWork(pool) as unit:
+                    docs = await unit.documents.list()
+                    assert len(docs) == 1
+                    r1_rev = docs[0].current_revision_id or ""
+                    doc_id = docs[0].document_id
+                    assert r1_rev
+                    assert docs[0].ingestion_status is IngestionStatus.READY
+            finally:
+                await pool.close()
+
+            # 2) Edit source to v2 and trigger FAILED candidate R2 (EMBEDDING business failure).
+            doc_path.write_text(doc_v2, encoding="utf-8")
+            ConditionalEmbedding.fail_substring = "crimson-candidate-v2"
+            fail_r2 = await coord1.run_maintenance()
+            assert fail_r2.outcome is SyncOutcome.PARTIAL_SUCCESS
+            assert fail_r2.serving_safety is ServingSafety.SAFE_TO_SERVE
+            assert coord1.gate.mode is RuntimeMode.SERVING
+            assert await coord1.readiness() is True
+
+            # Verify PG still holds current_revision_id == R1 alongside FAILED building_revision_id == R2.
+            pool = PostgresPool(postgres_dsn, min_size=1, max_size=4)
+            await pool.open()
+            try:
+                async with PostgresUnitOfWork(pool) as unit:
+                    stored_after_fail = await unit.documents.get_by_id(doc_id)
+                    assert stored_after_fail is not None
+                    assert stored_after_fail.current_revision_id == r1_rev
+                    assert stored_after_fail.building_revision_id is not None
+                    assert stored_after_fail.building_revision_id != r1_rev
+                    assert stored_after_fail.ingestion_status is IngestionStatus.FAILED
+                    assert stored_after_fail.failed_stage is FailedStage.EMBEDDING
+            finally:
+                await pool.close()
+
+            # Verify Milvus still holds ONLY R1 rows and R1 remains retrievable.
+            mc = MilvusClient(uri=milvus_uri, timeout=10.0)
+            try:
+                rows = mc.query(
+                    collection_name=COLLECTION_NAME,
+                    filter=f'document_id == "{doc_id}"',
+                    output_fields=["revision_id"],
+                )
+                assert rows and all(row["revision_id"] == r1_rev for row in rows)
+            finally:
+                mc.close()
+
+            q_r1 = await coord1.run_query(
+                UserTurnRequest(session_id="s-r1", query="emerald-anchor-v1")
+            )
+            assert any(
+                isinstance(c, FinalLocalCitation)
+                and c.relative_source_path == "guide.md"
+                for c in q_r1.response.citations
+            )
+        finally:
+            ConditionalEmbedding.fail_substring = None
+            await coord1.shutdown()
+
+        # 3) Restart runtime with persisted R1 + FAILED R2 -> GlobalKnowledgeVerificationService must pass -> SERVING.
+        coord2 = await ApplicationComposition(cfg).start()
+        try:
+            assert coord2.gate.mode is RuntimeMode.SERVING
+            assert await coord2.readiness() is True
+
+            # 4) Interrupt a new candidate R3 right after persist_parsed commits PARSED state in real PG.
+            doc_path.write_text(doc_v3, encoding="utf-8")
+            http_state.answer_text = (
+                "Emerald anchor v1 still active during PARSED R3 [L1]."
+            )
+            orig_persist_chunked = persistence_module.persist_chunked
+
+            async def interrupt_after_parsed(*_args: object, **_kwargs: object) -> Any:
+                raise RuntimeError("simulated interruption after parsed commit")
+
+            monkeypatch.setattr(
+                persistence_module, "persist_chunked", interrupt_after_parsed
+            )
+            with pytest.raises(RuntimeError, match="simulated interruption"):
+                await coord2.run_maintenance()
+            monkeypatch.setattr(
+                persistence_module, "persist_chunked", orig_persist_chunked
+            )
+        finally:
+            await coord2.shutdown()
+
+        # Verify PG persists PARSED candidate R3 alongside R1, then restart -> reconcile + verify -> SERVING!
+        pool = PostgresPool(postgres_dsn, min_size=1, max_size=4)
+        await pool.open()
+        r3_rev = ""
+        try:
+            async with PostgresUnitOfWork(pool) as unit:
+                stored_parsed = await unit.documents.get_by_id(doc_id)
+                assert stored_parsed is not None
+                assert stored_parsed.current_revision_id == r1_rev
+                assert stored_parsed.ingestion_status is IngestionStatus.CHUNKING
+                r3_rev = stored_parsed.building_revision_id or ""
+                assert r3_rev and r3_rev != r1_rev
+        finally:
+            await pool.close()
+
+        coord3 = await ApplicationComposition(cfg).start()
+        try:
+            assert coord3.gate.mode is RuntimeMode.SERVING
+            assert await coord3.readiness() is True
+            still_r1 = await coord3.run_query(
+                UserTurnRequest(session_id="s-r1-check", query="emerald-anchor-v1")
+            )
+            assert still_r1.response.citations
+
+            # 5) Clean maintenance resumes interrupted PARSED R3 -> publishes R3 cleanly!
+            http_state.answer_text = "Cobalt resume v3 published [L1]."
+            resumed = await coord3.run_maintenance()
+            assert resumed.outcome is SyncOutcome.SUCCESS
+            assert resumed.serving_safety is ServingSafety.SAFE_TO_SERVE
+            assert coord3.gate.mode is RuntimeMode.SERVING
+
+            pool = PostgresPool(postgres_dsn, min_size=1, max_size=4)
+            await pool.open()
+            try:
+                async with PostgresUnitOfWork(pool) as unit:
+                    published_r3 = await unit.documents.get_by_id(doc_id)
+                    assert published_r3 is not None
+                    assert published_r3.current_revision_id == r3_rev
+                    assert published_r3.building_revision_id is None
+                    assert published_r3.ingestion_status is IngestionStatus.READY
+            finally:
+                await pool.close()
+
+            mc = MilvusClient(uri=milvus_uri, timeout=10.0)
+            try:
+                rows_after = mc.query(
+                    collection_name=COLLECTION_NAME,
+                    filter=f'document_id == "{doc_id}"',
+                    output_fields=["revision_id"],
+                )
+                assert rows_after and all(
+                    row["revision_id"] == r3_rev for row in rows_after
+                )
+            finally:
+                mc.close()
         finally:
             await coord3.shutdown()

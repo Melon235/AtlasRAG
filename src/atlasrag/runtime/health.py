@@ -135,6 +135,7 @@ class HealthRegistry:
         current = self._snapshot
         if (
             current is not None
+            and current.lifecycle_generation == self._lifecycle_generation()
             and monotonic() - current.monotonic_at < self._refresh_interval
         ):
             return current

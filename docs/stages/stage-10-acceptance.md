@@ -1,9 +1,9 @@
 # Stage 10 Acceptance Matrix
 
-Status: **PARTIAL** — **Stage 10-A COMPLETE offline**; **Stage 10-B COMPLETE**
-(real isolated PostgreSQL/Milvus/Redis integration); **Stage 10-C NOT_STARTED**
-(independent review). **Stage 10 Overall Acceptance: UNSATISFIED** (`PR #11`
-remains OPEN and UNMERGED against `main`).
+Status: **PARTIAL** — **Stage 10-A COMPLETE offline** (`348` tests); **Stage 10-B COMPLETE**
+(`12/12` real isolated PostgreSQL/Milvus/Redis integration); **Stage 10-C1 FAIL**
+(`3a9de079`); **Stage 10-C2 remediation COMPLETE**; **Stage 10-C3 READY / PENDING_INDEPENDENT_REVIEW**.
+**Stage 10 Overall Acceptance: UNSATISFIED** (`PR #11` remains OPEN and UNMERGED against `main`).
 
 | Requirement | Implementation | Offline Verification | Real Infrastructure / Hardware | Independent Review | Overall Acceptance Status |
 |---|---|---|---|---|---|
@@ -28,7 +28,7 @@ remains OPEN and UNMERGED against `main`).
 | `S10-16` Single Qwen/BGE initialization & CPU degrade | COMPLETE (`runtime/composition.py`, `runtime/production.py`) | PASS (`test_production_startup.py`, `test_ar6_composition_contracts.py`: CPU & BGE failure soft degrade preserving hard readiness) | PARTIAL (`test_b10_03`, `test_b10_12` fake-model init retry & BGE failure soft degrade pass; real Qwen/BGE CUDA load & RTX 3070 VRAM limits DEFERRED to later deployment stage) | NOT_STARTED (Stage 10-C) | PARTIAL (Stage 10-C pending) |
 | `S10-17` Health/readiness & soft SearXNG/reranker probes | COMPLETE (`runtime/health.py`, `runtime/coordinator.py`, `runtime/composition.py`) | PASS (`test_runtime_health.py`, `test_ar6_composition_contracts.py`: bounded single-flight probes, lifecycle generation, SearXNG & reranker soft degrade) | PASS (`test_b10_12`: live PG/Milvus hard outages, Redis/SearXNG/BGE soft outages, recovery & admission refresh) | NOT_STARTED (Stage 10-C) | PARTIAL (Stage 10-C pending) |
 | `S10-18` Graceful shutdown, drain & resource close | COMPLETE (`runtime/coordinator.py`, `runtime/composition.py`) | PASS (`test_runtime_lifecycle.py`, `test_runtime_core.py`, `test_ar6_composition_contracts.py`: cancellation settlement, repeat/concurrent safety, close failure retains ownership) | PARTIAL (`test_b10_03`, `test_b10_12` pool/client close & post-shutdown rejection pass; OS signal delivery & launcher termination DEFERRED to later deployment stage) | NOT_STARTED (Stage 10-C) | PARTIAL (Stage 10-C pending) |
-| `S10-19` Offline & Stage 10-B real-infra verification gates | COMPLETE (`make verify` / `test-stage10` / `test-stage10-integration` / `stage10-verify`) | PASS (`make test-stage10`: 304 passed; `make verify`: 3612 passed, 1 skipped, 119 deselected; ruff, mypy 390 files, architecture-check PASS) | PASS (`make test-stage10-integration`: 11/11 passed against isolated `postgres:17.8-alpine`, `redis:8.2.10-alpine`, `milvusdb/milvus:v2.6.20`; `.github/workflows/integration.yml` `stage10-runtime` updated) | NOT_STARTED (Stage 10-C) | PARTIAL (Stage 10-C pending) |
+| `S10-19` Offline & Stage 10-B real-infra verification gates | COMPLETE (`make verify` / `test-stage10` / `test-stage10-integration` / `stage10-verify`) | PASS (`make test-stage10`: 348 passed; `make verify`: 3656 passed, 1 skipped, 120 deselected; ruff 484 files, mypy 396 files, architecture-check PASS) | PASS (`make test-stage10-integration`: 12/12 passed against isolated `postgres:17.8-alpine`, `redis:8.2.10-alpine`, `milvusdb/milvus:v2.6.20` with fail-closed ownership & cleanup `remaining=0`; `.github/workflows/integration.yml` `stage10-runtime` updated) | C1 FAIL (`C10-RISK-01`); C2 FIXED (C3 pending) | PARTIAL (Stage 10-C3 pending) |
 | `S10-20` Stage boundaries, scope & Stage 9 preservation | COMPLETE (`scripts/check_import_boundaries.py`, scope tests, `stage-09-closeout/`) | PASS (`make architecture-check`, `test_stage1_scope.py`, `test_stage2_scope.py`, Stage 9 artifact integrity 12/12 SHA-256/size verified) | N/A | NOT_STARTED (Stage 10-C) | PARTIAL (Stage 10-C pending) |
 
 ## Review Gap Reconciliation (`G-01`–`G-10` and `AR4-T01`)
@@ -43,7 +43,7 @@ remains OPEN and UNMERGED against `main`).
 | `G-06` Parent Context Cache invariants | Canonical header validation, mixed ordering, whitespace safety, UoW/lease separation, lifecycle isolation | OFFLINE & REAL-INFRA VERIFIED (A-R5, Stage 10-B `test_b10_07`); Stage 10-C pending |
 | `G-07` Production composition & config reconciliation | Bounded startup retries, BGE soft degrade, `atlas_chunks`/analyzer wiring, `_device_matches`, SearXNG probe, strict semantic config validation | OFFLINE & REAL-INFRA VERIFIED (A-R1, A-R6, Stage 10-B); Stage 10-C pending |
 | `G-08` Pool, ownership, ResourceGuard & secret redaction | `2C + 2` bound, flock exclusion, GPU semaphore concurrency, secret-free errors, operational fingerprint exclusion | OFFLINE & REAL-INFRA VERIFIED (A-R1, A-R6, Stage 10-B); Stage 10-C pending |
-| `G-09` Regression & contract completeness | `304` Stage 10 offline tests + `11` Stage 10-B real-infra tests + `3612` repo offline tests | OFFLINE & REAL-INFRA VERIFIED (Stage 10-A + Stage 10-B); Stage 10-C pending |
-| `G-10` Independent review & release gate | Formal independent multi-agent/reviewer verification of Stage 10 | READY / NOT_STARTED (Stage 10-C) |
+| `G-09` Regression & contract completeness | `348` Stage 10 offline tests + `12` Stage 10-B real-infra tests + `3656` repo offline tests (incl. `test_c10_risk_01_isolation.py`, `test_f_r10_01_lifecycle_health_guard.py`, `test_f_r10_02_01_last_good_verification.py`, `test_f_r10_02_02_session_key_bypass.py`, `test_b10_13`) | OFFLINE & REAL-INFRA VERIFIED (Stage 10-A + Stage 10-B + C2); Stage 10-C3 pending |
+| `G-10` Independent review & release gate | Stage 10-C1 FAIL (`3a9de079`); Stage 10-C2 remediation COMPLETE; Stage 10-C3 re-review PENDING | OPEN — Stage 10-C3 `READY / PENDING_INDEPENDENT_REVIEW` |
 
-**Authoritative Verdict:** Stage 10-A (offline) and Stage 10-B (real isolated PG/Milvus/Redis integration) are **COMPLETE**. Stage 10 overall remains **PARTIAL**, overall Stage 10 acceptance remains **UNSATISFIED**, and `PR #11` remains **OPEN / UNMERGED** pending Stage 10-C independent review.
+**Authoritative Verdict:** Stage 10-A (offline), Stage 10-B (`12/12` real isolated PG/Milvus/Redis integration), Stage 10-C1 (`FAIL`), and Stage 10-C2 remediation are **COMPLETE**. Stage 10 overall remains **PARTIAL**, overall Stage 10 acceptance remains **UNSATISFIED**, and `PR #11` remains **OPEN / UNMERGED** pending Stage 10-C3 independent re-review.

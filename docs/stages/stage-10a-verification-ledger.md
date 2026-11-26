@@ -560,16 +560,18 @@ Added deterministic verification across
 
 ## A-R6 Final offline verification
 
+*(Superseded post-C1 by Stage 10-C2 verification below; `348` Stage 10 tests, `3656 passed` repo gate, `396` mypy files, `484` formatted files, `12/12` real isolated Stage 10-B integration tests — see `docs/stages/stage-10-review/STAGE_10_C2_REMEDIATION.md`.)*
+
 | Check | Result |
 |---|---|
-| `make test-stage10` | PASS — 304 tests |
-| `make verify` | PASS — 3612 passed, 1 skipped (`deepeval` absent), 119 deselected |
-| `ruff check .` / `ruff format --check .` (477 files) / `mypy` (390 source files) | PASS |
+| `make test-stage10` (post-C2) | PASS — 348 tests |
+| `make verify` (post-C2) | PASS — 3656 passed, 1 skipped (`deepeval` absent), 120 deselected |
+| `ruff check .` / `ruff format --check .` (484 files) / `mypy` (396 source files) | PASS |
 | `make architecture-check` / `git diff --check` | PASS |
 | Stage 9 raw artifact integrity | PASS — 12/12 SHA-256 and size matches |
 | `AR4-T01` Redis transport settlement | OFFLINE_AND_REAL_INFRA_VERIFIED (`A-R6` + Stage 10-B) |
-| Real isolated PostgreSQL/Milvus/Redis integration | COMPLETE (Stage 10-B — see `docs/stages/stage-10b-completion.md`) |
-| Independent review | NOT_STARTED (Stage 10-C — see `docs/stages/stage-10-review/REVIEW_SUMMARY.md`) |
+| Real isolated PostgreSQL/Milvus/Redis integration | COMPLETE (Stage 10-B — 12/12 PASS, `remaining=0`, see `docs/stages/stage-10b-completion.md`) |
+| Independent review | Stage 10-C1 FAIL (`3a9de079`); Stage 10-C2 COMPLETE; Stage 10-C3 READY / PENDING_INDEPENDENT_REVIEW (`docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md`) |
 
 *Stage 10-B offline regression additions incorporated into `AR6-04` and
 `AR6-07` above:* `CacheFreshnessBarrier.active_write_fence` +

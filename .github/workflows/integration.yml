@@ -452,7 +452,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      ATLASRAG_ENV_FILE: deploy/local/.env
       COMPOSE_PROJECT_NAME: atlasrag-stage10-ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Check out repository
@@ -499,10 +498,10 @@ jobs:
         run: make test-stage10-integration
       - name: Print logs on failure
         if: failure()
-        run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml logs --no-color postgres redis etcd minio milvus
+        run: docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml logs --no-color postgres redis etcd minio milvus
       - name: Destroy ephemeral infrastructure
         if: always()
-        run: docker compose --env-file "${ATLASRAG_ENV_FILE}" -f deploy/local/compose.yaml down -v --remove-orphans
+        run: docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml down -v --remove-orphans
 
   stage9-benchmark:
     name: Stage 9 Benchmark Harness
