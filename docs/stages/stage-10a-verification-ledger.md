@@ -1,10 +1,10 @@
 # Stage 10-A Offline Verification Ledger
 
-Status: **PARTIAL**. Two hundred fifty-two deterministic Stage 10 tests pass.
-A-R1, A-R2, A-R3, A-R4 (deterministic matrix) and A-R5 are COMPLETE offline;
-`AR4-T01` remains OPEN and A-R6 remains PENDING, and no offline PASS is claimed
-for missing Stage 10-B/10-C rows. Real isolated PostgreSQL/Milvus/Redis
-infrastructure remains Stage 10-B; independent review remains Stage 10-C.
+Status: **Stage 10-A COMPLETE offline (`304` Stage 10 tests pass across
+`A-R1`..`A-R6`). `AR4-T01` deterministic portion is RESOLVED offline; live
+isolated Redis/PostgreSQL/Milvus settlement remains Stage 10-B (`NOT_STARTED`);
+independent review remains Stage 10-C (`NOT_STARTED`). Stage 10 overall remains
+PARTIAL; acceptance remains UNSATISFIED.**
 
 ## A-R1 Production composition — COMPLETE (offline, fake technical boundaries)
 
@@ -460,21 +460,13 @@ Bounded caller waiting is the coordinator timeout; it does not prove remote
 non-execution, so settlement failure retains resources rather than claiming
 success.
 
-Pending transport follow-up:
+Transport settlement update:
 
 ```text
 AR4-T01 — Redis Transport Settlement
 
-Status: OPEN
-
-Remaining:
-Explicit production Redis connection/socket timeout and retry policy.
-Safety against mutation-capable Redis operations that may execute after
-an ambiguous local transport failure.
-
-Next:
-Targeted deterministic closure during A-R6.
-Appropriate real isolated verification during Stage 10-B.
+Deterministic Offline Portion: RESOLVED in A-R6 (`AR6-01`..`AR6-05`)
+Real Infrastructure Portion: PENDING Stage 10-B (`redis:8.2.10-alpine` integration)
 ```
 
 ### AR4-11 — Namespace isolation and disabled cache
@@ -546,18 +538,34 @@ pre-fix result is the directly observed failure before applying minimal fixes.
 | A-R5-F04 | `_expand_text_cached` opened the PostgreSQL UoW before `cache.get_parent`, issued repeated document lookups per ref, and used single-item `get_by_id` on misses instead of batched `list_by_ids` | `test_redis_lookup_runs_outside_postgres_uow_and_deduplicates_db_reads` (`test_ar5_11_delayed_redis_get_and_set_hold_zero_postgres_uows`) | `active_uows > 0` during Redis GET; redundant DB calls |
 | A-R5-F05 | `ChunkRepository.get_canonical_context_header` called `CanonicalChunkHeader.model_validate` directly without `validate_canonical_row` | `test_repository_get_canonical_context_header_normalizes_corrupt_row` (`test_ar5_06_repository_header_validation_errors_normalize_to_canonical`) | Raised `pydantic.ValidationError` instead of `CanonicalDataError` |
 
-## A-R6 Final verification
+## A-R6 Final offline correctness and composition contracts — COMPLETE (offline)
+
+Added deterministic verification across
+`tests/stage10/test_ar6_redis_transport.py`,
+`tests/stage10/test_ar6_freshness_lifecycle.py`,
+`tests/stage10/test_ar6_composition_contracts.py`, and
+`tests/contract/test_config_and_fingerprints.py`:
+
+| Requirement | Scenario / invariant | Test(s) | Result |
+|---|---|---|---|
+| `AR6-01` | Production Redis client sets explicit `socket_connect_timeout`, `socket_timeout`, `socket_keepalive=True`, `health_check_interval`, `retry_on_timeout=False`, `retry_on_error=[]`, `Retry(NoBackoff(), 0)`; operational config bounds & fingerprint exclusion; Redis fence error/ACK boundary translation | `test_ar6_01_production_redis_client_uses_bounded_no_retry_transport`, `test_ar6_01_redis_fence_primitives_enforce_strict_error_and_ack_contracts`, `test_runtime_operational_redis_transport_bounds`, `test_runtime_operational_redis_transport_excluded_from_fingerprints` | PASS |
+| `AR6-02` | Server-side Lua write fencing (`QUERY_WRITE_FENCE_KEY`): missing/revoked/rotated/corrupt fence blocks reads and causes atomic Lua rejection (`BYPASSED` / `0`); unfenced callers rejected when active fence exists | `test_ar6_02_fenced_cache_requires_fence_and_rejects_stale_or_revoked_tokens`, `test_ar6_02_put_fenced_query_direct_error_boundaries` | PASS |
+| `AR6-03` | Delayed remote execution (`DelayedRemoteRawRedis`) after `UNKNOWN` timeout/connection/bad-ack and `QueryLease` release, revocation prior to marker clear, cancellation settlement, `UNSAFE`->`BLOCKED`->`recover()`, restart with `marker=False`, and `atlasrag:parent:*` preservation | `test_ar6_03_delayed_remote_write_after_unknown_and_lease_release_rejected_after_maintenance[timeout/connection/bad_ack]`, `test_ar6_03_delayed_remote_write_rejected_before_marker_clear_when_fence_revoked`, `test_ar6_03_cancellation_after_submitted_write_rejected_when_remote_flushes_post_maintenance`, `test_ar6_03_pre_restart_unknown_write_rejected_after_restart_with_marker_false`, `test_ar6_03_parent_cache_survives_delayed_writes_and_fence_lifecycle`, `test_ar6_03_standalone_unfenced_write_rejected_if_fence_established_before_flush`, `test_ar6_03_unsafe_maintenance_blocks_then_recover_rotates_fence_and_rejects_delayed_write` | PASS |
+| `AR6-04` | Exact `marker=True` order (`revoke_query_write_fence -> invalidate_queries -> establish_query_write_fence -> PG marker=False -> confirm read`), failure preservation at each step, `CanonicalDataError` propagation, and startup outage rotation on recovery | `test_ar6_04_marker_true_enforces_exact_fence_revoke_sweep_establish_pg_clear_order`, `test_ar6_04_failure_during_fence_revoke_sweep_or_establish_keeps_marker_true_and_blocks_stale_writes`, `test_ar6_04_canonical_pg_error_always_propagates_and_outage_startup_rotates_on_recovery` | PASS |
+| `AR6-05` | Periodic `recover_if_due()` inside concurrent `QueryLease` preserves live fence on `marker=False` while re-establishing after empty Redis restart; Parent Cache survives full maintenance drain and invalidation lifecycle | `test_ar6_05_periodic_recover_if_due_preserves_active_fence_for_inflight_concurrent_queries`, `test_ar6_05_periodic_recover_if_due_reestablishes_missing_fence_after_redis_flush`, `test_ar6_05_parent_cache_and_maintenance_exclusion_preserved_under_full_lifecycle` | PASS |
+| `AR6-06` | `startup_attempts` / `startup_retry_delay_seconds` retry transient dependency failures cleanly and abort fast on non-transient bugs; BGE reranker init failures soft-degrade preserving `SERVING`/`hard_healthy`; `MilvusIndexProvider` uses `COLLECTION_NAME="atlas_chunks"` + `analyzer=bm25_analyzer`; `HealthRegistry` probes SearXNG | `test_ar6_06_startup_retries_transient_hard_dependencies_and_cleans_up_on_exhaustion`, `test_ar6_06_reranker_failure_and_searxng_failure_soft_degrade_preserving_hard_readiness[error0/1/2]` | PASS |
+| `AR6-07` | Unsupported semantic fields in `ModelConfig`, `PartIConfig`, `RetrievalConfig`, `AnswerConfig` and mismatched `SharedResources` identities/dimensions/analyzers raise `ConfigurationError`; production `build_default_business` enforces `require_write_fence=True` | `test_ar6_07_unsupported_semantic_configs_fail_explicitly_with_configuration_error`, `test_ar6_07_shared_resource_identity_and_index_contract_mismatches_raise_configuration_error`, `test_ar6_07_production_builder_requires_write_fence_before_query_cache_store` | PASS |
+| `AR6-08` | `2C + 2` PG pool bound, flock exclusion, `ResourceGuard` GPU concurrency, secret redaction in `ConfigurationError`, operational config fingerprint exclusion | `test_ar6_08_pool_bound_ownership_lock_and_secret_redaction`, `test_ar6_08_resource_guard_bounds_concurrency_and_operational_fields_excluded_from_fingerprints` | PASS |
+
+## A-R6 Final offline verification
 
 | Check | Result |
 |---|---|
-| `make test-stage10` | PASS — 252 tests |
-| `make verify` | PASS — 3547 passed, 1 skipped, 108 deselected |
-| ruff / mypy (383 files) / architecture / format / diff | PASS |
+| `make test-stage10` | PASS — 304 tests |
+| `make verify` | PASS — 3611 passed, 1 skipped (`deepeval` absent), 108 deselected |
+| `ruff check .` / `ruff format --check .` (472 files) / `mypy` (386 source files) | PASS |
+| `make architecture-check` / `git diff --check` | PASS |
 | Stage 9 raw artifact integrity | PASS — 12/12 SHA-256 and size matches |
-| `AR4-T01` Redis transport settlement | OPEN (targeted in A-R6; Stage 10-B real infra) |
-| Real isolated PostgreSQL/Milvus/Redis | NOT_EXECUTED (Stage 10-B) |
-| Independent review | NOT_EXECUTED (Stage 10-C) |
-
-A-R6 remains PENDING: A-R1 through A-R5 offline matrices pass, while `AR4-T01`,
-general Stage 10 documentation synchronization, and Stage 10-B/10-C evidence
-remain open.
+| `AR4-T01` Redis transport settlement | Deterministic offline portion RESOLVED (A-R6); Real isolated Redis settlement PENDING Stage 10-B |
+| Real isolated PostgreSQL/Milvus/Redis integration | NOT_STARTED (Stage 10-B — see `docs/stages/stage-10b-handoff.md`) |
+| Independent review | NOT_STARTED (Stage 10-C — see `docs/stages/stage-10-review/REVIEW_SUMMARY.md`) |

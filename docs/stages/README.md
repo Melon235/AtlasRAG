@@ -15,17 +15,18 @@ green remote CI result.
 
 ## Current stage
 
-- **Stage:** Stage 10 — Part IV: Application Runtime Foundation
-- **Status:** Stage 10 PARTIAL — runtime foundation implemented; isolated infrastructure and real GPU acceptance pending
-- **Report:**
-  [stage-10-part-iv-application-runtime.md](stage-10-part-iv-application-runtime.md)
-- **Next:** Stage 10 acceptance completion — no Stage 11 started
+- **Stage:** Stage 10 — Part IV: Application Runtime Foundation (`stage/10-part-iv-application-runtime`, `PR #11` OPEN/UNMERGED)
+- **Status:** Stage 10-A (`A-R1`–`A-R6`) COMPLETE offline; Stage 10-B (isolated PostgreSQL/Milvus/Redis integration) and Stage 10-C (independent review) NOT_STARTED; Stage 10 overall PARTIAL / acceptance UNSATISFIED
+- **Report & Matrices:**
+  - [stage-10-part-iv-application-runtime.md](stage-10-part-iv-application-runtime.md)
+  - [stage-10a-completion.md](stage-10a-completion.md)
+  - [stage-10a-verification-ledger.md](stage-10a-verification-ledger.md)
+  - [stage-10-acceptance.md](stage-10-acceptance.md)
+- **Next:** [stage-10b-handoff.md](stage-10b-handoff.md) — isolated real PostgreSQL/Milvus/Redis verification (no Stage 11 started)
 
-Stage 7 implements SearXNG JSON search, SSRF-safe fetch/sanitize/budgets,
-direct and batch-summary Web evidence strategies, structured DeepSeek
-generation, identity compression, deterministic output review, bounded
-regeneration, and authoritative citation resolution as two independent
-subgraphs. Local transport and Stage 2–6 regression gates are green; all push/PR remote
-gates are green; real SearXNG and DeepSeek generation/batch-summary acceptance
-also pass, and PR #8 remains deliberately unmerged. No RagCore orchestration,
-Query Cache, RuntimeGate, Stage 8, or benchmark behavior has started.
+Stage 9 remains closed under its amended acceptance scope (`12/12` closeout raw
+artifacts preserved and verified). Within Stage 10-A, all offline application
+runtime work packages (`A-R1`–`A-R6`) pass offline (`304` Stage 10 tests, `3611`
+repository tests passing offline). Live isolated PostgreSQL/Milvus/Redis
+integration (Stage 10-B), independent review (Stage 10-C), and real GPU/system
+acceptance remain pending before Stage 10 acceptance can pass.

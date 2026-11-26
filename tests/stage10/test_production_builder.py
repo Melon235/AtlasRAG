@@ -6,6 +6,12 @@ import httpx
 import pytest
 from support import runtime_config
 
+from atlasrag.domain.indexing.models import EmbeddingModelIdentity
+from atlasrag.providers.embedding.qwen import (
+    QWEN_DIMENSION,
+    QWEN_MODEL_ID,
+    QWEN_REVISION,
+)
 from atlasrag.runtime.composition import SharedResources
 from atlasrag.runtime.production import build_default_business
 
@@ -15,7 +21,8 @@ class _Pool:
 
 
 class _Milvus:
-    embedding_dimension = 8
+    embedding_dimension = QWEN_DIMENSION
+    analyzer = "standard"
 
     async def initialize(self) -> None:
         return None
@@ -29,7 +36,14 @@ class _Redis:
 
 
 class _Embedding:
-    identity = object()
+    identity = EmbeddingModelIdentity(
+        model_id=QWEN_MODEL_ID,
+        model_revision=QWEN_REVISION,
+        tokenizer_id=QWEN_MODEL_ID,
+        tokenizer_revision=QWEN_REVISION,
+        dimension=QWEN_DIMENSION,
+        device="cuda",
+    )
 
     async def initialize(self, *, allow_download: bool = False) -> None:
         return None

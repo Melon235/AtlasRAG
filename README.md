@@ -6,9 +6,9 @@ incrementally through independently verified implementation stages.
 The authoritative design is
 [`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md).
 
-**Current implementation stage: Stage 10 — Part IV: Application Runtime Foundation**
+**Current implementation stage: Stage 10 — Part IV: Application Runtime Foundation (`stage/10-part-iv-application-runtime`)**
 
-**Status: Stage 10 PARTIAL — runtime foundation implemented; isolated infrastructure and real GPU acceptance pending**
+**Status: Stage 10-A (`A-R1`–`A-R6`) COMPLETE offline; Stage 10 overall PARTIAL — isolated infrastructure (Stage 10-B) and independent review (Stage 10-C) pending (`PR #11` open/unmerged)**
 
 Stage 9 adds an external benchmark harness under `benchmarks/`, with frozen
 dataset snapshot validation, modality-filtered Open RAGBench metadata, corpus
@@ -18,9 +18,17 @@ blocked by the verified 396/604 document-profile conflict and resource limits;
 no benchmark quality/latency score is claimed.
 
 The Stage 10 report is
-[`docs/stages/stage-10-part-iv-application-runtime.md`](docs/stages/stage-10-part-iv-application-runtime.md).
-Stage 9 is closed under its amended acceptance scope; Stage 10 remains partial
-pending isolated infrastructure and real GPU/system verification.
+[`docs/stages/stage-10-part-iv-application-runtime.md`](docs/stages/stage-10-part-iv-application-runtime.md),
+with Stage 10-A offline completion in
+[`docs/stages/stage-10a-completion.md`](docs/stages/stage-10a-completion.md),
+acceptance matrix in
+[`docs/stages/stage-10-acceptance.md`](docs/stages/stage-10-acceptance.md),
+and Stage 10-B handoff in
+[`docs/stages/stage-10b-handoff.md`](docs/stages/stage-10b-handoff.md).
+Stage 9 is closed under its amended acceptance scope (`12/12` preserved raw
+artifacts verified); Stage 10-A (`A-R1`–`A-R6`) is complete offline, while
+Stage 10 overall remains partial pending Stage 10-B isolated real infrastructure
+verification and Stage 10-C independent review (`PR #11` open/unmerged).
 
 ## Setup
 
@@ -145,6 +153,27 @@ make stage7-provider-smoke
 HTTP transport contracts without Docker or external services;
 `make stage7-verify` composes both; `make stage7-provider-smoke` is the explicit
 live SearXNG/DeepSeek check and requires external credentials/network.
+
+Stage 8 provides:
+
+```bash
+make test-stage8
+make test-stage8-integration
+make stage8-verify
+make stage8-provider-smoke
+```
+
+Stage 10 provides:
+
+```bash
+make test-stage10
+make stage10-verify
+```
+
+`make test-stage10` and `make stage10-verify` are offline and deterministic
+(304 Stage 10 tests covering `A-R1`–`A-R6`); real isolated Stage 10
+infrastructure integration (Stage 10-B) and independent review (Stage 10-C) are
+not yet started.
 
 Ordinary `make verify` remains network-free, Docker-free, parser-SDK-free,
 model-free, and independent of PostgreSQL, Redis, Milvus, and SearXNG.

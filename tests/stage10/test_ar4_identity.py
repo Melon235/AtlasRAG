@@ -18,7 +18,11 @@ from atlasrag.application.hashing import request_hash
 from atlasrag.domain.enums import RagCompletionStatus
 from atlasrag.domain.requests import QueryFilters, UserTurnRequest
 from atlasrag.domain.results import RagCoreResult
-from atlasrag.providers.cache.keys import parent_cache_key, query_cache_key
+from atlasrag.providers.cache.keys import (
+    QUERY_WRITE_FENCE_KEY,
+    parent_cache_key,
+    query_cache_key,
+)
 from atlasrag.services.cache.policy import QueryCachePolicy
 from atlasrag.services.cache.session import CacheCommitOutcome, SessionQueryCache
 
@@ -213,7 +217,8 @@ async def test_disabled_cache_performs_no_redis_operations_and_freshness_still_r
 
     assert (await rig.barrier.enforce()).value == "TRUSTED"
     assert rig.marker.required is False
-    assert rig.raw.values == {}
+    assert rig.raw.query_values() == {}
+    assert QUERY_WRITE_FENCE_KEY in rig.raw.values
 
     enabled = SessionQueryCache(
         redis=rig.provider,

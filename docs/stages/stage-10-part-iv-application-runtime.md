@@ -2,12 +2,13 @@
 
 ## Status
 
-**PARTIAL — runtime foundation implemented and offline-verified. Isolated real
-PostgreSQL/Milvus/Redis integration and real GPU/system acceptance were not
-executed in this environment.**
+**PARTIAL — Stage 10-A (A-R1 through A-R6) complete and offline-verified.
+Stage 10-B (isolated real PostgreSQL/Milvus/Redis integration) and Stage 10-C
+(independent review) remain NOT_STARTED. Stage 10 overall acceptance remains
+UNSATISFIED (`PR #11` open/unmerged).**
 
-Stage 9 remains closed under its amended acceptance scope. Stage 10 does not
-merge automatically.
+Stage 9 remains closed under its amended acceptance scope (12/12 artifacts
+verified). Stage 10 does not merge automatically.
 
 ## 1. Objective
 
@@ -38,12 +39,16 @@ Runner is included.
 | `runtime/cache_freshness.py` | `CacheFreshnessBarrier`, `CacheFreshnessState` | Persisted marker invalidation/clear |
 | `runtime/maintenance.py` | `MaintenanceCoordinator` | Existing `IndexSyncApplication` wrapper |
 | `runtime/coordinator.py` | `ApplicationCoordinator`, `CoordinatorDependencies`, `QueryResponseEnvelope` | Start/query/maintenance/recovery/health/shutdown |
-| `runtime/composition.py` | `ApplicationComposition`, `SharedResources`, `BusinessBundle` | Shared infrastructure and lifecycle root |
-| `runtime/config.py` | `load_runtime_config` | Explicit JSON/env config loading |
+| `runtime/composition.py` | `ApplicationComposition`, `SharedResources`, `BusinessBundle`, `validate_runtime_composition_config`, `validate_shared_resource_contracts` | Shared infrastructure, startup retries, soft degrade, config validation and lifecycle root |
+| `runtime/production.py` | `build_default_business` | Default Part I/II wiring with write-fenced Query Cache and strict contract validation |
+| `runtime/config.py` | `load_runtime_config` | Explicit JSON/env config loading with secret redaction |
+| `config/models.py` | `RuntimeOperationalConfig` | Bounded operational timeouts, pool minimum, and fingerprint exclusion |
+| `providers/cache/keys.py` | `QUERY_WRITE_FENCE_KEY`, `parent_cache_key`, `query_cache_key` | Frozen cache key and write-fence key contracts |
+| `providers/cache/redis.py` | `RedisCacheProvider`, atomic Lua write-fence operations | Technical cache and fenced Query Cache read/write boundary |
 | `services/sync/source_safety.py` | `StartupSourceSafetyService`, `SourceSafetyResult` | Conservative interrupted-deletion startup check |
 | `services/local_evidence/parent_context.py` | optional cache in `ParentContextService` | TEXT_PARENT cache-aside |
 | `repositories/postgres/chunks.py` | `CanonicalChunkHeader`, `get_canonical_context_header` | Lightweight canonical validation |
-| `services/cache/session.py` | `prepare`/`commit`, `CacheCommitOutcome` | Completed-result cache commit boundary |
+| `services/cache/session.py` | `prepare`/`commit`, `CacheCommitOutcome`, `require_write_fence` | Completed-result cache commit boundary and fence enforcement |
 
 `DocumentBuildRunner` is reused directly with injected shared resources. No
 `owns_resources`, open, or close extension was added. `DocumentBuildOwner`
@@ -91,23 +96,34 @@ metadata headroom. Default maximum is `max(16, minimum)`. Query UoWs are short
 and at most one per query; the pool provides bounded backpressure. GPU
 concurrency is not treated as database demand.
 
-## 5. Cancellation and cache commit
+## 5. Cancellation, Redis transport and cache commit
 
-`SessionQueryCache.prepare` performs policy, trust, size and payload
-construction only. `commit` submits the Redis write and settles it under a
-cancellation-aware boundary. Outcomes are `STORED`, `BYPASSED`, `UNKNOWN`.
-Cancellation before commit does not submit. An applied write with lost
-acknowledgement may leave a complete eligible entry and is never reported as
-certainly absent. No same-key deletion is performed during cleanup.
+`ApplicationComposition.start` configures `redis.from_url` with bounded
+`socket_connect_timeout`, `socket_timeout`, `socket_keepalive=True`,
+`health_check_interval`, `retry_on_timeout=False`, `retry_on_error=[]`, and
+`Retry(NoBackoff(), 0)`.
+
+`SessionQueryCache.prepare` performs policy, trust, active write-fence check,
+size, and payload construction with zero Redis mutations. When enabled in
+production (`require_write_fence=True`), `commit` executes an atomic Lua
+write-fenced `SET` against `QUERY_WRITE_FENCE_KEY` (`atlasrag:fence:query_write`)
+and settles under a cancellation-aware boundary (`STORED`, `BYPASSED`,
+`UNKNOWN`). Cancellation before commit does not submit. Transport ambiguities
+classify conservatively as `UNKNOWN`, while stale delayed writes are rejected
+server-side by Redis whenever the fence is revoked or rotated.
 
 The canonical Query Cache key is unchanged; no KB revision is included.
 
-## 6. Freshness and Parent Cache
+## 6. Freshness barrier and Parent Cache
 
 The persisted `query_cache_invalidation_required` marker remains authoritative.
-The barrier invalidates only `atlasrag:query:*`, then clears the marker and
-re-reads it. Failures and ambiguity leave the cache bypassed. Parent Cache keys
-and unrelated keys are preserved.
+When `marker=True`, `CacheFreshnessBarrier` revokes the write fence first,
+invalidates only `atlasrag:query:*`, establishes a new write fence, and clears
+then re-reads the PostgreSQL marker. On initial startup (`marker=False`), it
+rotates the active write fence without scanning or deleting valid query entries,
+while healthy periodic `recover_if_due()` inside concurrent `QueryLease`s
+preserves the live fence unless Redis restarted without one. Parent Cache and
+unrelated keys are preserved.
 
 Parent Cache is TEXT_PARENT-only. TABLE remains canonical. Cache hits validate
 payload identity, current published revision and a lightweight canonical
@@ -115,12 +131,17 @@ header. Provenance is reconstructed from authoritative canonical metadata.
 Cached content equality with PostgreSQL is not cryptographically proven; the
 local disposable-cache assumption is explicit.
 
-## 7. Deferred / not verified
+## 7. Stage status, handoff and deferred verification
 
-- Real isolated PostgreSQL/Milvus/Redis integration suite.
-- Real Qwen/BGE GPU initialization, MinerU guarded boundary measurement,
-  RTX 3070 VRAM/OOM and SDK subprocess settlement.
-- Real isolated infrastructure and GPU verification remain pending; the
-  default production business composition now exists in
-  `runtime/production.py`.
-- Final transport/CLI/streaming/backup/performance work.
+- **Stage 10-A (`A-R1`–`A-R6`):** COMPLETE (offline verified; see
+  [`stage-10a-completion.md`](stage-10a-completion.md),
+  [`stage-10a-verification-ledger.md`](stage-10a-verification-ledger.md), and
+  [`stage-10-acceptance.md`](stage-10-acceptance.md)).
+- **Stage 10-B (isolated real PostgreSQL/Milvus/Redis integration):**
+  NOT_STARTED (see [`stage-10b-handoff.md`](stage-10b-handoff.md)).
+- **Stage 10-C (independent review):** NOT_STARTED (see
+  [`stage-10-review/REVIEW_SUMMARY.md`](stage-10-review/REVIEW_SUMMARY.md)).
+- Real Qwen/BGE GPU initialization, MinerU guarded boundary measurement, RTX
+  3070 VRAM/OOM and SDK subprocess settlement, OS signal delivery, launcher
+  termination, and final API/CLI/streaming/backup/performance work remain
+  deferred to later deployment and Stage 11+ work.

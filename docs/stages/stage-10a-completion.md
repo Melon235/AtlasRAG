@@ -1,8 +1,9 @@
 # Stage 10-A Implementation Completion
 
-Status: **A-R1, A-R2, A-R3, A-R4 (deterministic matrix) and A-R5 COMPLETE
-offline. `AR4-T01` remains OPEN and A-R6 final verification/reconciliation
-remains PENDING. Stage 10 overall remains PARTIAL; acceptance remains
+Status: **Stage 10-A (A-R1 through A-R6) COMPLETE offline. `AR4-T01`
+deterministic transport and write-fence settlement RESOLVED offline; Stage 10-B
+(real isolated PostgreSQL/Milvus/Redis integration) and Stage 10-C (independent
+review) remain NOT_STARTED. Stage 10 overall remains PARTIAL; acceptance remains
 UNSATISFIED; PR #11 remains open/unmerged.**
 
 ## 10-A1 Production business composition
@@ -191,21 +192,22 @@ externally. The Redis client uses default redis-py socket timeout/retry
 settings; bounded caller waiting is provided by the coordinator timeout and
 does not prove remote non-execution.
 
-Pending transport follow-up:
+Pending transport follow-up closed offline in A-R6 (live Redis verification
+remains Stage 10-B):
 
 ```text
 AR4-T01 — Redis Transport Settlement
 
-Status: OPEN
+Deterministic Offline Portion: RESOLVED (A-R6)
+- Explicit bounded connect/socket/health-check and zero-retry policy configured
+  in production Redis client construction.
+- Server-side atomic Lua write fencing prevents delayed or unacknowledged
+  in-flight Query Cache writes from surviving past invalidation, barrier
+  revocation, or runtime restart.
 
-Remaining:
-Explicit production Redis connection/socket timeout and retry policy.
-Safety against mutation-capable Redis operations that may execute after
-an ambiguous local transport failure.
-
-Next:
-Targeted deterministic closure during A-R6.
-Appropriate real isolated verification during Stage 10-B.
+Real Infrastructure Portion: PENDING Stage 10-B
+- Real isolated Redis transport interruption/restart and end-to-end settlement
+  checks during Stage 10-B.
 ```
 
 ## 10-A8 A-R5 Parent Context Cache, canonical validation and verification
@@ -247,17 +249,63 @@ Confirmed A-R5 defects fixed (each regression executed against `6ffab31`):
   `validate_canonical_row` so corrupt rows raise `CanonicalDataError` and mark
   the UoW failed.
 
-## 10-A9 verification
+## 10-A9 A-R6 final offline correctness and contract reconciliation
 
-- `make test-stage10`: PASS — 252 tests.
-- `make verify`: PASS — 3547 passed, 1 skipped, 108 deselected.
-- `ruff check .`, `ruff format --check .`, strict `mypy` (383 files),
-  `make architecture-check`, `git diff --check`: PASS.
+Added deterministic tests across `tests/stage10/test_ar6_redis_transport.py`,
+`tests/stage10/test_ar6_freshness_lifecycle.py`,
+`tests/stage10/test_ar6_composition_contracts.py`, and
+`tests/contract/test_config_and_fingerprints.py`:
+
+- **A-R6.1 (`AR4-T01` deterministic resolution):**
+  - `RuntimeOperationalConfig` now defines bounded
+    `redis_connect_timeout_seconds`, `redis_socket_timeout_seconds`, and
+    `redis_health_check_interval_seconds` (excluded from `pipeline_fingerprint`
+    and `runtime_fingerprint`), and `ApplicationComposition.start` configures
+    `redis.from_url` with explicit timeouts, TCP keepalive, health-check
+    interval, `retry_on_timeout=False`, `retry_on_error=[]`, and
+    `Retry(NoBackoff(), 0)`.
+  - `RedisCacheProvider` and `providers/cache/keys.py` expose technical
+    write-fence primitives (`QUERY_WRITE_FENCE_KEY`, `get_query_write_fence`,
+    `revoke_query_write_fence`, `establish_query_write_fence`,
+    `ensure_query_write_fence`, `get_fenced_query`, `put_fenced_query`) using
+    atomic Lua `EVAL` checks.
+  - `SessionQueryCache` requires an active established write fence when
+    `require_write_fence=True` (enabled in production and Stage 10 runtime
+    harnesses), and `CacheFreshnessBarrier` revokes any active fence *before*
+    scanning/unlinking `atlasrag:query:*`, establishes a fresh fence *before*
+    clearing the authoritative PostgreSQL marker (and once on `marker=False`
+    startup), while preserving the active fence across healthy periodic
+    `recover_if_due()` inside concurrent `QueryLease`s and preserving all
+    `atlasrag:parent:*` keys.
+  - `DelayedRemoteRawRedis` exercises delayed server execution after client
+    timeout/connection drop/`UNKNOWN` + `QueryLease` release, revocation prior
+    to marker clear, `UNSAFE`->`BLOCKED`->`recover()`, cancellation settlement,
+    and restart with `marker=False`: stale writes are rejected server-side (`0`).
+- **A-R6.2 (Production composition contract reconciliation):**
+  - `ApplicationComposition.start` now enforces `startup_attempts` /
+    `startup_retry_delay_seconds` exclusively on transient startup dependency
+    errors (cleaning up failed pools cleanly), soft-degrades BGE reranker
+    initialization failures to `None`/`_UnavailableReranker`, initializes
+    `MilvusIndexProvider` with frozen `COLLECTION_NAME` (`"atlas_chunks"`) and
+    `analyzer=config.part_i.bm25_analyzer`, and wires a soft SearXNG HTTP probe
+    into `HealthRegistry`.
+  - `validate_runtime_composition_config` and
+    `validate_shared_resource_contracts` fail explicitly with
+    `ConfigurationError` before resource acquisition or business construction on
+    any unsupported `ModelConfig`, `PartIConfig`, `RetrievalConfig`, or
+    `AnswerConfig` value or mismatched `SharedResources` identity/dimension/analyzer.
+
+## 10-A10 Verification
+
+- `make test-stage10`: PASS — 304 tests.
+- `make verify`: PASS — 3611 passed, 1 skipped, 108 deselected.
+- `ruff check .`, `ruff format --check .` (472 files), strict `mypy` (386
+  source files), `make architecture-check`, `git diff --check`: PASS.
 - Stage 9 raw artifact integrity: 12/12 SHA-256 and size matches.
-- `AR4-T01` Redis transport settlement: OPEN (A-R6 / Stage 10-B).
-- Real isolated PostgreSQL/Milvus/Redis integration: NOT_EXECUTED (Stage 10-B,
-  with fake model/LLM/Web providers). The Stage 10 integration Makefile target
-  remains an offline alias and is not represented as real integration.
+- `AR4-T01` deterministic portion: RESOLVED offline; real Redis verification
+  remains Stage 10-B.
+- Stage 10-B (isolated real PostgreSQL/Milvus/Redis integration): NOT_STARTED.
+- Stage 10-C (independent review): NOT_STARTED.
 - Real Qwen/BGE GPU initialization, MinerU SDK subprocess settlement, RTX 3070
   VRAM/OOM verification, OS signal delivery, launcher termination, and
   deployment performance measurement remain deferred to later deployment/performance
@@ -265,15 +313,5 @@ Confirmed A-R5 defects fixed (each regression executed against `6ffab31`):
 
 ## Stage 10-B handoff
 
-Required next:
-
-- real isolated PostgreSQL/Milvus/Redis fixtures, separate DB/collection/Redis
-  namespace, fake model/LLM/Web providers;
-- startup empty KB, controlled synthetic maintenance, query concurrency, Query
-  Cache hit/isolation, Parent Cache, freshness marker/invalidation, Redis
-  outage/recovery, interrupted deletion and shutdown cleanup;
-- Makefile: replace the offline `test-stage10-integration` alias with a real
-  isolated suite command;
-- CI: make the Stage 10 integration job provision/use isolated infrastructure
-  and `uv sync --frozen`; do not represent the current offline job as real
-  integration.
+See [`stage-10b-handoff.md`](stage-10b-handoff.md) for the complete Stage 10-B
+real isolated infrastructure gate specification.

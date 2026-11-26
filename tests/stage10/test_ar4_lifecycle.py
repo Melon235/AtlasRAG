@@ -88,7 +88,8 @@ async def test_restart_with_marker_true_invalidates_before_cache_trust() -> None
 
     assert restarted.gate.mode is RuntimeMode.SERVING
     assert fresh.marker.required is False
-    assert fresh.raw.values == {}
+    assert fresh.raw.query_values() == {}
+    assert "atlasrag:fence:query_write" in fresh.raw.values
     assert restarted.order[:4] == [
         "acquire",
         "reconcile",

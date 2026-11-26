@@ -149,3 +149,34 @@ OPEN for A-R6 deterministic closure and Stage 10-B real isolated verification.
 
 Independent review remains UNAVAILABLE. No review status is upgraded and
 Stage 10-C is not started.
+
+---
+
+## Stage 10-A A-R6 update (deterministic evidence only)
+
+- `AR4-T01` (Redis Transport Settlement) **deterministic offline portion** is
+  resolved across `AR6-01`..`AR6-05` (`test_ar6_redis_transport.py`,
+  `test_ar6_freshness_lifecycle.py`, `test_config_and_fingerprints.py`): bounded
+  no-retry `redis.from_url` client settings, atomic Lua `QUERY_WRITE_FENCE_KEY`
+  guards in `RedisCacheProvider` and `SessionQueryCache(require_write_fence=True)`,
+  `CacheFreshnessBarrier` fence revocation/sweep/rotation ordering, concurrent
+  `QueryLease` fence preservation, `atlasrag:parent:*` isolation, and
+  `DelayedRemoteRawRedis` post-timeout/post-restart rejection. Real isolated Redis
+  verification of `AR4-T01` remains Stage 10-B.
+- R10-03 gaps `G-07` and `G-08` now have complete offline production
+  composition/contract reconciliation across `AR6-06`..`AR6-08`
+  (`test_ar6_composition_contracts.py`): bounded startup retry policy, BGE
+  reranker soft degradation, frozen `COLLECTION_NAME="atlas_chunks"` and
+  `analyzer=bm25_analyzer`, soft SearXNG probe, strict semantic config and
+  `SharedResources` validation (`ConfigurationError`), `2C+2` pool bound,
+  `RuntimeOwnershipLock`, `ResourceGuard`, secret redaction, and operational
+  fingerprint exclusion.
+- R10-04 gap `G-09` now has complete Stage 10-A offline regression coverage
+  (`304` Stage 10 tests, `3611 passed` repository offline gate, `mypy` 386
+  source files, `ruff`, `architecture-check`, and `12/12` Stage 9 artifact
+  integrity verified). `G-10` (independent review) remains Stage 10-C
+  (`NOT_STARTED`).
+
+Independent review remains UNAVAILABLE. No review status is upgraded, Stage 10-B
+and Stage 10-C remain NOT_STARTED, and Stage 10 overall acceptance remains
+**UNSATISFIED**.

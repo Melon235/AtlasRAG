@@ -44,8 +44,15 @@ from atlasrag.domain.results import FinalLocalCitation, FinalResponse, RagCoreRe
 from atlasrag.domain.web import WebEvidenceResult
 from atlasrag.graphs.rag_core.subgraph import RagCoreServices
 from atlasrag.graphs.retrieval.graph import RetrievalGraphServices
+from atlasrag.providers.cache.keys import QUERY_WRITE_FENCE_KEY
 from atlasrag.providers.cache.models import CachedQueryResult
-from atlasrag.providers.cache.redis import RedisCacheProvider
+from atlasrag.providers.cache.redis import (
+    _ENSURE_QUERY_WRITE_FENCE_SCRIPT,
+    _GET_FENCED_QUERY_SCRIPT,
+    _PUT_FENCED_QUERY_SCRIPT,
+    _PUT_UNFENCED_IF_UNPROTECTED_SCRIPT,
+    RedisCacheProvider,
+)
 from atlasrag.repositories.postgres.records import RuntimeMetadata
 from atlasrag.runtime.cache_freshness import CacheFreshnessBarrier
 from atlasrag.runtime.coordinator import (
@@ -107,12 +114,18 @@ class FakeRawRedis:
         self.scan_calls = 0
         self.unlink_calls = 0
         self.delete_calls = 0
+        self.eval_calls = 0
+        self.fence_get_calls = 0
+        self.fence_set_calls = 0
+        self.fence_delete_calls = 0
         self.ping_calls = 0
         self.set_modes: list[str] = []
         self.set_mode = "store"
         self.get_mode = "ok"
         self.scan_mode = "ok"
         self.unlink_mode = "ok"
+        self.delete_mode = "ok"
+        self.eval_mode = "ok"
         self.set_started = asyncio.Event()
         self.set_release = asyncio.Event()
         self.unlink_started = asyncio.Event()
@@ -123,6 +136,13 @@ class FakeRawRedis:
         self._scan_cursor = 0
         self.observer: Any = None
 
+    def query_values(self) -> dict[str, str]:
+        return {
+            key: value
+            for key, value in self.values.items()
+            if key.startswith("atlasrag:query:")
+        }
+
     def seed(self, mapping: dict[str, str]) -> None:
         self.values.update(mapping)
 
@@ -132,6 +152,14 @@ class FakeRawRedis:
             self.observer(name)
 
     async def get(self, key: str) -> str | None:
+        if key == QUERY_WRITE_FENCE_KEY:
+            self.fence_get_calls += 1
+            self._notify("fence_get")
+            if self.get_mode == "unavailable":
+                raise RedisConnectionError("redis unavailable")
+            if self.get_mode == "timeout":
+                raise RedisTimeoutError("redis get timed out")
+            return self.values.get(key)
         self.get_calls += 1
         self._notify("get")
         if self.get_mode == "unavailable":
@@ -141,6 +169,17 @@ class FakeRawRedis:
         return self.values.get(key)
 
     async def set(self, key: str, value: str, ex: int | None = None) -> object:
+        if key == QUERY_WRITE_FENCE_KEY:
+            self.fence_set_calls += 1
+            self._notify("fence_set")
+            if self.set_mode in {"unavailable_before", "unavailable"}:
+                raise RedisConnectionError("connect failed")
+            if self.set_mode == "timeout":
+                raise RedisTimeoutError("redis set timed out")
+            if self.set_mode == "reject":
+                raise RedisResponseError("ERR rejected")
+            self.values[key] = value
+            return True
         self.set_calls += 1
         self._notify("set")
         mode = self.set_modes.pop(0) if self.set_modes else self.set_mode
@@ -149,8 +188,10 @@ class FakeRawRedis:
             return True
         if mode == "reject":
             raise RedisResponseError("ERR rejected")
-        if mode == "unavailable_before":
+        if mode in {"unavailable_before", "unavailable"}:
             raise RedisConnectionError("connect failed")
+        if mode == "timeout":
+            raise RedisTimeoutError("redis set timed out")
         if mode == "apply_timeout":
             self.values[key] = value
             raise RedisTimeoutError("ack lost")
@@ -227,7 +268,18 @@ class FakeRawRedis:
         return removed
 
     async def delete(self, *keys: str) -> int:
-        self.delete_calls += 1
+        if keys == (QUERY_WRITE_FENCE_KEY,):
+            self.fence_delete_calls += 1
+            self._notify("fence_delete")
+        else:
+            self.delete_calls += 1
+            self._notify("delete")
+        if self.delete_mode == "unavailable" or (
+            self.get_mode == "unavailable" and self.scan_mode == "unavailable"
+        ):
+            raise RedisConnectionError("redis unavailable")
+        if self.delete_mode == "timeout":
+            raise RedisTimeoutError("redis delete timed out")
         removed = 0
         for key in keys:
             if key in self.values:
@@ -237,7 +289,155 @@ class FakeRawRedis:
 
     async def ping(self) -> bool:
         self.ping_calls += 1
+        if self.get_mode == "unavailable":
+            raise RedisConnectionError("redis unavailable")
+        if self.get_mode == "timeout":
+            raise RedisTimeoutError("redis ping timed out")
         return True
+
+    async def eval(self, script: str, numkeys: int, *args: object) -> object:
+        self.eval_calls += 1
+        if self.eval_mode == "unavailable":
+            raise RedisConnectionError("redis unavailable")
+        if self.eval_mode == "timeout":
+            raise RedisTimeoutError("redis eval timed out")
+        if self.eval_mode == "bad_ack":
+            return None
+        if self.eval_mode == "malformed":
+            return 123
+        if script == _GET_FENCED_QUERY_SCRIPT and numkeys == 2 and len(args) == 2:
+            query_key = str(args[0])
+            fence_key = str(args[1])
+            self.get_calls += 1
+            self._notify("get")
+            if self.get_mode == "unavailable":
+                raise RedisConnectionError("redis unavailable")
+            if self.get_mode == "timeout":
+                raise RedisTimeoutError("redis get timed out")
+            return [self.values.get(fence_key), self.values.get(query_key)]
+        if (
+            script == _ENSURE_QUERY_WRITE_FENCE_SCRIPT
+            and numkeys == 1
+            and len(args) == 2
+        ):
+            fence_key = str(args[0])
+            candidate = str(args[1])
+            self.fence_get_calls += 1
+            self._notify("fence_get")
+            if self.get_mode == "unavailable":
+                raise RedisConnectionError("redis unavailable")
+            if self.get_mode == "timeout":
+                raise RedisTimeoutError("redis get timed out")
+            current = self.values.get(fence_key)
+            if current is not None:
+                return current
+            if self.set_mode in {"unavailable_before", "unavailable"}:
+                raise RedisConnectionError("connect failed")
+            if self.set_mode in {"timeout", "apply_timeout"}:
+                raise RedisTimeoutError("redis set timed out")
+            self.values[fence_key] = candidate
+            self.fence_set_calls += 1
+            self._notify("fence_set")
+            return candidate
+        if script in {_PUT_FENCED_QUERY_SCRIPT, _PUT_UNFENCED_IF_UNPROTECTED_SCRIPT}:
+            query_key = str(args[0])
+            fence_key = str(args[1])
+            payload = str(args[2])
+            expected_fence = (
+                str(args[4]) if script == _PUT_FENCED_QUERY_SCRIPT else None
+            )
+
+            def _allowed() -> bool:
+                if expected_fence is not None:
+                    return self.values.get(fence_key) == expected_fence
+                return fence_key not in self.values
+
+            self.set_calls += 1
+            self._notify("set")
+            mode = self.set_modes.pop(0) if self.set_modes else self.set_mode
+            if mode == "reject":
+                raise RedisResponseError("ERR rejected")
+            if mode in {"unavailable_before", "unavailable"}:
+                raise RedisConnectionError("connect failed")
+            if mode == "timeout":
+                raise RedisTimeoutError("redis set timed out")
+            if mode == "store":
+                if not _allowed():
+                    return 0
+                self.values[query_key] = payload
+                return 1
+            if mode == "apply_timeout":
+                if _allowed():
+                    self.values[query_key] = payload
+                raise RedisTimeoutError("ack lost")
+            if mode == "apply_connection":
+                if _allowed():
+                    self.values[query_key] = payload
+                raise RedisConnectionError("connection lost")
+            if mode == "apply_bad_ack":
+                if _allowed():
+                    self.values[query_key] = payload
+                return None
+            if mode in {"delay", "apply_delay"}:
+                if mode == "apply_delay" and _allowed():
+                    self.values[query_key] = payload
+                self.set_started.set()
+                await self.set_release.wait()
+                allowed_now = _allowed()
+                if mode == "delay":
+                    if not allowed_now:
+                        return 0
+                    self.values[query_key] = payload
+                    return 1
+                return 1 if allowed_now else 0
+            raise AssertionError(f"unknown set mode {mode}")
+        raise AssertionError(f"unexpected eval script with {numkeys} keys")
+
+
+class DelayedRemoteRawRedis(FakeRawRedis):
+    """Queue write commands after client failure so delayed remote execution runs later."""
+
+    def __init__(self, *, page_size: int = 100) -> None:
+        super().__init__(page_size=page_size)
+        self.delay_remote_writes = True
+        self.remote_failure_mode = "timeout"
+        self.pending_remote_writes: list[tuple[str, int, tuple[object, ...]]] = []
+        self.flushed_results: list[object] = []
+
+    async def eval(self, script: str, numkeys: int, *args: object) -> object:
+        if self.delay_remote_writes and script in {
+            _PUT_FENCED_QUERY_SCRIPT,
+            _PUT_UNFENCED_IF_UNPROTECTED_SCRIPT,
+        }:
+            self.eval_calls += 1
+            self.set_calls += 1
+            self._notify("remote_write_queued")
+            self.pending_remote_writes.append((script, numkeys, args))
+            if self.remote_failure_mode == "timeout":
+                raise RedisTimeoutError("ack lost while command in transit")
+            if self.remote_failure_mode == "connection":
+                raise RedisConnectionError("connection lost while command in transit")
+            if self.remote_failure_mode == "bad_ack":
+                return None
+            raise AssertionError(
+                f"unknown remote_failure_mode {self.remote_failure_mode}"
+            )
+        return await super().eval(script, numkeys, *args)
+
+    async def flush_pending_remote_writes(self) -> list[object]:
+        queued = list(self.pending_remote_writes)
+        self.pending_remote_writes.clear()
+        results: list[object] = []
+        previous = self.delay_remote_writes
+        self.delay_remote_writes = False
+        try:
+            for script, numkeys, args in queued:
+                result = await super().eval(script, numkeys, *args)
+                results.append(result)
+                self.flushed_results.append(result)
+        finally:
+            self.delay_remote_writes = previous
+        return results
 
 
 @dataclass
@@ -357,6 +557,7 @@ class CacheRig:
     retry_interval: float = 10.0
     runtime_fingerprint: str = "runtime"
     ttl_seconds: int = 60
+    require_write_fence: bool = False
 
 
 def build_cache_rig(
@@ -369,8 +570,10 @@ def build_cache_rig(
     scan_batch_size: int = 100,
     ttl_seconds: int = 60,
     runtime_fingerprint: str = "runtime",
+    require_write_fence: bool = False,
+    raw: FakeRawRedis | None = None,
 ) -> CacheRig:
-    raw = FakeRawRedis(page_size=page_size)
+    raw = raw if raw is not None else FakeRawRedis(page_size=page_size)
     provider = RedisCacheProvider(raw, scan_batch_size=scan_batch_size)  # type: ignore[arg-type]
     marker = MarkerFactory(required=marker_required)
     cache = SessionQueryCache(
@@ -380,6 +583,7 @@ def build_cache_rig(
         ttl_seconds=ttl_seconds,
         policy=QueryCachePolicy(enabled=enabled, max_entry_bytes=max_entry_bytes),
         clock=lambda: NOW,
+        require_write_fence=require_write_fence,
     )
     barrier = CacheFreshnessBarrier(
         redis=provider,
@@ -397,12 +601,16 @@ def build_cache_rig(
         retry_interval=retry_interval,
         runtime_fingerprint=runtime_fingerprint,
         ttl_seconds=ttl_seconds,
+        require_write_fence=require_write_fence,
     )
 
 
-def rebuild_rig(rig: CacheRig) -> CacheRig:
+def rebuild_rig(rig: CacheRig, *, require_write_fence: bool | None = None) -> CacheRig:
     """Fresh process-local cache/barrier over the same durable fake state."""
 
+    fenced = (
+        rig.require_write_fence if require_write_fence is None else require_write_fence
+    )
     cache = SessionQueryCache(
         redis=rig.provider,
         uow_factory=rig.marker,  # type: ignore[arg-type]
@@ -412,6 +620,7 @@ def rebuild_rig(rig: CacheRig) -> CacheRig:
             enabled=rig.enabled, max_entry_bytes=rig.max_entry_bytes
         ),
         clock=lambda: NOW,
+        require_write_fence=fenced,
     )
     barrier = CacheFreshnessBarrier(
         redis=rig.provider,
@@ -429,6 +638,7 @@ def rebuild_rig(rig: CacheRig) -> CacheRig:
         retry_interval=rig.retry_interval,
         runtime_fingerprint=rig.runtime_fingerprint,
         ttl_seconds=rig.ttl_seconds,
+        require_write_fence=fenced,
     )
 
 
@@ -715,6 +925,7 @@ __all__ = [
     "CacheRig",
     "CacheRuntime",
     "ControlledSync",
+    "DelayedRemoteRawRedis",
     "FakeClock",
     "FakeRawRedis",
     "Knowledge",

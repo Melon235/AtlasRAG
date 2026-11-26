@@ -33,11 +33,19 @@ from atlasrag.domain.ingestion.chunks import (
     TableSliceMode,
 )
 from atlasrag.domain.requests import UserTurnRequest
-from atlasrag.providers.cache.keys import parent_cache_key, query_cache_key
+from atlasrag.providers.cache.keys import (
+    QUERY_WRITE_FENCE_KEY,
+    parent_cache_key,
+    query_cache_key,
+)
 from atlasrag.providers.cache.models import CachedParentContext
 from atlasrag.providers.cache.redis import RedisCacheProvider
 from atlasrag.providers.index.models import MilvusSearchHit
 from atlasrag.providers.reranker.base import RerankerModelIdentity
+from atlasrag.providers.reranker.bge import (
+    BGE_RERANKER_MODEL_ID,
+    BGE_RERANKER_REVISION,
+)
 from atlasrag.repositories.postgres.chunks import ChunkRepository
 from atlasrag.repositories.postgres.records import StoredChunkType
 from atlasrag.runtime import production as production_module
@@ -64,12 +72,14 @@ def _production_shared(
                     "query_ttl_seconds": 120,
                 }
             ),
-            "models": base.models.model_copy(update={"model_device": "cpu"}),
+            "models": base.models.model_copy(update={"model_device": "cuda"}),
         }
     )
+    raw_redis.seed({QUERY_WRITE_FENCE_KEY: "ar5-write-fence"})
 
     class _FakeMilvus:
         embedding_dimension = config.part_i.embedding_dimension
+        analyzer = config.part_i.bm25_analyzer
 
         async def initialize(self) -> None:
             return None
@@ -99,7 +109,7 @@ def _production_shared(
             tokenizer_id=config.models.embedding_tokenizer_id,
             tokenizer_revision=config.models.embedding_tokenizer_revision,
             dimension=config.part_i.embedding_dimension,
-            device="cpu",
+            device="cuda",
         )
 
         async def embed_query(self, query: str) -> tuple[float, ...]:
@@ -107,12 +117,12 @@ def _production_shared(
 
     class _FakeReranker:
         identity = RerankerModelIdentity(
-            model_id="bge",
-            model_revision="r1",
-            tokenizer_id="bge",
-            tokenizer_revision="r1",
-            device="cpu",
-            dtype="float32",
+            model_id=BGE_RERANKER_MODEL_ID,
+            model_revision=BGE_RERANKER_REVISION,
+            tokenizer_id=BGE_RERANKER_MODEL_ID,
+            tokenizer_revision=BGE_RERANKER_REVISION,
+            device="cuda",
+            dtype="float16",
             max_input_tokens=8192,
         )
 

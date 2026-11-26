@@ -22,6 +22,7 @@ _HTTP_URL_ADAPTER: TypeAdapter[AnyHttpUrl] = TypeAdapter(AnyHttpUrl)
 PositiveStrictInt = Annotated[StrictInt, Field(gt=0)]
 Port = Annotated[StrictInt, Field(ge=1, le=65535)]
 PositiveReal = Annotated[StrictReal, Field(gt=0)]
+NonNegativeReal = Annotated[StrictReal, Field(ge=0)]
 SampleRate = Annotated[StrictReal, Field(ge=0, le=1)]
 
 
@@ -201,6 +202,9 @@ class RuntimeOperationalConfig(FrozenModel):
     health_refresh_interval_seconds: PositiveReal = 10.0
     gpu_concurrency: PositiveStrictInt = 1
     cache_recovery_interval_seconds: PositiveReal = 10.0
+    redis_connect_timeout_seconds: PositiveReal = 3.0
+    redis_socket_timeout_seconds: PositiveReal = 3.0
+    redis_health_check_interval_seconds: NonNegativeReal = 30.0
     postgres_pool_min_size: PositiveStrictInt = 2
     postgres_pool_max_size: PositiveStrictInt = 16
 
@@ -231,6 +235,12 @@ class RuntimeConfig(FrozenModel):
             raise ValueError("health_refresh_interval_seconds must be at most 300")
         if runtime.cache_recovery_interval_seconds > 300:
             raise ValueError("cache_recovery_interval_seconds must be at most 300")
+        if runtime.redis_connect_timeout_seconds > 30:
+            raise ValueError("redis_connect_timeout_seconds must be at most 30")
+        if runtime.redis_socket_timeout_seconds > 30:
+            raise ValueError("redis_socket_timeout_seconds must be at most 30")
+        if runtime.redis_health_check_interval_seconds > 300:
+            raise ValueError("redis_health_check_interval_seconds must be at most 300")
         if runtime.gpu_concurrency > 4:
             raise ValueError("gpu_concurrency must be at most 4")
         minimum = 2 * self.maintenance.max_document_concurrency + 2

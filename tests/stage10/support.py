@@ -1,6 +1,16 @@
 from __future__ import annotations
 
 from atlasrag.config.models import RuntimeConfig
+from atlasrag.providers.embedding.qwen import (
+    QWEN_DIMENSION,
+    QWEN_MODEL_ID,
+    QWEN_REVISION,
+)
+from atlasrag.providers.reranker.bge import (
+    BGE_RERANKER_MODEL_ID,
+    BGE_RERANKER_REVISION,
+)
+from atlasrag.services.ingestion.chunking import DEFAULT_CHUNKER_BEHAVIOR_VERSION
 
 
 def runtime_config() -> RuntimeConfig:
@@ -20,12 +30,12 @@ def runtime_config() -> RuntimeConfig:
                 "searxng_url": "http://searxng:8080",
             },
             "models": {
-                "embedding_model_id": "BAAI/bge-m3",
-                "embedding_model_revision": "embed-r1",
-                "embedding_tokenizer_id": "BAAI/bge-m3",
-                "embedding_tokenizer_revision": "tokenizer-r1",
-                "reranker_model_id": "BAAI/bge-reranker-v2-m3",
-                "reranker_model_revision": "rerank-r1",
+                "embedding_model_id": QWEN_MODEL_ID,
+                "embedding_model_revision": QWEN_REVISION,
+                "embedding_tokenizer_id": QWEN_MODEL_ID,
+                "embedding_tokenizer_revision": QWEN_REVISION,
+                "reranker_model_id": BGE_RERANKER_MODEL_ID,
+                "reranker_model_revision": BGE_RERANKER_REVISION,
                 "query_model_id": "deepseek-query",
                 "query_model_revision": "query-r1",
                 "generation_model_id": "deepseek-generation",
@@ -36,10 +46,10 @@ def runtime_config() -> RuntimeConfig:
             "part_i": {
                 "loader_behavior_version": "loader-v1",
                 "parser_behavior_version": "parser-v1",
-                "chunker_behavior_version": "chunker-v1",
+                "chunker_behavior_version": DEFAULT_CHUNKER_BEHAVIOR_VERSION,
                 "representation_version": "representation-v1",
-                "embedding_dimension": 1024,
-                "bm25_analyzer": "standard-v1",
+                "embedding_dimension": QWEN_DIMENSION,
+                "bm25_analyzer": "standard",
                 "milvus_schema_version": "schema-v1",
                 "milvus_index_version": "index-v1",
             },

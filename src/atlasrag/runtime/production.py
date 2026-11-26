@@ -39,7 +39,11 @@ from atlasrag.repositories.postgres.runtime_metadata import (
     RuntimeMetadataRepository,
 )
 from atlasrag.repositories.postgres.uow import PostgresUnitOfWork
-from atlasrag.runtime.composition import BusinessBundle, SharedResources
+from atlasrag.runtime.composition import (
+    BusinessBundle,
+    SharedResources,
+    validate_shared_resource_contracts,
+)
 from atlasrag.services.answer.citations import CitationResolver
 from atlasrag.services.answer.compression import IdentityCompression
 from atlasrag.services.answer.generation_input import GenerationInputBuilder
@@ -123,6 +127,7 @@ def _uow_factory(pool: Any) -> Any:
 async def build_default_business(shared: SharedResources) -> BusinessBundle:
     """Assemble the existing Part I/II services without alternate algorithms."""
 
+    validate_shared_resource_contracts(shared)
     config = shared.config
     now = lambda: datetime.now(UTC)  # noqa: E731
     factory = _uow_factory(shared.pool)
@@ -349,6 +354,7 @@ async def build_default_business(shared: SharedResources) -> BusinessBundle:
         ttl_seconds=config.cache.query_ttl_seconds,
         policy=QueryCachePolicy(enabled=config.cache.query_cache_enabled),
         clock=now,
+        require_write_fence=True,
     )
     retrieval = RetrievalRunner(RetrievalGraphServices(cache=cache, rag_core=rag_core))
 

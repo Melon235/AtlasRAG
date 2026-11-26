@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Awaitable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import TypeVar
+from typing import TypeVar, cast
+from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 from redis.asyncio import Redis
@@ -19,12 +20,42 @@ from atlasrag.domain.errors import (
     InvariantViolationError,
     ProviderResponseError,
 )
-from atlasrag.providers.cache.keys import parent_cache_key, query_cache_key
+from atlasrag.providers.cache.keys import (
+    QUERY_WRITE_FENCE_KEY,
+    parent_cache_key,
+    query_cache_key,
+    validate_write_fence_input,
+)
 from atlasrag.providers.cache.models import CachedParentContext, CachedQueryResult
 
 _CacheModelT = TypeVar("_CacheModelT", bound=BaseModel)
 _QUERY_PATTERN = "atlasrag:query:*"
 _QUERY_PREFIX = "atlasrag:query:"
+_GET_FENCED_QUERY_SCRIPT = (
+    "return {redis.call('GET', KEYS[2]), redis.call('GET', KEYS[1])}"
+)
+_PUT_FENCED_QUERY_SCRIPT = (
+    "if redis.call('GET', KEYS[2]) ~= ARGV[3] then "
+    "return 0 "
+    "end "
+    "redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2])) "
+    "return 1"
+)
+_PUT_UNFENCED_IF_UNPROTECTED_SCRIPT = (
+    "if redis.call('EXISTS', KEYS[2]) == 1 then "
+    "return 0 "
+    "end "
+    "redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2])) "
+    "return 1"
+)
+_ENSURE_QUERY_WRITE_FENCE_SCRIPT = (
+    "local current = redis.call('GET', KEYS[1]) "
+    "if current then "
+    "return current "
+    "end "
+    "redis.call('SET', KEYS[1], ARGV[1]) "
+    "return ARGV[1]"
+)
 
 
 @contextmanager
@@ -99,6 +130,38 @@ def _query_scan_key(value: object) -> str:
     return key
 
 
+def _decode_write_fence_token(value: object) -> str:
+    if isinstance(value, bytes):
+        try:
+            token = value.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ProviderResponseError from None
+    elif isinstance(value, str):
+        token = value
+    else:
+        raise ProviderResponseError
+    try:
+        validate_unicode_scalar_text(token)
+    except ValueError:
+        raise ProviderResponseError from None
+    if (
+        not token
+        or len(token) > 128
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in token
+        )
+    ):
+        raise ProviderResponseError
+    return token
+
+
+def _validate_eval_write_fence_result(value: object) -> bool:
+    if type(value) is not int or value not in (0, 1):
+        raise ProviderResponseError
+    return value == 1
+
+
 class RedisCacheProvider:
     """Expose technical Parent and Session Query Cache capabilities only."""
 
@@ -171,6 +234,109 @@ class RedisCacheProvider:
         return await self._delete(
             query_cache_key(session_id, runtime_fingerprint, request_hash)
         )
+
+    async def get_query_write_fence(self) -> str | None:
+        raw = await self._get(QUERY_WRITE_FENCE_KEY)
+        if raw is None:
+            return None
+        return _decode_write_fence_token(raw)
+
+    async def revoke_query_write_fence(self) -> int:
+        return await self._delete(QUERY_WRITE_FENCE_KEY)
+
+    async def establish_query_write_fence(self) -> str:
+        token = uuid4().hex
+        with _redis_error_boundary():
+            stored = await self._client.set(QUERY_WRITE_FENCE_KEY, token)
+        if stored is not True:
+            raise ProviderResponseError
+        return token
+
+    async def ensure_query_write_fence(self) -> str:
+        candidate = uuid4().hex
+        with _redis_error_boundary():
+            raw = await cast(
+                Awaitable[object],
+                self._client.eval(
+                    _ENSURE_QUERY_WRITE_FENCE_SCRIPT,
+                    1,
+                    QUERY_WRITE_FENCE_KEY,
+                    candidate,
+                ),
+            )
+        return _decode_write_fence_token(raw)
+
+    async def get_fenced_query(
+        self,
+        session_id: str,
+        runtime_fingerprint: str,
+        request_hash: str,
+    ) -> tuple[str | None, CachedQueryResult | None]:
+        key = query_cache_key(session_id, runtime_fingerprint, request_hash)
+        with _redis_error_boundary():
+            raw = await cast(
+                Awaitable[object],
+                self._client.eval(
+                    _GET_FENCED_QUERY_SCRIPT,
+                    2,
+                    key,
+                    QUERY_WRITE_FENCE_KEY,
+                ),
+            )
+        if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+            raise ProviderResponseError
+        raw_fence, raw_payload = raw
+        fence = None if raw_fence is None else _decode_write_fence_token(raw_fence)
+        cached = (
+            None
+            if raw_payload is None
+            else _deserialize(CachedQueryResult, raw_payload)
+        )
+        return fence, cached
+
+    async def put_fenced_query(
+        self,
+        session_id: str,
+        runtime_fingerprint: str,
+        request_hash: str,
+        value: CachedQueryResult,
+        *,
+        ttl_seconds: int,
+        write_fence: str | None,
+    ) -> bool:
+        value = _validate_for_write(CachedQueryResult, value)
+        ttl = _positive_integer(ttl_seconds)
+        key = query_cache_key(session_id, runtime_fingerprint, request_hash)
+        payload = value.model_dump_json()
+        if write_fence is not None:
+            token = validate_write_fence_input(write_fence)
+            with _redis_error_boundary():
+                result = await cast(
+                    Awaitable[object],
+                    self._client.eval(
+                        _PUT_FENCED_QUERY_SCRIPT,
+                        2,
+                        key,
+                        QUERY_WRITE_FENCE_KEY,
+                        payload,
+                        str(ttl),
+                        token,
+                    ),
+                )
+        else:
+            with _redis_error_boundary():
+                result = await cast(
+                    Awaitable[object],
+                    self._client.eval(
+                        _PUT_UNFENCED_IF_UNPROTECTED_SCRIPT,
+                        2,
+                        key,
+                        QUERY_WRITE_FENCE_KEY,
+                        payload,
+                        str(ttl),
+                    ),
+                )
+        return _validate_eval_write_fence_result(result)
 
     async def invalidate_queries(self) -> int:
         """Delete only AtlasRAG Query Cache keys through bounded SCAN pages."""

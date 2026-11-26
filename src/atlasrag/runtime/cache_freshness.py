@@ -33,6 +33,7 @@ class CacheFreshnessBarrier:
         self._retry_interval = retry_interval_seconds
         self._lock = asyncio.Lock()
         self._last_attempt = 0.0
+        self._fence_reset_completed = False
 
     async def _marker_required(self) -> bool:
         async with self._uow_factory() as unit:
@@ -41,9 +42,9 @@ class CacheFreshnessBarrier:
 
     async def enforce(self) -> CacheFreshnessState:
         async with self._lock:
-            return await self._enforce_locked()
+            return await self._enforce_locked(rotate_fence=True)
 
-    async def _enforce_locked(self) -> CacheFreshnessState:
+    async def _enforce_locked(self, *, rotate_fence: bool) -> CacheFreshnessState:
         self._last_attempt = monotonic()
         try:
             required = await self._marker_required()
@@ -51,28 +52,45 @@ class CacheFreshnessBarrier:
             raise
         except DependencyError:
             return CacheFreshnessState.BYPASSED
-        if not required:
-            return CacheFreshnessState.TRUSTED
-        try:
-            await self._redis.invalidate_queries()
-        except (DependencyError, ProviderResponseError):
-            return CacheFreshnessState.BYPASSED
-        try:
-            async with self._uow_factory() as unit:
-                metadata = (
-                    await unit.runtime_metadata.set_query_cache_invalidation_required(
+        if required:
+            try:
+                if hasattr(self._redis, "revoke_query_write_fence"):
+                    await self._redis.revoke_query_write_fence()
+                await self._redis.invalidate_queries()
+                if hasattr(self._redis, "establish_query_write_fence"):
+                    await self._redis.establish_query_write_fence()
+            except (DependencyError, ProviderResponseError):
+                return CacheFreshnessState.BYPASSED
+            try:
+                async with self._uow_factory() as unit:
+                    metadata = await unit.runtime_metadata.set_query_cache_invalidation_required(
                         False
                     )
-                )
-                if metadata.query_cache_invalidation_required:
-                    raise CanonicalDataError
-                await unit.commit()
-            if await self._marker_required():
+                    if metadata.query_cache_invalidation_required:
+                        raise CanonicalDataError
+                    await unit.commit()
+                if await self._marker_required():
+                    return CacheFreshnessState.BYPASSED
+            except CanonicalDataError:
+                raise
+            except (DependencyError, ProviderResponseError):
                 return CacheFreshnessState.BYPASSED
-        except CanonicalDataError:
-            raise
-        except (DependencyError, ProviderResponseError):
-            return CacheFreshnessState.BYPASSED
+            self._fence_reset_completed = True
+            return CacheFreshnessState.TRUSTED
+        if rotate_fence:
+            if hasattr(self._redis, "establish_query_write_fence"):
+                try:
+                    await self._redis.establish_query_write_fence()
+                except (DependencyError, ProviderResponseError):
+                    return CacheFreshnessState.BYPASSED
+            self._fence_reset_completed = True
+            return CacheFreshnessState.TRUSTED
+        if hasattr(self._redis, "ensure_query_write_fence"):
+            try:
+                await self._redis.ensure_query_write_fence()
+            except (DependencyError, ProviderResponseError):
+                return CacheFreshnessState.BYPASSED
+        self._fence_reset_completed = True
         return CacheFreshnessState.TRUSTED
 
     async def recover_if_due(self) -> CacheFreshnessState | None:
@@ -81,4 +99,6 @@ class CacheFreshnessBarrier:
         async with self._lock:
             if monotonic() - self._last_attempt < self._retry_interval:
                 return None
-            return await self._enforce_locked()
+            return await self._enforce_locked(
+                rotate_fence=not self._fence_reset_completed
+            )

@@ -21,7 +21,11 @@ from atlasrag.domain.errors import (
     DependencyTimeoutError,
     DependencyUnavailableError,
 )
-from atlasrag.providers.cache.keys import parent_cache_key, query_cache_key
+from atlasrag.providers.cache.keys import (
+    QUERY_WRITE_FENCE_KEY,
+    parent_cache_key,
+    query_cache_key,
+)
 from atlasrag.runtime import cache_freshness as freshness_module
 from atlasrag.runtime.cache_freshness import CacheFreshnessState
 
@@ -251,7 +255,8 @@ async def test_marker_commit_applied_with_lost_ack_is_conservatively_bypassed() 
 
     assert await rig.barrier.enforce() is CacheFreshnessState.BYPASSED
     assert rig.marker.required is False
-    assert rig.raw.values == {}
+    assert rig.raw.query_values() == {}
+    assert QUERY_WRITE_FENCE_KEY in rig.raw.values
 
     # The persisted marker is the authority: complete invalidation happened
     # before the applied commit, so a fresh read may trust the empty cache.
@@ -268,7 +273,8 @@ async def test_confirmatory_read_failure_remains_conservative() -> None:
 
     assert await rig.barrier.enforce() is CacheFreshnessState.BYPASSED
     assert rig.marker.required is False
-    assert rig.raw.values == {}
+    assert rig.raw.query_values() == {}
+    assert QUERY_WRITE_FENCE_KEY in rig.raw.values
     assert await rig.cache.lookup(request("a")) is None
     assert await rig.cache.store(request("a"), core_result(), web_invoked=False) is True
 

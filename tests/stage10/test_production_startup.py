@@ -8,6 +8,17 @@ import pytest
 import redis.asyncio as redis
 from support import runtime_config
 
+from atlasrag.domain.indexing.models import EmbeddingModelIdentity
+from atlasrag.providers.embedding.qwen import (
+    QWEN_DIMENSION,
+    QWEN_MODEL_ID,
+    QWEN_REVISION,
+)
+from atlasrag.providers.reranker.base import RerankerModelIdentity
+from atlasrag.providers.reranker.bge import (
+    BGE_RERANKER_MODEL_ID,
+    BGE_RERANKER_REVISION,
+)
 from atlasrag.runtime import composition as composition_module
 from atlasrag.runtime import production as production_module
 
@@ -62,7 +73,9 @@ class _Milvus:
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         type(self).count += 1
-        self.embedding_dimension = 1024
+        self.collection_name = kwargs.get("collection_name")
+        self.embedding_dimension = int(kwargs.get("embedding_dimension", 1024))  # type: ignore[call-overload]
+        self.analyzer = str(kwargs.get("analyzer", "standard"))
 
     async def initialize(self) -> None:
         return None
@@ -93,9 +106,42 @@ class _Redis:
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         type(self).count += 1
+        self.values: dict[str, str] = {}
 
     async def ping(self) -> bool:
         return True
+
+    async def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    async def set(self, key: str, value: str, ex: int | None = None) -> bool:
+        self.values[key] = value
+        return True
+
+    async def delete(self, *keys: str) -> int:
+        removed = 0
+        for key in keys:
+            if key in self.values:
+                self.values.pop(key)
+                removed += 1
+        return removed
+
+    async def scan(
+        self, cursor: int = 0, match: str | None = None, count: int | None = None
+    ) -> tuple[int, list[bytes]]:
+        return 0, []
+
+    async def unlink(self, *keys: str) -> int:
+        return await self.delete(*keys)
+
+    async def eval(self, script: str, numkeys: int, *args: object) -> object:
+        if numkeys == 1 and len(args) == 2:
+            key = str(args[0])
+            candidate = str(args[1])
+            return self.values.setdefault(key, candidate)
+        if numkeys == 2 and len(args) == 2:
+            return [self.values.get(str(args[1])), self.values.get(str(args[0]))]
+        return 1
 
     async def aclose(self) -> None:
         return None
@@ -106,10 +152,18 @@ class _Embedding:
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         type(self).count += 1
+        self._device = str(kwargs.get("device", "cuda"))
 
     @property
-    def identity(self) -> object:
-        return object()
+    def identity(self) -> EmbeddingModelIdentity:
+        return EmbeddingModelIdentity(
+            model_id=QWEN_MODEL_ID,
+            model_revision=QWEN_REVISION,
+            tokenizer_id=QWEN_MODEL_ID,
+            tokenizer_revision=QWEN_REVISION,
+            dimension=QWEN_DIMENSION,
+            device=self._device,
+        )
 
     async def initialize(self, *, allow_download: bool = False) -> None:
         return None
@@ -120,10 +174,19 @@ class _Reranker:
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         type(self).count += 1
+        self._device = str(kwargs.get("device", "cuda"))
 
     @property
-    def identity(self) -> object:
-        return object()
+    def identity(self) -> RerankerModelIdentity:
+        return RerankerModelIdentity(
+            model_id=BGE_RERANKER_MODEL_ID,
+            model_revision=BGE_RERANKER_REVISION,
+            tokenizer_id=BGE_RERANKER_MODEL_ID,
+            tokenizer_revision=BGE_RERANKER_REVISION,
+            device=self._device,
+            dtype="float16",
+            max_input_tokens=8192,
+        )
 
     async def initialize(self, *, allow_download: bool = False) -> None:
         return None

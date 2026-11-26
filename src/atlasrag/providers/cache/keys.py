@@ -5,6 +5,8 @@ from __future__ import annotations
 from atlasrag._canonical import validate_unicode_scalar_text
 from atlasrag.domain.errors import InvariantViolationError
 
+QUERY_WRITE_FENCE_KEY = "atlasrag:fence:query_write"
+
 
 def _key_component(value: object) -> str:
     if not isinstance(value, str):
@@ -18,6 +20,27 @@ def _key_component(value: object) -> str:
         or value != value.strip()
         or ":" in value
         or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise InvariantViolationError
+    return value
+
+
+def validate_write_fence_input(value: object) -> str:
+    """Validate an explicit write-fence token passed to a fenced cache write."""
+
+    if not isinstance(value, str):
+        raise InvariantViolationError
+    try:
+        validate_unicode_scalar_text(value)
+    except ValueError:
+        raise InvariantViolationError from None
+    if (
+        not value
+        or len(value) > 128
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in value
+        )
     ):
         raise InvariantViolationError
     return value
