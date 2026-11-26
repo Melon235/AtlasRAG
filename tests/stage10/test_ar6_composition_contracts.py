@@ -684,6 +684,42 @@ async def test_ar6_07_shared_resource_identity_and_index_contract_mismatches_rai
         reranker=_RerankerStub(device="cuda"),
     )
 
+    # Generic "cuda" config accepts resolved provider device "cuda:0", while explicit
+    # "cuda:0" rejects "cuda:1" and "cuda".
+    resolved_shared = SharedResources(
+        config=base,
+        ownership=object(),  # type: ignore[arg-type]
+        pool=_PoolStub(),  # type: ignore[arg-type]
+        milvus=_MilvusStub(),  # type: ignore[arg-type]
+        redis_provider=RedisCacheProvider(_RedisClient()),  # type: ignore[arg-type]
+        embedding=_EmbeddingStub(device="cuda:0"),  # type: ignore[arg-type]
+        reranker=_RerankerStub(device="cuda:0"),  # type: ignore[arg-type]
+        guard=object(),  # type: ignore[arg-type]
+        guarded_mineru=object(),  # type: ignore[arg-type]
+        knowledge_directory=tmp_path,
+        deepseek_http=httpx.AsyncClient(),
+        web_http=httpx.AsyncClient(),
+    )
+    try:
+        composition_module.validate_shared_resource_contracts(resolved_shared)
+    finally:
+        await resolved_shared.deepseek_http.aclose()
+        await resolved_shared.web_http.aclose()
+
+    cuda0_config = base.model_copy(
+        update={"models": base.models.model_copy(update={"model_device": "cuda:0"})}
+    )
+    await _run_with(
+        config=cuda0_config,
+        embedding=_EmbeddingStub(device="cuda:1"),
+        reranker=_RerankerStub(device="cuda:0"),
+    )
+    await _run_with(
+        config=cuda0_config,
+        embedding=_EmbeddingStub(device="cuda:0"),
+        reranker=_RerankerStub(device="cuda:1"),
+    )
+
 
 # AR6-08 — Pool lower bound, ownership, ResourceGuard, redaction and fingerprints
 def test_ar6_08_pool_bound_ownership_lock_and_secret_redaction(tmp_path: Path) -> None:

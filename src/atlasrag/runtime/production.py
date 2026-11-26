@@ -347,6 +347,12 @@ async def build_default_business(shared: SharedResources) -> BusinessBundle:
             completion=CompletionAssessor(),
         )
     )
+    cache_freshness = shared.cache_freshness
+    expected_write_fence = (
+        None
+        if cache_freshness is None
+        else (lambda: cache_freshness.active_write_fence)
+    )
     cache = SessionQueryCache(
         redis=shared.redis_provider,
         uow_factory=factory,
@@ -355,6 +361,7 @@ async def build_default_business(shared: SharedResources) -> BusinessBundle:
         policy=QueryCachePolicy(enabled=config.cache.query_cache_enabled),
         clock=now,
         require_write_fence=True,
+        expected_write_fence=expected_write_fence,
     )
     retrieval = RetrievalRunner(RetrievalGraphServices(cache=cache, rag_core=rag_core))
 

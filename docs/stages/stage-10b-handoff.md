@@ -3,9 +3,9 @@
 ## 1. Current Authoritative State
 
 - **Branch / PR:** `stage/10-part-iv-application-runtime` (`PR #11` OPEN and UNMERGED against `main`)
-- **Stage 10-A (`A-R1`–`A-R6`):** COMPLETE (offline verified; `make test-stage10` = `304 passed`, `make verify` = `3611 passed, 1 skipped, 108 deselected`, `mypy` = `386 source files`, `ruff`, `make architecture-check`, `git diff --check` PASS, Stage 9 raw artifacts `12/12` verified)
-- **Stage 10-B (Isolated Real PostgreSQL / Milvus / Redis Integration):** `NOT_STARTED`
-- **Stage 10-C (Independent Review & Release Gate):** `NOT_STARTED`
+- **Stage 10-A (`A-R1`–`A-R6`):** COMPLETE (offline verified; `make test-stage10` = `304 passed`)
+- **Stage 10-B (Isolated Real PostgreSQL / Milvus / Redis Integration):** COMPLETE (`11/11` real-infra tests pass — see [`stage-10b-completion.md`](stage-10b-completion.md))
+- **Stage 10-C (Independent Review & Release Gate):** `READY` / `NOT_STARTED`
 - **Stage 10 Overall / Acceptance:** `PARTIAL` / `UNSATISFIED`
 
 ## 2. Stage 10-B Objective and Required Isolation

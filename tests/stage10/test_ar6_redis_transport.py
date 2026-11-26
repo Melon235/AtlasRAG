@@ -376,10 +376,12 @@ async def test_ar6_02_fenced_cache_requires_fence_and_rejects_stale_or_revoked_t
 
 @pytest.mark.asyncio
 async def test_ar6_02_put_fenced_query_direct_error_boundaries() -> None:
-    raw = FakeRawRedis()
-    provider = RedisCacheProvider(cast(Any, raw))
-    token = await provider.establish_query_write_fence()
-    prep_rig = build_cache_rig(require_write_fence=True, raw=raw)
+    prep_rig = build_cache_rig(require_write_fence=True)
+    await prep_rig.barrier.enforce()
+    raw = prep_rig.raw
+    provider = prep_rig.provider
+    token = await provider.get_query_write_fence()
+    assert token is not None
     prepared = await prepare(prep_rig, request("session-a"))
     assert prepared is not None
 

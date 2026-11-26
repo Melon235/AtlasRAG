@@ -2,10 +2,10 @@
 
 ## Status
 
-**PARTIAL — Stage 10-A (A-R1 through A-R6) complete and offline-verified.
-Stage 10-B (isolated real PostgreSQL/Milvus/Redis integration) and Stage 10-C
-(independent review) remain NOT_STARTED. Stage 10 overall acceptance remains
-UNSATISFIED (`PR #11` open/unmerged).**
+**PARTIAL — Stage 10-A (A-R1 through A-R6 offline) and Stage 10-B (isolated real
+PostgreSQL/Milvus/Redis integration) COMPLETE. Stage 10-C (independent review)
+remains NOT_STARTED. Stage 10 overall acceptance remains UNSATISFIED (`PR #11`
+open/unmerged).**
 
 Stage 9 remains closed under its amended acceptance scope (12/12 artifacts
 verified). Stage 10 does not merge automatically.
@@ -138,7 +138,8 @@ local disposable-cache assumption is explicit.
   [`stage-10a-verification-ledger.md`](stage-10a-verification-ledger.md), and
   [`stage-10-acceptance.md`](stage-10-acceptance.md)).
 - **Stage 10-B (isolated real PostgreSQL/Milvus/Redis integration):**
-  NOT_STARTED (see [`stage-10b-handoff.md`](stage-10b-handoff.md)).
+  COMPLETE (`11/11` real-infra tests pass; `AR4-T01` live Redis settlement
+  verified — see [`stage-10b-completion.md`](stage-10b-completion.md)).
 - **Stage 10-C (independent review):** NOT_STARTED (see
   [`stage-10-review/REVIEW_SUMMARY.md`](stage-10-review/REVIEW_SUMMARY.md)).
 - Real Qwen/BGE GPU initialization, MinerU guarded boundary measurement, RTX

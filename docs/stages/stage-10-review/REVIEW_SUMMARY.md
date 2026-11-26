@@ -180,3 +180,29 @@ Stage 10-C is not started.
 Independent review remains UNAVAILABLE. No review status is upgraded, Stage 10-B
 and Stage 10-C remain NOT_STARTED, and Stage 10 overall acceptance remains
 **UNSATISFIED**.
+
+---
+
+## Stage 10-B update (real isolated infrastructure evidence only)
+
+Stage 10-B real isolated PostgreSQL 17.8, Redis 8.2.10, and Milvus v2.6.20
+integration is now COMPLETE (`11/11` tests in
+`tests/integration/test_stage10_*.py`, CI workflow `stage10-runtime` upgraded to
+run `make test-stage10-integration`, details in
+[`../stage-10b-completion.md`](../stage-10b-completion.md)):
+
+- `AR4-T01` (Redis Transport Settlement) is now **OFFLINE_AND_REAL_INFRA_VERIFIED**
+  including `TcpFaultProxy` packet stall + `b":0\r\n"` Lua fence rejection on
+  real Redis 8.2.10.
+- Two confirmed Stage 10-B defects were fixed cleanly with regressions:
+  `B10-09-F01` (`CacheFreshnessBarrier.active_write_fence` + fail-closed
+  `expected_write_fence` in `SessionQueryCache` when startup fence reset is
+  `BYPASSED`) and `B10-04-F01` (`composition._device_matches` aligning
+  `model_device="cuda"` with `"cuda:0"` provider identity).
+- Offline verification remains passing (`304` Stage 10 tests, `3612` repo
+  offline tests, `390` mypy files, `ruff`, `architecture-check`, `12/12` Stage 9
+  artifacts).
+
+Independent review remains UNAVAILABLE. No review status is upgraded, Stage 10-C
+remains **NOT_STARTED**, and Stage 10 overall acceptance remains
+**UNSATISFIED**.

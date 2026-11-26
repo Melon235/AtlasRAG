@@ -62,6 +62,7 @@ class SessionQueryCache:
         policy: QueryCachePolicy,
         clock: Callable[[], datetime],
         require_write_fence: bool = False,
+        expected_write_fence: Callable[[], str | None] | None = None,
     ) -> None:
         if not isinstance(runtime_fingerprint, str) or not runtime_fingerprint:
             raise ValueError("runtime_fingerprint must be nonempty")
@@ -74,10 +75,16 @@ class SessionQueryCache:
         self._policy = policy
         self._clock = clock
         self._require_write_fence = require_write_fence
+        self._expected_write_fence = expected_write_fence
 
     async def lookup(self, request: UserTurnRequest) -> FinalResponse | None:
         if not self._policy.request_is_cacheable(request):
             return None
+        expected_fence: str | None = None
+        if self._expected_write_fence is not None:
+            expected_fence = self._expected_write_fence()
+            if expected_fence is None:
+                return None
         if not await self._trusted():
             return None
         key_hash = request_hash(request)
@@ -89,6 +96,8 @@ class SessionQueryCache:
                     key_hash,
                 )
                 if self._require_write_fence and fence is None:
+                    return None
+                if expected_fence is not None and fence != expected_fence:
                     return None
             else:
                 cached = await self._redis.get_query(
@@ -116,6 +125,11 @@ class SessionQueryCache:
         decision = self._policy.decide(request, result, web_invoked=web_invoked)
         if not decision.eligible:
             return None
+        expected_fence: str | None = None
+        if self._expected_write_fence is not None:
+            expected_fence = self._expected_write_fence()
+            if expected_fence is None:
+                return None
         if not await self._trusted():
             return None
         write_fence: str | None = None
@@ -127,6 +141,8 @@ class SessionQueryCache:
                     return None
                 write_fence = None
             if self._require_write_fence and write_fence is None:
+                return None
+            if expected_fence is not None and write_fence != expected_fence:
                 return None
         elif self._require_write_fence:
             return None

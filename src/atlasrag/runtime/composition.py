@@ -92,6 +92,7 @@ class SharedResources:
     knowledge_directory: Path
     deepseek_http: httpx.AsyncClient
     web_http: httpx.AsyncClient
+    cache_freshness: CacheFreshnessBarrier | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +156,15 @@ def validate_runtime_composition_config(config: RuntimeConfig) -> None:
         raise ConfigurationError
 
 
+def _device_matches(identity_device: str, configured: str) -> bool:
+    if identity_device == configured:
+        return True
+    return (
+        configured == "cuda"
+        and re.fullmatch(r"cuda:[0-9]+", identity_device) is not None
+    )
+
+
 def validate_shared_resource_contracts(shared: SharedResources) -> None:
     """Ensure composed shared resources match validated runtime config."""
 
@@ -176,7 +186,7 @@ def validate_shared_resource_contracts(shared: SharedResources) -> None:
         or embedding_identity.tokenizer_revision
         != config.models.embedding_tokenizer_revision
         or embedding_identity.dimension != config.part_i.embedding_dimension
-        or embedding_identity.device != config.models.model_device
+        or not _device_matches(embedding_identity.device, config.models.model_device)
     ):
         raise ConfigurationError
     if shared.reranker is not None:
@@ -188,7 +198,7 @@ def validate_shared_resource_contracts(shared: SharedResources) -> None:
         if (
             reranker_identity.model_id != config.models.reranker_model_id
             or reranker_identity.model_revision != config.models.reranker_model_revision
-            or reranker_identity.device != config.models.model_device
+            or not _device_matches(reranker_identity.device, config.models.model_device)
         ):
             raise ConfigurationError
 
@@ -345,6 +355,13 @@ class ApplicationComposition:
                 if response.status_code >= 400:
                     raise DependencyUnavailableError
 
+            assert self._pool is not None
+            pool = self._pool
+            freshness = CacheFreshnessBarrier(
+                redis=self._redis,
+                uow_factory=lambda: PostgresUnitOfWork(pool),
+                retry_interval_seconds=config.runtime.cache_recovery_interval_seconds,
+            )
             shared = SharedResources(
                 config=config,
                 ownership=self._ownership,
@@ -358,6 +375,7 @@ class ApplicationComposition:
                 knowledge_directory=Path(config.infrastructure.knowledge_directory),
                 deepseek_http=self._deepseek_http,
                 web_http=self._web_http,
+                cache_freshness=freshness,
             )
             validate_shared_resource_contracts(shared)
             if build_business is None:
@@ -379,13 +397,6 @@ class ApplicationComposition:
                 probe_timeout=config.runtime.health_probe_timeout_seconds,
                 refresh_interval=config.runtime.health_refresh_interval_seconds,
                 lifecycle_generation=lambda: gate.lifecycle_generation,
-            )
-            assert self._pool is not None
-            pool = self._pool
-            freshness = CacheFreshnessBarrier(
-                redis=self._redis,
-                uow_factory=lambda: PostgresUnitOfWork(pool),
-                retry_interval_seconds=config.runtime.cache_recovery_interval_seconds,
             )
             maintenance = MaintenanceCoordinator(
                 gate=gate,

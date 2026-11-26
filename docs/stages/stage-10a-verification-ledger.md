@@ -1,10 +1,11 @@
 # Stage 10-A Offline Verification Ledger
 
 Status: **Stage 10-A COMPLETE offline (`304` Stage 10 tests pass across
-`A-R1`..`A-R6`). `AR4-T01` deterministic portion is RESOLVED offline; live
-isolated Redis/PostgreSQL/Milvus settlement remains Stage 10-B (`NOT_STARTED`);
-independent review remains Stage 10-C (`NOT_STARTED`). Stage 10 overall remains
-PARTIAL; acceptance remains UNSATISFIED.**
+`A-R1`..`A-R6`, plus Stage 10-B startup-fence fail-closed and CUDA device-match
+regressions). `AR4-T01` is now `OFFLINE_AND_REAL_INFRA_VERIFIED` via
+[Stage 10-B completion](stage-10b-completion.md); independent review remains
+Stage 10-C (`NOT_STARTED`). Stage 10 overall remains PARTIAL; acceptance
+remains UNSATISFIED.**
 
 ## A-R1 Production composition — COMPLETE (offline, fake technical boundaries)
 
@@ -562,10 +563,17 @@ Added deterministic verification across
 | Check | Result |
 |---|---|
 | `make test-stage10` | PASS — 304 tests |
-| `make verify` | PASS — 3611 passed, 1 skipped (`deepeval` absent), 108 deselected |
-| `ruff check .` / `ruff format --check .` (472 files) / `mypy` (386 source files) | PASS |
+| `make verify` | PASS — 3612 passed, 1 skipped (`deepeval` absent), 119 deselected |
+| `ruff check .` / `ruff format --check .` (477 files) / `mypy` (390 source files) | PASS |
 | `make architecture-check` / `git diff --check` | PASS |
 | Stage 9 raw artifact integrity | PASS — 12/12 SHA-256 and size matches |
-| `AR4-T01` Redis transport settlement | Deterministic offline portion RESOLVED (A-R6); Real isolated Redis settlement PENDING Stage 10-B |
-| Real isolated PostgreSQL/Milvus/Redis integration | NOT_STARTED (Stage 10-B — see `docs/stages/stage-10b-handoff.md`) |
+| `AR4-T01` Redis transport settlement | OFFLINE_AND_REAL_INFRA_VERIFIED (`A-R6` + Stage 10-B) |
+| Real isolated PostgreSQL/Milvus/Redis integration | COMPLETE (Stage 10-B — see `docs/stages/stage-10b-completion.md`) |
 | Independent review | NOT_STARTED (Stage 10-C — see `docs/stages/stage-10-review/REVIEW_SUMMARY.md`) |
+
+*Stage 10-B offline regression additions incorporated into `AR6-04` and
+`AR6-07` above:* `CacheFreshnessBarrier.active_write_fence` +
+`SessionQueryCache(expected_write_fence=...)` fail-closed gate when startup
+fence reset is `BYPASSED` (`B10-09-F01`), and `composition._device_matches`
+reconciling `model_device="cuda"` with resolved provider device `"cuda:0"`
+(`B10-04-F01`).

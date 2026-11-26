@@ -191,3 +191,37 @@ def test_stage4_ci_uses_frozen_cpu_dependencies_and_owned_ephemeral_services() -
         "up -d searxng",
     ):
         assert excluded not in stage4.casefold()
+
+
+def test_stage10_ci_uses_isolated_real_services_and_cleanup() -> None:
+    workflow = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
+    stage10 = _job(workflow, "stage10-runtime", "stage9-benchmark")
+    verify_script = (REPOSITORY_ROOT / "scripts" / "stage10_verify.sh").read_text(
+        encoding="utf-8"
+    )
+    makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    for reference in (
+        CHECKOUT_REFERENCE,
+        SETUP_PYTHON_REFERENCE,
+        SETUP_UV_REFERENCE,
+        SETUP_GO_REFERENCE,
+    ):
+        assert reference in stage10
+    assert "make test-stage10-integration" in stage10
+    assert (
+        "COMPOSE_PROJECT_NAME: atlasrag-stage10-ci-${{ github.run_id }}-"
+        "${{ github.run_attempt }}"
+    ) in stage10
+    assert "cp deploy/local/.env.example deploy/local/.env" in stage10
+    assert "logs --no-color postgres redis etcd minio milvus" in stage10
+    assert (
+        stage10.index("if: failure()")
+        < stage10.index("logs --no-color")
+        < stage10.index("if: always()")
+        < stage10.index("down -v --remove-orphans")
+    )
+    assert "postgres redis etcd minio milvus" in verify_script
+    assert "scripts/stage10_verify.sh --integration-only" in makefile
+    assert "FLUSHDB" not in verify_script
+    assert "FLUSHALL" not in verify_script

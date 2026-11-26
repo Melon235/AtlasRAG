@@ -167,13 +167,15 @@ Stage 10 provides:
 
 ```bash
 make test-stage10
+make test-stage10-integration
 make stage10-verify
 ```
 
-`make test-stage10` and `make stage10-verify` are offline and deterministic
-(304 Stage 10 tests covering `A-R1`–`A-R6`); real isolated Stage 10
-infrastructure integration (Stage 10-B) and independent review (Stage 10-C) are
-not yet started.
+`make test-stage10` is offline and deterministic (`304` Stage 10 tests covering
+`A-R1`–`A-R6`); `make test-stage10-integration` runs the `11` Stage 10-B real
+isolated PostgreSQL/Milvus/Redis tests via `scripts/stage10_verify.sh --integration-only`;
+`make stage10-verify` runs offline verification followed by real isolated
+Stage 10-B integration; independent review (Stage 10-C) remains pending.
 
 Ordinary `make verify` remains network-free, Docker-free, parser-SDK-free,
 model-free, and independent of PostgreSQL, Redis, Milvus, and SearXNG.

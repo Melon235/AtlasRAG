@@ -576,6 +576,11 @@ def build_cache_rig(
     raw = raw if raw is not None else FakeRawRedis(page_size=page_size)
     provider = RedisCacheProvider(raw, scan_batch_size=scan_batch_size)  # type: ignore[arg-type]
     marker = MarkerFactory(required=marker_required)
+    barrier = CacheFreshnessBarrier(
+        redis=provider,
+        uow_factory=marker,  # type: ignore[arg-type]
+        retry_interval_seconds=retry_interval,
+    )
     cache = SessionQueryCache(
         redis=provider,
         uow_factory=marker,  # type: ignore[arg-type]
@@ -584,11 +589,9 @@ def build_cache_rig(
         policy=QueryCachePolicy(enabled=enabled, max_entry_bytes=max_entry_bytes),
         clock=lambda: NOW,
         require_write_fence=require_write_fence,
-    )
-    barrier = CacheFreshnessBarrier(
-        redis=provider,
-        uow_factory=marker,  # type: ignore[arg-type]
-        retry_interval_seconds=retry_interval,
+        expected_write_fence=(
+            (lambda: barrier.active_write_fence) if require_write_fence else None
+        ),
     )
     return CacheRig(
         raw=raw,
@@ -611,6 +614,11 @@ def rebuild_rig(rig: CacheRig, *, require_write_fence: bool | None = None) -> Ca
     fenced = (
         rig.require_write_fence if require_write_fence is None else require_write_fence
     )
+    barrier = CacheFreshnessBarrier(
+        redis=rig.provider,
+        uow_factory=rig.marker,  # type: ignore[arg-type]
+        retry_interval_seconds=rig.retry_interval,
+    )
     cache = SessionQueryCache(
         redis=rig.provider,
         uow_factory=rig.marker,  # type: ignore[arg-type]
@@ -621,11 +629,7 @@ def rebuild_rig(rig: CacheRig, *, require_write_fence: bool | None = None) -> Ca
         ),
         clock=lambda: NOW,
         require_write_fence=fenced,
-    )
-    barrier = CacheFreshnessBarrier(
-        redis=rig.provider,
-        uow_factory=rig.marker,  # type: ignore[arg-type]
-        retry_interval_seconds=rig.retry_interval,
+        expected_write_fence=((lambda: barrier.active_write_fence) if fenced else None),
     )
     return CacheRig(
         raw=rig.raw,

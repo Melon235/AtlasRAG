@@ -135,13 +135,24 @@ async def test_ar6_04_canonical_pg_error_always_propagates_and_outage_startup_ro
 
     # Startup enforce() fails to rotate due to Redis outage -> BYPASSED
     assert await rig.barrier.enforce() is CacheFreshnessState.BYPASSED
+    assert rig.barrier.state is CacheFreshnessState.BYPASSED
+    assert rig.barrier.active_write_fence is None
     assert rig.raw.values[QUERY_WRITE_FENCE_KEY] == "pre-restart-fence"
+
+    # Even if Redis recovers immediately before recover_if_due(), SessionQueryCache
+    # MUST NOT read or write under the un-rotated pre-restart fence while BYPASSED.
+    rig.raw.set_mode = "store"
+    rig.raw.values[_query_key("stale-s")] = '{"stale":true}'
+    assert await rig.cache.lookup(request("stale-s")) is None
+    assert await prepare(rig, request("stale-s")) is None
 
     # Once Redis recovers and retry interval elapses, recover_if_due() rotates
     # away from the pre-startup fence once.
-    rig.raw.set_mode = "store"
     clock.advance(11.0)
     assert await rig.barrier.recover_if_due() is CacheFreshnessState.TRUSTED
+    state_after_recovery: CacheFreshnessState = rig.barrier.state
+    assert state_after_recovery is CacheFreshnessState.TRUSTED
+    assert rig.barrier.active_write_fence == rig.raw.values[QUERY_WRITE_FENCE_KEY]
     assert rig.raw.values[QUERY_WRITE_FENCE_KEY] != "pre-restart-fence"
 
 
