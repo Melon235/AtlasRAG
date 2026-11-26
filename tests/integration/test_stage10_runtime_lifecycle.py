@@ -28,7 +28,8 @@ from atlasrag.repositories.postgres.records import IngestionStatus
 from atlasrag.repositories.postgres.uow import PostgresUnitOfWork
 from atlasrag.runtime import health as health_module
 from atlasrag.runtime.composition import ApplicationComposition
-from atlasrag.runtime.health import DependencyHealth
+from atlasrag.runtime.coordinator import ApplicationCoordinator
+from atlasrag.runtime.health import DependencyHealth, HealthSnapshot
 from atlasrag.runtime.modes import RuntimeMode
 from atlasrag.services.sync.models import ServingSafety, SyncOutcome
 from integration.stage10_helpers import (
@@ -541,6 +542,26 @@ async def test_b10_06_concurrency_drain_and_maintenance_exclusion(
             await coordinator.shutdown()
 
 
+async def _wait_for_dependency_health(
+    coordinator: ApplicationCoordinator,
+    field_name: str,
+    *,
+    expected: DependencyHealth = DependencyHealth.HEALTHY,
+    timeout_seconds: float = 15.0,
+    interval_seconds: float = 0.25,
+) -> HealthSnapshot:
+    """Poll coordinator health until a dependency recovers past transport backoff."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+    while True:
+        snapshot = await coordinator.health()
+        if getattr(snapshot, field_name) is expected:
+            return snapshot
+        if loop.time() >= deadline:
+            return snapshot
+        await asyncio.sleep(interval_seconds)
+
+
 @pytest.mark.asyncio
 async def test_b10_12_live_dependency_health_degradation_and_shutdown(
     postgres_dsn: str,
@@ -630,7 +651,8 @@ async def test_b10_12_live_dependency_health_degradation_and_shutdown(
                     )
                 ).trace_id
                 redis_proxy.mode = "passthrough"
-                assert (await coord.health()).redis is DependencyHealth.HEALTHY
+                recovered_redis = await _wait_for_dependency_health(coord, "redis")
+                assert recovered_redis.redis is DependencyHealth.HEALTHY
 
                 # 3) SearXNG outage -> soft dependency failure only.
                 http_state.searxng_status = 503
@@ -653,11 +675,7 @@ async def test_b10_12_live_dependency_health_degradation_and_shutdown(
                         UserTurnRequest(session_id="milvus-down", query="anything")
                     )
                 milvus_proxy.mode = "passthrough"
-                for _ in range(5):
-                    recovered_snap = await coord.health()
-                    if recovered_snap.milvus is DependencyHealth.HEALTHY:
-                        break
-                    await asyncio.sleep(0.2)
+                recovered_snap = await _wait_for_dependency_health(coord, "milvus")
                 assert recovered_snap.milvus is DependencyHealth.HEALTHY
                 now_health += 2.0
                 assert await coord.readiness() is True
@@ -675,11 +693,7 @@ async def test_b10_12_live_dependency_health_degradation_and_shutdown(
                         UserTurnRequest(session_id="pg-down", query="anything")
                     )
                 pg_proxy.mode = "passthrough"
-                for _ in range(5):
-                    recovered_pg_snap = await coord.health()
-                    if recovered_pg_snap.postgres is DependencyHealth.HEALTHY:
-                        break
-                    await asyncio.sleep(0.2)
+                recovered_pg_snap = await _wait_for_dependency_health(coord, "postgres")
                 assert recovered_pg_snap.postgres is DependencyHealth.HEALTHY
                 now_health += 2.0
                 assert await coord.readiness() is True

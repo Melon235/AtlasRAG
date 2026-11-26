@@ -53,6 +53,6 @@ Stage 10-B runs `ApplicationComposition` and `build_default_business` against re
 
 - `make test-stage10-integration` (isolated Compose `postgres:17.8-alpine`, `redis:8.2.10-alpine`, `milvusdb/milvus:v2.6.20`): PASS — `11 passed` (`make verify` / `test-stage10` / `test-stage10-integration` verified cleanly on the final Stage 10-B tree with zero leaked containers/volumes).
 - `make test-stage10`: PASS — `304 passed`.
-- `make verify`: PASS — `3612 passed, 1 skipped` (`deepeval`), `119 deselected`, `ruff format --check .` (`477` files), `ruff check .`, `mypy src/atlasrag scripts tests` (`390` source files), `make architecture-check`, and `git diff --check`.
+- `make verify`: PASS — `3612 passed, 1 skipped` (`deepeval`), `119 deselected`, `ruff format --check .` (`478` files), `ruff check .`, `mypy src/atlasrag scripts tests` (`390` source files), `make architecture-check`, and `git diff --check`.
 - Stage 9 raw artifacts (`docs/stages/stage-09-closeout/artifact_integrity.json`): PASS — `12/12` SHA-256 and byte-size matches.
 - **Stage 10-C Handoff:** Perform independent multi-angle review (`R10-01`..`R10-04`, closing `G-10`) and verify remote CI + PR #11 readiness before any merge to `main`. Real Qwen/BGE CUDA weight loading / RTX 3070 VRAM checks, MinerU subprocess settlement, OS signal/launcher termination, and Stage 11 API/UI/benchmark/performance work remain deferred beyond Stage 10-B/C.
