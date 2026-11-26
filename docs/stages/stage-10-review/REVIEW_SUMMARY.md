@@ -118,3 +118,34 @@ retained with the corrected conservative outcome.
 
 Independent review remains UNAVAILABLE. No review status is upgraded and
 Stage 10-C is not started.
+
+---
+
+## Stage 10-A A-R5 update (deterministic evidence only)
+
+R10-02 gap G-06 (Parent Cache) now has complete deterministic offline evidence
+across `AR5-01`..`AR5-12` (`tests/stage10/test_ar5_parent_cache.py`,
+`tests/stage10/test_ar5_lifecycle.py`, preserved
+`tests/stage10/test_parent_cache.py`, and `tests/persistence/test_postgres_contracts.py`):
+
+- Production `build_default_business` wiring, TTL, key isolation, and Query
+  Cache independence (`test_ar5_01_production_builder_wires_parent_cache_with_ttl_and_key_isolation`).
+- Valid hit authoritative provenance, header-only metadata validation without
+  reading canonical `chunks.content`, and partial-header fallback
+  (`test_valid_text_parent_cache_hit_reconstructs_authoritative_provenance`,
+  `test_ar5_02_valid_hit_works_with_single_header_reader_and_partial_header_fallback`).
+- Miss/canonical fill, Redis GET/SET failures, malformed payloads, mismatched
+  identities, cancellation propagation (`test_ar5_03_*`, `test_ar5_04_*`).
+- Non-resurrection for missing, stale, unpublished, or wrong-lineage contexts
+  and full metadata validation equivalence (`test_ar5_05_*`, `test_ar5_06_*`).
+- Exact content/whitespace-only handling, mixed `TEXT_PARENT`/`TABLE` ordering,
+  duplicate rejection, canonical `TABLE`, disabled cache, UoW/Query Lease
+  lifetimes, maintenance exclusion, and R1→R2/deletion lifecycle (`test_ar5_07_*`
+  through `test_ar5_12_*`).
+
+Five A-R5 defects (`A-R5-F01`..`A-R5-F05`) were confirmed against `6ffab31` and
+fixed with passing regressions. `AR4-T01` (Redis transport settlement) remains
+OPEN for A-R6 deterministic closure and Stage 10-B real isolated verification.
+
+Independent review remains UNAVAILABLE. No review status is upgraded and
+Stage 10-C is not started.

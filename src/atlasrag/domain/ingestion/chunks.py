@@ -358,6 +358,54 @@ def derive_chunk_id(
     )
 
 
+def validate_chunk_id(value: str) -> str:
+    """Validate canonical chunk identifier syntax."""
+    return _validate_chunk_id(value)
+
+
+def validate_text_parent_invariants(
+    *,
+    document_id: str,
+    revision_id: str,
+    chunk_id: str,
+    chunk_type: ChunkType,
+    retrieval_role: RetrievalRole,
+    chunking_strategy: ChunkingStrategy,
+    parent_id: str | None,
+    provenance: ChunkProvenance,
+    table_slice: TableSlice | None,
+    content_hash: str,
+) -> None:
+    """Validate canonical TEXT_PARENT metadata, role, lineage, and chunk identity."""
+    validate_document_id(document_id)
+    validate_revision_id(revision_id)
+    _validate_chunk_id(chunk_id)
+    validate_sha256_hex(content_hash, "chunk content hash")
+    valid_shape = (
+        chunk_type is ChunkType.TEXT_PARENT
+        and retrieval_role is RetrievalRole.CONTEXT_ONLY
+        and chunking_strategy is ChunkingStrategy.STRUCTURE
+        and parent_id is None
+        and isinstance(provenance, TextParentProvenance)
+        and table_slice is None
+    )
+    if not valid_shape:
+        raise ValueError(
+            "TEXT_PARENT requires CONTEXT_ONLY STRUCTURE Parent provenance, "
+            "no parent_id, and no table_slice"
+        )
+    expected_chunk_id = derive_chunk_id(
+        document_id=document_id,
+        revision_id=revision_id,
+        chunk_type=chunk_type,
+        chunking_strategy=chunking_strategy,
+        provenance=provenance,
+        content_hash=content_hash,
+    )
+    if chunk_id != expected_chunk_id:
+        raise ValueError("chunk_id does not match canonical chunk data")
+
+
 class ChunkRecord(FrozenModel):
     """One deterministic canonical Parent, Child, or Table chunk."""
 
@@ -402,14 +450,13 @@ class ChunkRecord(FrozenModel):
     @model_validator(mode="after")
     def _type_role_strategy_lineage_and_identity(self) -> Self:
         if self.chunk_type is ChunkType.TEXT_PARENT:
-            valid_shape = (
+            if not (
                 self.retrieval_role is RetrievalRole.CONTEXT_ONLY
                 and self.chunking_strategy is ChunkingStrategy.STRUCTURE
                 and self.parent_id is None
                 and isinstance(self.provenance, TextParentProvenance)
                 and self.table_slice is None
-            )
-            if not valid_shape:
+            ):
                 raise ValueError(
                     "TEXT_PARENT requires CONTEXT_ONLY STRUCTURE Parent provenance, "
                     "no parent_id, and no table_slice"
@@ -419,6 +466,22 @@ class ChunkRecord(FrozenModel):
                 span.char_end - span.char_start for span in self.provenance.source_spans
             ) > len(self.raw_content):
                 raise ValueError("TEXT_PARENT source_spans exceed rendered raw_content")
+            expected_content_hash = derive_chunk_content_hash(self.raw_content)
+            if self.content_hash != expected_content_hash:
+                raise ValueError("content_hash does not match canonical raw_content")
+            validate_text_parent_invariants(
+                document_id=self.document_id,
+                revision_id=self.revision_id,
+                chunk_id=self.chunk_id,
+                chunk_type=self.chunk_type,
+                retrieval_role=self.retrieval_role,
+                chunking_strategy=self.chunking_strategy,
+                parent_id=self.parent_id,
+                provenance=self.provenance,
+                table_slice=self.table_slice,
+                content_hash=self.content_hash,
+            )
+            return self
         elif self.chunk_type is ChunkType.TEXT_CHILD:
             valid_shape = (
                 self.retrieval_role is RetrievalRole.RETRIEVABLE

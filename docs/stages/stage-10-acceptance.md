@@ -21,16 +21,16 @@ SATISFIED; unavailable infrastructure/GPU evidence is marked PARTIAL.
 | S10-11 | SATISFIED (offline) | Recovery abort returns BLOCKED; failed recovery stays blocked; successful recovery re-verifies knowledge, restores readiness and reopens admission |
 | S10-12 | SATISFIED (offline) | Barrier ordering, marker ambiguity/rollback/confirm-read failures, Redis outage/recovery, namespace invalidation and throttled recovery over fake PG/Redis |
 | S10-13 | SATISFIED (offline) | Frozen keys, raw request hashing, session isolation, runtime fingerprint and policy eligibility preserved and re-verified |
-| S10-14 | PARTIAL | TEXT_PARENT valid-hit test; miss/disabled/TABLE matrix missing |
-| S10-15 | PARTIAL (offline) | Guarded providers/guard; MinerU boundary wired; queued guard work cannot begin after shutdown; no real GPU evidence |
-| S10-16 | PARTIAL | Composition initializes one model; no real model initialization test |
+| S10-14 | SATISFIED (offline) | Complete A-R5 Parent Context Cache matrix (`AR5-01`..`AR5-12`): canonical metadata equivalence, authoritative provenance, miss/fill, Redis faults/malformed payloads, stale/deleted isolation, mixed `TEXT_PARENT`/`TABLE` ordering, exact content/whitespace handling, UoW lifetime, and lifecycle tests; real PostgreSQL/Redis integration remains Stage 10-B |
+| S10-15 | PARTIAL (offline) | Guarded providers/guard; MinerU boundary wired; queued guard work cannot begin after shutdown; real GPU/MinerU SDK evidence deferred to later deployment stages |
+| S10-16 | PARTIAL | Composition initializes one model; real GPU model initialization deferred to later deployment stages |
 | S10-17 | PARTIAL (offline) | Health/readiness tracked and settled; lifecycle-generation association rejects stale probes; bounded single-flight probes; no isolated real health-probe integration |
-| S10-18 | PARTIAL (offline) | Coordinator drain/cancel/close; cancellation settlement, bounded timeout, concurrent/repeated shutdown; no real worker/GPU settlement |
-| S10-19 | PARTIAL | 3490 pass offline; isolated real-infrastructure suite not executed |
-| S10-20 | SATISFIED | Architecture checks, scope tests updated, Stage 9 artifacts preserved |
+| S10-18 | PARTIAL (offline) | Coordinator drain/cancel/close; cancellation settlement, bounded timeout, concurrent/repeated shutdown; OS signal and launcher termination deferred to later deployment stages |
+| S10-19 | PARTIAL | 3547 passed offline (1 skipped, 108 deselected); isolated real-infrastructure suite not executed |
+| S10-20 | SATISFIED | Architecture checks, scope tests updated, Stage 9 artifacts preserved (12/12 SHA-256/size verified) |
 
-A-R1, A-R2, A-R3 and A-R4 deterministic matrices are complete and passing.
-Stage 10-A remains **PARTIAL** because the A-R5 Parent Cache matrix and A-R6
-reconciliation are incomplete, and Stage 10 overall remains PARTIAL pending
-Stage 10-B real integration and Stage 10-C independent review. Acceptance
-remains UNSATISFIED.
+A-R1, A-R2, A-R3, A-R4 (deterministic matrix) and A-R5 are complete and passing
+offline; `AR4-T01` remains OPEN. Stage 10-A remains **PARTIAL** pending A-R6
+final verification and reconciliation, and Stage 10 overall remains PARTIAL
+pending Stage 10-B isolated PostgreSQL/Milvus/Redis integration and Stage 10-C
+independent review. Acceptance remains UNSATISFIED.

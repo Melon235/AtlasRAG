@@ -1,8 +1,9 @@
 # Stage 10-A Offline Verification Ledger
 
-Status: **PARTIAL**. One hundred ninety-six deterministic Stage 10 tests
-pass. A-R1, A-R2, A-R3 and A-R4 are COMPLETE offline; A-R5 and A-R6 remain
-incomplete, and no offline PASS is claimed for missing rows. Real isolated
+Status: **PARTIAL**. Two hundred fifty-two deterministic Stage 10 tests pass.
+A-R1, A-R2, A-R3, A-R4 (deterministic matrix) and A-R5 are COMPLETE offline;
+`AR4-T01` remains OPEN and A-R6 remains PENDING, and no offline PASS is claimed
+for missing Stage 10-B/10-C rows. Real isolated PostgreSQL/Milvus/Redis
 infrastructure remains Stage 10-B; independent review remains Stage 10-C.
 
 ## A-R1 Production composition — COMPLETE (offline, fake technical boundaries)
@@ -459,6 +460,23 @@ Bounded caller waiting is the coordinator timeout; it does not prove remote
 non-execution, so settlement failure retains resources rather than claiming
 success.
 
+Pending transport follow-up:
+
+```text
+AR4-T01 — Redis Transport Settlement
+
+Status: OPEN
+
+Remaining:
+Explicit production Redis connection/socket timeout and retry policy.
+Safety against mutation-capable Redis operations that may execute after
+an ambiguous local transport failure.
+
+Next:
+Targeted deterministic closure during A-R6.
+Appropriate real isolated verification during Stage 10-B.
+```
+
 ### AR4-11 — Namespace isolation and disabled cache
 
 Files: `tests/stage10/test_ar4_freshness.py`, `tests/stage10/test_ar4_identity.py`
@@ -491,23 +509,55 @@ File: `tests/stage10/test_ar4_lifecycle.py`
 The F-03 regression remains intact (cache failures do not escape settlement and
 are not reported STORED); its expected outcome is now the conservative UNKNOWN.
 
-## A-R5 Parent Cache
+## A-R5 Parent Cache — COMPLETE (offline)
 
-| Scenario | Test | Result |
-|---|---|---|
-| Valid TEXT_PARENT hit, authoritative provenance | `test_valid_text_parent_cache_hit_reconstructs_authoritative_provenance` | PASS |
-| Miss/fill, Redis unavailable, malformed, stale | — | MISSING_TEST |
-| Disabled cache, TABLE canonical | — | MISSING_TEST |
+All A-R5 tests use the real `ParentContextService`, `RedisCacheProvider`,
+`CanonicalChunkHeader`, `ChunkRepository`, `validate_text_parent_chunk_header`,
+`map_chunk_from_stored`, `RuntimeGate`, `CacheFreshnessBarrier`,
+`MaintenanceCoordinator`, `ApplicationCoordinator`, and `build_default_business`
+over controlled `FakeRawRedis` / `FakeUnitOfWorkFactory` / `FakeConnection`
+boundaries (`tests/stage10/parent_cache_support.py`).
+
+| Requirement | Scenario / invariant | Test(s) | Result |
+|---|---|---|---|
+| AR5-01 | Production `build_default_business` wires `ParentContextService` with shared `redis_provider`, enabled/disabled toggle, configured TTL, revision/context key isolation, and Query Cache independence | `tests/stage10/test_ar5_parent_cache.py::test_ar5_01_production_builder_wires_parent_cache_with_ttl_and_key_isolation` | PASS |
+| AR5-02 | Valid `TEXT_PARENT` hit preserves authoritative canonical provenance, exact content, avoids full canonical content read (`list_by_ids`/`get_by_id`), works with single-header reader, and falls back to full read when partial header omits metadata | `tests/stage10/test_parent_cache.py::test_valid_text_parent_cache_hit_reconstructs_authoritative_provenance`, `tests/stage10/test_ar5_parent_cache.py::test_ar5_02_valid_hit_works_with_single_header_reader_and_partial_header_fallback` | PASS |
+| AR5-03 | Miss reads canonical chunk, validates, fills `atlasrag:parent:{revision_id}:{parent_id}` with exact serialized `CachedParentContext` and configured TTL, matches disabled canonical path, and hits next | `tests/stage10/test_ar5_parent_cache.py::test_ar5_03_miss_reads_canonical_fills_exact_payload_ttl_and_hits_next` | PASS |
+| AR5-04 | GET unavailable/timeout, malformed JSON, invalid schema, blank content, mismatched doc/rev/context/type, SET failure/timeout/ambiguous ack fall back to canonical without breaking serving; cancellation propagates | `tests/stage10/test_ar5_parent_cache.py::test_ar5_04_get_faults_and_malformed_payloads_fall_back_to_canonical`, `test_ar5_04_mismatched_cached_identity_or_type_falls_back_to_canonical`, `test_ar5_04_put_failures_and_ambiguous_ack_still_return_canonical_evidence`, `test_ar5_04_cancellation_during_redis_propagates` | PASS |
+| AR5-05 | Missing document/chunk, stale revision, unpublished revision, wrong document/chunk identity, canonical `TEXT_CHILD` / `TABLE`, invalid `parent_id` fail closed even with valid-looking Redis entry | `tests/stage10/test_ar5_parent_cache.py::test_ar5_05_redis_cannot_resurrect_missing_stale_unpublished_or_wrong_lineage` | PASS |
+| AR5-06 | Cache hit matches full `map_chunk_from_stored` validation across metadata, strategy metadata, retrieval role, chunking strategy, provenance type, table_slice, source_anchor, sheet_name, single-line section_path, and chunk_id digest; canonical provenance overrides disagreeing cached provenance; `ChunkRepository` normalizes corrupt header rows to `CanonicalDataError` | `tests/stage10/test_ar5_parent_cache.py::test_ar5_06_cache_hit_matches_full_canonical_metadata_validation`, `test_ar5_06_authoritative_provenance_overrides_cached_provenance`, `test_ar5_06_repository_header_validation_errors_normalize_to_canonical`, `tests/persistence/test_postgres_contracts.py::test_chunk_header_lookup_projects_metadata_without_content_and_normalizes` | PASS |
+| AR5-07 | Exact preservation of leading/trailing whitespace, newlines, tabs, and multilingual text; legal whitespace-only nonempty `TEXT_PARENT` returns canonical `LocalEvidence` and bypasses nonblank `CachedParentContext` population | `tests/stage10/test_ar5_parent_cache.py::test_ar5_07_exact_content_preservation_and_whitespace_cacheability` | PASS |
+| AR5-08 | Exact ordering preserved for `TEXT_PARENT`-only, `TABLE`-only, `TEXT_PARENT->TABLE`, `TABLE->TEXT_PARENT`, `TEXT_PARENT->TABLE->TEXT_PARENT`, multi-doc, and mixed hit/miss batches; mixed batches cache `TEXT_PARENT` without caching `TABLE`; duplicate `context_id` across complete input rejected before Redis/DB | `tests/stage10/test_ar5_parent_cache.py::test_ar5_08_ordering_mixed_hits_misses_multi_doc_and_duplicates` | PASS |
+| AR5-09 | `TABLE` remains canonical with `TableSlice` and `source_anchor`, ignores unrelated Redis keys, performs zero `get_parent`/`put_parent`, and fails closed on missing/invalid `TABLE` | `tests/stage10/test_ar5_parent_cache.py::test_ar5_09_table_remains_canonical_and_ignores_unrelated_redis_keys` | PASS |
+| AR5-10 | Disabled cache and `cache=None` perform zero GET/SET/DELETE/UNLINK calls while returning valid ordered canonical `TEXT_PARENT` and `TABLE` evidence | `tests/stage10/test_ar5_parent_cache.py::test_ar5_10_disabled_and_no_provider_skip_all_redis_ops` | PASS |
+| AR5-11 | Delayed Redis GET and SET hold zero open PostgreSQL UoWs; document reads deduplicated; misses and headers batched; cancellation leaks zero UoWs/Query Leases; maintenance waits in `DRAINING` during active expansion | `tests/stage10/test_ar5_lifecycle.py::test_ar5_11_delayed_redis_get_and_set_hold_zero_postgres_uows`, `test_ar5_11_cancellation_during_delayed_expansion_never_leaks_uow_or_lease`, `test_ar5_11_maintenance_cannot_mutate_while_admitted_parent_expansion_runs` | PASS |
+| AR5-12 | Full lifecycle: R1 miss/fill → R1 hit → maintenance publishes R2 & invalidates only `atlasrag:query:*` → stale R1 rejected → R2 miss/fill → R2 hit → deleted doc rejected despite R2 Redis entry; cache-enabled matches disabled | `tests/stage10/test_ar5_lifecycle.py::test_ar5_12_revision_upgrade_deletion_and_query_cache_invalidation_lifecycle` | PASS |
+
+### A-R5 confirmed defects and regressions
+
+Each regression below was executed against the pre-A-R5 codebase (`6ffab31`); the
+pre-fix result is the directly observed failure before applying minimal fixes.
+
+| ID | Defect | Regression(s) | Pre-fix result |
+|---|---|---|---|
+| A-R5-F01 | `CanonicalChunkHeader` omitted `sheet_name`, `metadata`, and `strategy_metadata`, so cache hits skipped `ChunkPersistenceMetadataV1`, `ChunkStrategyMetadataV1`, `normalize_section_path`, and `derive_chunk_id` checks | `test_cache_hit_rejects_corrupt_canonical_persistence_metadata` (`test_ar5_06_cache_hit_matches_full_canonical_metadata_validation`) | Falsely returned cached evidence (`DID NOT RAISE CanonicalDataError`) |
+| A-R5-F02 | `ParentContextService.expand` required `all(EvidenceType.TEXT_PARENT)` so mixed `TEXT_PARENT`/`TABLE` batches bypassed Parent Cache completely | `test_mixed_text_parent_and_table_uses_parent_cache_without_caching_table` (`test_ar5_08_ordering_mixed_hits_misses_multi_doc_and_duplicates`) | Zero Redis `get_parent` / `put_parent` calls on `TEXT_PARENT` items |
+| A-R5-F03 | Cache miss fill unconditionally constructed `CachedParentContext` (`_nonblank` content validator), crashing on canonically valid whitespace-only nonempty `TEXT_PARENT` chunks | `test_whitespace_only_canonical_parent_returns_evidence_without_cache_fill` (`test_ar5_07_exact_content_preservation_and_whitespace_cacheability`) | Raised `pydantic.ValidationError` instead of returning canonical evidence |
+| A-R5-F04 | `_expand_text_cached` opened the PostgreSQL UoW before `cache.get_parent`, issued repeated document lookups per ref, and used single-item `get_by_id` on misses instead of batched `list_by_ids` | `test_redis_lookup_runs_outside_postgres_uow_and_deduplicates_db_reads` (`test_ar5_11_delayed_redis_get_and_set_hold_zero_postgres_uows`) | `active_uows > 0` during Redis GET; redundant DB calls |
+| A-R5-F05 | `ChunkRepository.get_canonical_context_header` called `CanonicalChunkHeader.model_validate` directly without `validate_canonical_row` | `test_repository_get_canonical_context_header_normalizes_corrupt_row` (`test_ar5_06_repository_header_validation_errors_normalize_to_canonical`) | Raised `pydantic.ValidationError` instead of `CanonicalDataError` |
 
 ## A-R6 Final verification
 
 | Check | Result |
 |---|---|
-| `make test-stage10` | PASS — 196 tests |
-| `pytest` full | PASS — 3490 passed, 1 skipped, 108 deselected |
-| ruff / mypy / architecture / format / diff | PASS |
-| Real isolated infrastructure | NOT_EXECUTED (Stage 10-B) |
+| `make test-stage10` | PASS — 252 tests |
+| `make verify` | PASS — 3547 passed, 1 skipped, 108 deselected |
+| ruff / mypy (383 files) / architecture / format / diff | PASS |
+| Stage 9 raw artifact integrity | PASS — 12/12 SHA-256 and size matches |
+| `AR4-T01` Redis transport settlement | OPEN (targeted in A-R6; Stage 10-B real infra) |
+| Real isolated PostgreSQL/Milvus/Redis | NOT_EXECUTED (Stage 10-B) |
 | Independent review | NOT_EXECUTED (Stage 10-C) |
 
-A-R6 remains PENDING: the offline suites pass, but the A-R5 Parent Cache matrix
-and Stage 10-B/10-C evidence are absent.
+A-R6 remains PENDING: A-R1 through A-R5 offline matrices pass, while `AR4-T01`,
+general Stage 10 documentation synchronization, and Stage 10-B/10-C evidence
+remain open.

@@ -5,21 +5,63 @@ from typing import Any, cast
 
 import pytest
 
+from atlasrag._canonical import canonical_sha256
 from atlasrag.domain.enums import EvidenceType, SourceType
 from atlasrag.domain.evidence import EvidenceRef, LocalProvenance
+from atlasrag.domain.ingestion.chunks import (
+    ChunkingStrategy,
+    ChunkType,
+    ElementSpan,
+    RetrievalRole,
+    TextParentProvenance,
+    build_canonical_chunk,
+)
+from atlasrag.domain.ingestion.source import derive_document_id, derive_revision_id
 from atlasrag.providers.cache.models import CachedParentContext
 from atlasrag.repositories.postgres.chunks import CanonicalChunkHeader
 from atlasrag.repositories.postgres.records import (
     IngestionStatus,
     StoredChunk,
-    StoredChunkType,
     StoredDocument,
 )
+from atlasrag.services.ingestion.chunking import (
+    DEFAULT_CHUNKER_BEHAVIOR_VERSION,
+    PINNED_DEFAULT_CHUNKING_PROFILE_FINGERPRINT,
+)
+from atlasrag.services.ingestion.mapping import map_chunk_to_stored
 from atlasrag.services.local_evidence.parent_context import ParentContextService
 
-DOC = "d" * 64
-REV = "r" * 64
-CTX = "c" * 64
+DOC = derive_document_id("guide.md")
+REV = derive_revision_id(
+    DOC, canonical_sha256({"seed": "guide"}), canonical_sha256({"pipeline": "v1"})
+)
+_CANONICAL_PARENT = map_chunk_to_stored(
+    build_canonical_chunk(
+        document_id=DOC,
+        revision_id=REV,
+        chunk_type=ChunkType.TEXT_PARENT,
+        retrieval_role=RetrievalRole.CONTEXT_ONLY,
+        chunking_strategy=ChunkingStrategy.STRUCTURE,
+        raw_content="  canonical parent  ",
+        parent_id=None,
+        order=0,
+        section_path=("Intro",),
+        provenance=TextParentProvenance(
+            source_spans=(
+                ElementSpan(
+                    element_id="elem_" + "1" * 64,
+                    element_order=0,
+                    char_start=0,
+                    char_end=len("  canonical parent  "),
+                ),
+            )
+        ),
+    ),
+    chunker_behavior_version=DEFAULT_CHUNKER_BEHAVIOR_VERSION,
+    profile_fingerprint=PINNED_DEFAULT_CHUNKING_PROFILE_FINGERPRINT,
+    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+)
+CTX = _CANONICAL_PARENT.chunk_id
 
 
 def _document() -> StoredDocument:
@@ -39,6 +81,9 @@ def _document() -> StoredDocument:
 
 
 class _Chunks:
+    def __init__(self) -> None:
+        self.full_reads = 0
+
     async def get_canonical_context_header(
         self, document_id: str, revision_id: str, chunk_id: str
     ) -> CanonicalChunkHeader:
@@ -46,24 +91,22 @@ class _Chunks:
             document_id=document_id,
             revision_id=revision_id,
             chunk_id=chunk_id,
-            chunk_type=StoredChunkType.TEXT_PARENT,
+            chunk_type=_CANONICAL_PARENT.chunk_type,
             parent_id=None,
-            section_path=("Intro",),
+            section_path=_CANONICAL_PARENT.section_path,
+            source_anchor=_CANONICAL_PARENT.source_anchor,
+            sheet_name=_CANONICAL_PARENT.sheet_name,
+            metadata=_CANONICAL_PARENT.metadata,
+            strategy_metadata=_CANONICAL_PARENT.strategy_metadata,
         )
 
     async def list_by_ids(self, chunk_ids: tuple[str, ...]) -> tuple[StoredChunk, ...]:
+        self.full_reads += 1
         return tuple([await self.get_by_id(chunk_id) for chunk_id in chunk_ids])
 
     async def get_by_id(self, chunk_id: str) -> StoredChunk:
-        return StoredChunk(
-            chunk_id=chunk_id,
-            document_id=DOC,
-            revision_id=REV,
-            chunk_type=StoredChunkType.TEXT_PARENT,
-            content="  canonical parent  ",
-            section_path=("Intro",),
-            created_at=datetime(2026, 1, 1, tzinfo=UTC),
-        )
+        self.full_reads += 1
+        return _CANONICAL_PARENT
 
 
 class _Documents:
@@ -72,8 +115,9 @@ class _Documents:
 
 
 class _Unit:
-    documents = _Documents()
-    chunks = _Chunks()
+    def __init__(self, chunks: _Chunks) -> None:
+        self.documents = _Documents()
+        self.chunks = chunks
 
     async def __aenter__(self) -> _Unit:
         return self
@@ -112,8 +156,9 @@ async def test_valid_text_parent_cache_hit_reconstructs_authoritative_provenance
     None
 ):
     cache = _Cache()
+    chunks = _Chunks()
     service = ParentContextService(
-        cast(Any, lambda: _Unit()),
+        cast(Any, lambda: _Unit(chunks)),
         cache=cache,  # type: ignore[arg-type]
         cache_enabled=True,
     )
@@ -130,3 +175,4 @@ async def test_valid_text_parent_cache_hit_reconstructs_authoritative_provenance
     assert evidence[0].provenance.relative_source_path == "guide.md"
     assert evidence[0].provenance.section_path == ("Intro",)
     assert cache.puts == 0
+    assert chunks.full_reads == 0

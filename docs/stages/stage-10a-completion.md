@@ -1,9 +1,9 @@
 # Stage 10-A Implementation Completion
 
-Status: **A-R1, A-R2, A-R3 and A-R4 COMPLETE offline. Stage 10-A remains
-PARTIAL because the A-R5 Parent Cache matrix and A-R6 reconciliation remain
-incomplete. Stage 10 overall remains PARTIAL; acceptance remains UNSATISFIED;
-PR #11 remains open/unmerged.**
+Status: **A-R1, A-R2, A-R3, A-R4 (deterministic matrix) and A-R5 COMPLETE
+offline. `AR4-T01` remains OPEN and A-R6 final verification/reconciliation
+remains PENDING. Stage 10 overall remains PARTIAL; acceptance remains
+UNSATISFIED; PR #11 remains open/unmerged.**
 
 ## 10-A1 Production business composition
 
@@ -191,23 +191,77 @@ externally. The Redis client uses default redis-py socket timeout/retry
 settings; bounded caller waiting is provided by the coordinator timeout and
 does not prove remote non-execution.
 
-## 10-A8 Remaining Parent Cache matrix
+Pending transport follow-up:
 
-Startup source availability, interrupted-deletion and Query Cache/freshness
-matrices are complete under A-R3/A-R4. The Parent Cache miss/fill, Redis
-unavailable, malformed payload, stale revision, ordering, TABLE and disabled
-matrix remains required deterministic work (A-R5).
+```text
+AR4-T01 — Redis Transport Settlement
+
+Status: OPEN
+
+Remaining:
+Explicit production Redis connection/socket timeout and retry policy.
+Safety against mutation-capable Redis operations that may execute after
+an ambiguous local transport failure.
+
+Next:
+Targeted deterministic closure during A-R6.
+Appropriate real isolated verification during Stage 10-B.
+```
+
+## 10-A8 A-R5 Parent Context Cache, canonical validation and verification
+
+Added `tests/stage10/parent_cache_support.py`,
+`tests/stage10/test_ar5_parent_cache.py`, and
+`tests/stage10/test_ar5_lifecycle.py`, preserved
+`tests/stage10/test_parent_cache.py::test_valid_text_parent_cache_hit_reconstructs_authoritative_provenance`
+(with canonical chunk/header fixture identities), and added repository header
+contract tests in `tests/persistence/test_postgres_contracts.py`.
+
+Confirmed A-R5 defects fixed (each regression executed against `6ffab31`):
+
+- **A-R5-F01** — `CanonicalChunkHeader` omitted `sheet_name`, `metadata`, and
+  `strategy_metadata`, so cache hits skipped `ChunkPersistenceMetadataV1`,
+  `ChunkStrategyMetadataV1`, `normalize_section_path`, and `derive_chunk_id`
+  validation. Fix: projected all non-content metadata columns in
+  `CanonicalChunkHeader` and `ChunkRepository` (including batch
+  `list_canonical_context_headers`), added shared `validate_text_parent_invariants`
+  and `validate_text_parent_chunk_header` (falling back to full read only when
+  a lightweight stub omits metadata).
+- **A-R5-F02** — `ParentContextService.expand` bypassed Parent Cache whenever
+  any `TABLE` reference appeared in `refs`. Fix: resolve `TEXT_PARENT` entries
+  via cache-aside while keeping `TABLE` canonical, preserving duplicate checks
+  across the complete input and reassembling exact original `refs` order.
+- **A-R5-F03** — Cache fill unconditionally instantiated `CachedParentContext`,
+  raising `ValidationError` on legal whitespace-only nonempty `TEXT_PARENT`
+  content. Fix: preserve exact canonical content, return valid `LocalEvidence`,
+  and bypass cache population when content cannot be represented by
+  `CachedParentContext`.
+- **A-R5-F04** — `_expand_text_cached` opened a PostgreSQL UoW across Redis
+  `get_parent`, repeated document lookups, and read misses one-by-one via
+  `get_by_id`. Fix: execute Redis GETs before opening one short PostgreSQL UoW,
+  deduplicate document reads, batch header and miss (`list_by_ids`) queries,
+  and perform Redis `put_parent` writes after UoW exit.
+- **A-R5-F05** — `ChunkRepository.get_canonical_context_header` normalized
+  missing rows/metadata inconsistently and leaked `ValidationError` on corrupt
+  rows. Fix: validate rows via `_validate_header_row` and
+  `validate_canonical_row` so corrupt rows raise `CanonicalDataError` and mark
+  the UoW failed.
 
 ## 10-A9 verification
 
-- `make test-stage10`: PASS — 196 tests.
-- `make verify`: PASS — 3490 passed, 1 skipped, 108 deselected.
-- `ruff check .`, `ruff format --check .`, strict `mypy` (380 files),
+- `make test-stage10`: PASS — 252 tests.
+- `make verify`: PASS — 3547 passed, 1 skipped, 108 deselected.
+- `ruff check .`, `ruff format --check .`, strict `mypy` (383 files),
   `make architecture-check`, `git diff --check`: PASS.
 - Stage 9 raw artifact integrity: 12/12 SHA-256 and size matches.
-- Real isolated PostgreSQL/Milvus/Redis and real GPU evidence: NOT_EXECUTED
-  (Stage 10-B). The Stage 10 integration Makefile target remains an offline
-  alias and is not represented as real integration.
+- `AR4-T01` Redis transport settlement: OPEN (A-R6 / Stage 10-B).
+- Real isolated PostgreSQL/Milvus/Redis integration: NOT_EXECUTED (Stage 10-B,
+  with fake model/LLM/Web providers). The Stage 10 integration Makefile target
+  remains an offline alias and is not represented as real integration.
+- Real Qwen/BGE GPU initialization, MinerU SDK subprocess settlement, RTX 3070
+  VRAM/OOM verification, OS signal delivery, launcher termination, and
+  deployment performance measurement remain deferred to later deployment/performance
+  stages.
 
 ## Stage 10-B handoff
 
