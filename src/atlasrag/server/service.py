@@ -67,22 +67,48 @@ class ApplicationServerService:
 
     async def readiness(self) -> ReadinessResponse:
         ready = await self._coordinator.readiness()
-        return ReadinessResponse(ready=ready, mode=self._coordinator.gate.mode)
+        mode = self._coordinator.gate.mode
+        return ReadinessResponse(
+            ready=ready and mode is RuntimeMode.SERVING,
+            mode=mode,
+        )
 
     async def status(self, *, refresh: bool = False) -> RuntimeStatusResponse:
-        if self._coordinator.gate.mode is RuntimeMode.SHUTTING_DOWN:
+        gate = self._coordinator.gate
+        if gate.mode is RuntimeMode.SHUTTING_DOWN:
             raise RuntimeShuttingDownError
-        snapshot = await self._coordinator.status(refresh=refresh)
+        snapshot = await self._coordinator.status(
+            refresh=refresh,
+            min_refresh_interval_seconds=(
+                self._server_config.min_manual_refresh_interval_seconds
+            ),
+        )
+        current_mode: RuntimeMode = self._coordinator.gate.mode
+        current_lifecycle_generation = self._coordinator.gate.lifecycle_generation
+        if current_mode is RuntimeMode.SHUTTING_DOWN:
+            raise RuntimeShuttingDownError
+        lifecycle_consistent = (
+            snapshot.lifecycle_generation == current_lifecycle_generation
+        )
         ready = (
-            snapshot.runtime is RuntimeMode.SERVING
+            lifecycle_consistent
+            and current_mode is RuntimeMode.SERVING
+            and snapshot.runtime is RuntimeMode.SERVING
             and snapshot.hard_healthy
-            and self._coordinator.gate.mode is RuntimeMode.SERVING
+        )
+        knowledge_verified = (
+            snapshot.knowledge_verified if lifecycle_consistent else False
+        )
+        query_cache = (
+            "BYPASSED"
+            if (not lifecycle_consistent and snapshot.query_cache == "ACTIVE")
+            else snapshot.query_cache
         )
         return RuntimeStatusResponse(
-            mode=snapshot.runtime,
+            mode=current_mode,
             ready=ready,
-            knowledge_verified=snapshot.knowledge_verified,
-            active_queries=self._coordinator.gate.active_queries,
+            knowledge_verified=knowledge_verified,
+            active_queries=gate.active_queries,
             dependencies=DependencyStatusMap(
                 postgres=snapshot.postgres,
                 milvus=snapshot.milvus,
@@ -91,7 +117,7 @@ class ApplicationServerService:
                 embedding=snapshot.embedding,
                 reranker=snapshot.reranker,
             ),
-            query_cache=snapshot.query_cache,
+            query_cache=query_cache,
             pipeline_fingerprint=self._pipeline_fp,
             runtime_fingerprint=self._runtime_fp,
             checked_at=snapshot.checked_at,

@@ -164,14 +164,19 @@ def ensure_secure_state_directory(directory: Path) -> Path:
 
 
 def read_secure_local_file(path: Path, *, max_bytes: int = 8_192) -> str:
-    """Read a regular, 0o600, current-UID file without following symlinks."""
+    """Read a regular, 0o600, current-UID file without following symlinks or blocking."""
 
     dir_info = path.parent.lstat()
     if stat.S_ISLNK(dir_info.st_mode) or not stat.S_ISDIR(dir_info.st_mode):
         raise PermissionError("state parent directory must not be a symlink")
     if dir_info.st_uid != os.getuid() or (stat.S_IMODE(dir_info.st_mode) & 0o077):
         raise PermissionError("state parent directory permissions or ownership unsafe")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
     fd = os.open(path, flags)
     try:
         info = os.fstat(fd)
@@ -185,10 +190,17 @@ def read_secure_local_file(path: Path, *, max_bytes: int = 8_192) -> str:
             )
         if info.st_size > max_bytes:
             raise ValueError("state file exceeds size bound")
-        data = os.read(fd, max_bytes + 1)
-        if len(data) > max_bytes:
+        chunks: list[bytes] = []
+        total = 0
+        while total <= max_bytes:
+            chunk = os.read(fd, (max_bytes + 1) - total)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        if total > max_bytes:
             raise ValueError("state file exceeds size bound")
-        return data.decode("utf-8")
+        return b"".join(chunks).decode("utf-8")
     finally:
         os.close(fd)
 

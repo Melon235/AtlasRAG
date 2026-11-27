@@ -279,19 +279,28 @@ class ApplicationCoordinator:
                 lifecycle_generation=snapshot.lifecycle_generation,
             )
 
-    async def status(self, *, refresh: bool = False) -> HealthSnapshot:
+    async def status(
+        self,
+        *,
+        refresh: bool = False,
+        min_refresh_interval_seconds: float | None = None,
+    ) -> HealthSnapshot:
         """Return a freshness-bounded or cooldown-bounded health snapshot."""
 
+        cooldown = (
+            self._deps.manual_health_refresh_cooldown_seconds
+            if min_refresh_interval_seconds is None
+            else min_refresh_interval_seconds
+        )
         current = self._begin_operation(TaskKind.HEALTH)
         try:
             if refresh:
-                return await self._deps.health.manual_refresh(
-                    min_interval=self._deps.manual_health_refresh_cooldown_seconds
-                )
-            snapshot = await self._deps.health.refresh_if_stale()
+                snapshot = await self._deps.health.manual_refresh(min_interval=cooldown)
+            else:
+                snapshot = await self._deps.health.refresh_if_stale()
             if snapshot.lifecycle_generation != self._deps.gate.lifecycle_generation:
-                return await self._deps.health.refresh()
-            return snapshot
+                snapshot = await self._deps.health.refresh()
+            return self._deps.health.project_snapshot(snapshot)
         finally:
             self._deps.tasks.unregister(current)
 

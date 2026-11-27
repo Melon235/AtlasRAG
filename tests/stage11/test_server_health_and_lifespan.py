@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
+from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,11 +17,13 @@ from atlasrag.domain.errors import (
     RuntimeBootstrapFailedError,
     RuntimeOwnershipConflictError,
 )
+from atlasrag.runtime.cache_freshness import CacheFreshnessState
 from atlasrag.runtime.coordinator import ApplicationCoordinator
-from atlasrag.runtime.health import DependencyHealth
+from atlasrag.runtime.health import DependencyHealth, HealthRegistry, HealthSnapshot
 from atlasrag.runtime.modes import RuntimeMode
 from atlasrag.server.app import create_app, require_control_bearer
 from atlasrag.server.config import ServerConfig
+from atlasrag.server.service import ApplicationServerService
 from atlasrag.services.sync.models import (
     ReconciliationOutcome,
     ReconciliationResult,
@@ -239,3 +244,272 @@ def test_cli_main_scaffold_is_import_safe_and_lightweight(
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.asyncio
+async def test_live_freshness_projection_tracks_bypassed_and_trusted_without_reprobe() -> (
+    None
+):
+    state = {"freshness": CacheFreshnessState.TRUSTED, "enabled": True}
+    probe_calls = 0
+
+    async def count_pg() -> None:
+        nonlocal probe_calls
+        probe_calls += 1
+
+    def resolve_cache(redis_health: DependencyHealth) -> str:
+        if not state["enabled"]:
+            return "DISABLED"
+        if (
+            state["freshness"] is CacheFreshnessState.TRUSTED
+            and redis_health is DependencyHealth.HEALTHY
+        ):
+            return "ACTIVE"
+        return "BYPASSED"
+
+    coordinator, _ = await start_test_coordinator(
+        probes={"postgres": count_pg},
+        query_cache_status=resolve_cache,
+        refresh_interval=60.0,
+    )
+    try:
+        app = create_app(
+            runtime_config=sample_runtime_config(),
+            server_config=ServerConfig(),
+            coordinator=coordinator,
+        )
+        with TestClient(app, base_url="http://127.0.0.1:8000") as client:
+            calls_after_start = probe_calls
+            r1 = client.get("/api/v1/status")
+            assert r1.status_code == 200
+            assert r1.json()["query_cache"] == "ACTIVE"
+            assert probe_calls == calls_after_start
+
+            # Freshness flips to BYPASSED without snapshot TTL expiry
+            state["freshness"] = CacheFreshnessState.BYPASSED
+            r2 = client.get("/api/v1/status")
+            assert r2.status_code == 200
+            assert r2.json()["query_cache"] == "BYPASSED"
+            assert probe_calls == calls_after_start
+
+            # Recovery back to TRUSTED with healthy Redis projects ACTIVE again
+            state["freshness"] = CacheFreshnessState.TRUSTED
+            r3 = client.get("/api/v1/status")
+            assert r3.status_code == 200
+            assert r3.json()["query_cache"] == "ACTIVE"
+            assert probe_calls == calls_after_start
+
+            # Disabled policy never reports ACTIVE
+            state["enabled"] = False
+            r4 = client.get("/api/v1/status")
+            assert r4.status_code == 200
+            assert r4.json()["query_cache"] == "DISABLED"
+
+            # Recovering freshness to TRUSTED while snapshot Redis is UNAVAILABLE still
+            # must NOT publish ACTIVE
+            state["enabled"] = True
+            deps_health = coordinator._deps.health  # noqa: SLF001
+            assert deps_health.snapshot is not None
+            deps_health._snapshot = replace(  # noqa: SLF001
+                deps_health.snapshot,
+                redis=DependencyHealth.UNAVAILABLE,
+                query_cache="ACTIVE",
+            )
+            r5 = client.get("/api/v1/status")
+            assert r5.status_code == 200
+            assert r5.json()["query_cache"] == "BYPASSED"
+            assert probe_calls == calls_after_start
+    finally:
+        await coordinator.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_singleflight_default_refresh_and_server_config_cooldown_wiring() -> None:
+    probe_started = asyncio.Event()
+    probe_release = asyncio.Event()
+    wait_on_probe = False
+    probe_calls = 0
+
+    async def gated_pg() -> None:
+        nonlocal probe_calls
+        probe_calls += 1
+        if wait_on_probe:
+            probe_started.set()
+            await probe_release.wait()
+
+    coordinator, _ = await start_test_coordinator(
+        probes={"postgres": gated_pg},
+        refresh_interval=0.05,
+        manual_cooldown=60.0,
+    )
+    try:
+        calls_after_start = probe_calls
+        # Expire snapshot once by advancing beyond refresh_interval? Use 0.06s deterministic
+        # gate or replace snapshot monotonic_at so zero timing flakiness exists.
+        deps_health: HealthRegistry = coordinator._deps.health  # noqa: SLF001
+        assert deps_health.snapshot is not None
+        deps_health._snapshot = replace(  # noqa: SLF001
+            deps_health.snapshot, monotonic_at=0.0
+        )
+
+        wait_on_probe = True
+        tasks = [
+            asyncio.create_task(coordinator.status()),
+            asyncio.create_task(coordinator.status()),
+            asyncio.create_task(coordinator.status()),
+            asyncio.create_task(coordinator.status()),
+        ]
+        await probe_started.wait()
+        await asyncio.sleep(0)
+        assert probe_calls == calls_after_start + 1
+        probe_release.set()
+        results = await asyncio.gather(*tasks)
+        assert probe_calls == calls_after_start + 1
+        generations = {snap.generation for snap in results}
+        assert len(generations) == 1
+        assert results[0].generation > 1
+
+        # Concurrent manual refreshes respect cooldown
+        wait_on_probe = False
+        probe_calls_before_manual = probe_calls
+        service_long = ApplicationServerService(
+            coordinator=coordinator,
+            runtime_config=sample_runtime_config(),
+            server_config=ServerConfig(min_manual_refresh_interval_seconds=60.0),
+        )
+        m1 = await service_long.status(refresh=True)
+        assert probe_calls == probe_calls_before_manual
+        assert m1.ready is True
+
+        # Non-default ServerConfig cooldown=0.0 overrides coordinator default 60.0
+        service_zero = ApplicationServerService(
+            coordinator=coordinator,
+            runtime_config=sample_runtime_config(),
+            server_config=ServerConfig(min_manual_refresh_interval_seconds=0.0),
+        )
+        await service_zero.status(refresh=True)
+        assert probe_calls == probe_calls_before_manual + 1
+
+        # Concurrent manual_refresh with expired snapshot & cooldown=5.0 coalesces to 1 batch
+        deps_health._snapshot = replace(  # noqa: SLF001
+            deps_health.snapshot, monotonic_at=0.0
+        )
+        probe_started = asyncio.Event()
+        probe_release = asyncio.Event()
+        wait_on_probe = True
+        calls_before_concurrent_manual = probe_calls
+        service_five = ApplicationServerService(
+            coordinator=coordinator,
+            runtime_config=sample_runtime_config(),
+            server_config=ServerConfig(min_manual_refresh_interval_seconds=5.0),
+        )
+        m_tasks = [
+            asyncio.create_task(service_five.status(refresh=True)),
+            asyncio.create_task(service_five.status(refresh=True)),
+        ]
+        await probe_started.wait()
+        await asyncio.sleep(0)
+        probe_release.set()
+        await asyncio.gather(*m_tasks)
+        assert probe_calls == calls_before_concurrent_manual + 1
+    finally:
+        await coordinator.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_transition_during_default_and_manual_probes_and_fail_closed() -> (
+    None
+):
+    probe_started = asyncio.Event()
+    probe_release = asyncio.Event()
+    gate_next_probe = False
+    probe_calls = 0
+
+    async def controllable_pg() -> None:
+        nonlocal probe_calls, gate_next_probe
+        probe_calls += 1
+        if gate_next_probe:
+            gate_next_probe = False
+            probe_started.set()
+            await probe_release.wait()
+
+    coordinator, harness = await start_test_coordinator(
+        probes={"postgres": controllable_pg},
+        query_cache_status=lambda redis_health: (
+            "ACTIVE" if redis_health is DependencyHealth.HEALTHY else "BYPASSED"
+        ),
+        refresh_interval=60.0,
+        manual_cooldown=0.0,
+    )
+    try:
+        service = ApplicationServerService(
+            coordinator=coordinator,
+            runtime_config=sample_runtime_config(),
+            server_config=ServerConfig(min_manual_refresh_interval_seconds=0.0),
+        )
+        deps_health = coordinator._deps.health  # noqa: SLF001
+
+        # 1. Lifecycle changes while default refresh probe awaits completion
+        assert deps_health.snapshot is not None
+        deps_health._snapshot = replace(  # noqa: SLF001
+            deps_health.snapshot, monotonic_at=0.0
+        )
+        gate_next_probe = True
+        default_task = asyncio.create_task(service.status(refresh=False))
+        await probe_started.wait()
+        lease = await harness.gate.begin_maintenance()
+        probe_release.set()
+        st_default = await default_task
+        assert st_default.mode is RuntimeMode.DRAINING
+        assert st_default.ready is False
+        await harness.gate.enter_exclusive_maintenance(lease)
+        await harness.gate.complete_maintenance(lease, safe=True)
+        await harness.gate.set_admission_ready(
+            True, lifecycle_generation=harness.gate.lifecycle_generation
+        )
+
+        # 2. Lifecycle changes while manual refresh probe awaits completion
+        probe_started = asyncio.Event()
+        probe_release = asyncio.Event()
+        gate_next_probe = True
+        manual_task = asyncio.create_task(service.status(refresh=True))
+        await probe_started.wait()
+        lease2 = await harness.gate.begin_maintenance()
+        probe_release.set()
+        st_manual = await manual_task
+        assert st_manual.mode is RuntimeMode.DRAINING
+        assert st_manual.ready is False
+        await harness.gate.enter_exclusive_maintenance(lease2)
+        await harness.gate.complete_maintenance(lease2, safe=False)
+
+        # 3. Persistent mismatched SERVING snapshot must NEVER produce ready=True
+        stale_serving = HealthSnapshot(
+            runtime=RuntimeMode.SERVING,
+            hard_healthy=True,
+            knowledge_verified=True,
+            postgres=DependencyHealth.HEALTHY,
+            milvus=DependencyHealth.HEALTHY,
+            redis=DependencyHealth.HEALTHY,
+            searxng=DependencyHealth.HEALTHY,
+            embedding=DependencyHealth.HEALTHY,
+            reranker=DependencyHealth.HEALTHY,
+            query_cache="ACTIVE",
+            generation=999,
+            lifecycle_generation=harness.gate.lifecycle_generation + 99,
+            checked_at=datetime.now(UTC),
+            monotonic_at=0.0,
+        )
+
+        async def _stale_status(
+            *, refresh: bool = False, min_refresh_interval_seconds: float | None = None
+        ) -> HealthSnapshot:
+            return stale_serving
+
+        coordinator.status = _stale_status  # type: ignore[method-assign]
+        fail_closed = await service.status()
+        assert fail_closed.mode is harness.gate.mode
+        assert fail_closed.ready is False
+        assert fail_closed.knowledge_verified is False
+        assert fail_closed.query_cache == "BYPASSED"
+    finally:
+        await coordinator.shutdown()

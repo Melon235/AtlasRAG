@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -105,6 +107,94 @@ def test_bearer_token_validation_and_secure_file_helpers(tmp_path: Path) -> None
     symlink_path.symlink_to(token_file)
     with pytest.raises(OSError):
         read_secure_local_file(symlink_path)
+
+
+def test_read_secure_local_file_nonblocking_and_fd_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_dir = tmp_path / "secure-state"
+    token_file = state_dir / "control.token"
+    write_secure_local_file(token_file, "token-ok")
+
+    opened_fds: list[int] = []
+    closed_fds: list[int] = []
+    real_open = os.open
+    real_close = os.close
+
+    def tracked_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+    ) -> int:
+        fd = real_open(path, flags, mode)
+        opened_fds.append(fd)
+        return fd
+
+    def tracked_close(fd: int) -> None:
+        closed_fds.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(os, "open", tracked_open)
+    monkeypatch.setattr(os, "close", tracked_close)
+
+    # Normal secure regular file succeeds and closes FD
+    assert read_secure_local_file(token_file) == "token-ok"
+
+    # Group/world-readable file rejected and FD closed
+    os.chmod(token_file, 0o640)
+    with pytest.raises(PermissionError):
+        read_secure_local_file(token_file)
+    os.chmod(token_file, 0o600)
+
+    # Oversized regular file rejected and FD closed
+    oversized = state_dir / "oversized.token"
+    write_secure_local_file(oversized, "x" * 64)
+    with pytest.raises(ValueError, match="exceeds size bound"):
+        read_secure_local_file(oversized, max_bytes=32)
+
+    # Symlink rejected cleanly
+    symlink_path = state_dir / "sym.token"
+    symlink_path.symlink_to(token_file)
+    with pytest.raises(OSError):
+        read_secure_local_file(symlink_path)
+
+    # Directory target rejected promptly and FD closed
+    nested_dir = state_dir / "subdir"
+    nested_dir.mkdir(mode=0o700)
+    with pytest.raises(PermissionError, match="regular file"):
+        read_secure_local_file(nested_dir)
+
+    # FIFO rejected promptly without blocking and FD closed (run externally bounded too)
+    fifo_path = state_dir / "blocked.fifo"
+    os.mkfifo(fifo_path, 0o600)
+    with pytest.raises(PermissionError, match="regular file"):
+        read_secure_local_file(fifo_path)
+
+    assert opened_fds and opened_fds == closed_fds
+
+    # Externally bounded subprocess check so a blocking open cannot hang pytest
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from pathlib import Path\n"
+                "from atlasrag.server.auth import read_secure_local_file\n"
+                f"p = Path({str(fifo_path)!r})\n"
+                "try:\n"
+                "    read_secure_local_file(p)\n"
+                "except PermissionError:\n"
+                "    pass\n"
+                "else:\n"
+                "    raise SystemExit(1)\n"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=3.0,
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 @pytest.mark.asyncio
