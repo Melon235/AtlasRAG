@@ -71,4 +71,5 @@ class InFlightTaskRegistry:
 
     def cancel_all(self) -> None:
         for task in tuple(self._tasks):
-            task.cancel()
+            if not task.done() and task.cancelling() == 0:
+                task.cancel()

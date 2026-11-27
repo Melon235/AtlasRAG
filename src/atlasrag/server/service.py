@@ -64,6 +64,16 @@ class DisconnectSignal:
 MonitorFactory = Callable[[DisconnectSignal], asyncio.Task[None]]
 
 
+def _request_cancel_once(task: asyncio.Task[Any]) -> bool:
+    """Cancel task iff it is active and not already in a cancelling state."""
+
+    if task.done():
+        return False
+    if task.cancelling() == 0:
+        task.cancel()
+    return True
+
+
 async def _settle_task_no_raise(
     task: asyncio.Task[Any] | None,
     *,
@@ -75,9 +85,9 @@ async def _settle_task_no_raise(
     if task is None:
         return False, already_cancelled
     outer_cancelled = False
-    cancel_sent = already_cancelled
+    cancel_sent = already_cancelled or task.cancelling() > 0
     if cancel and not cancel_sent and not task.done():
-        task.cancel()
+        _request_cancel_once(task)
         cancel_sent = True
     while not task.done():
         try:
@@ -85,7 +95,7 @@ async def _settle_task_no_raise(
         except asyncio.CancelledError:
             outer_cancelled = True
             if not cancel_sent and not task.done():
-                task.cancel()
+                _request_cancel_once(task)
                 cancel_sent = True
     if not task.cancelled():
         try:
@@ -200,7 +210,7 @@ class QuerySupervisor:
                     timed_out = True
                     if not cancel_requested:
                         cancel_requested = True
-                        query_task.cancel()
+                        _request_cancel_once(query_task)
                     break
                 pending = {task for task in wait_set if not task.done()}
                 if not pending:
@@ -215,20 +225,20 @@ class QuerySupervisor:
                     outer_cancelled = True
                     if not cancel_requested:
                         cancel_requested = True
-                        query_task.cancel()
+                        _request_cancel_once(query_task)
                     break
                 if query_task.done():
                     break
                 if disconnect_wait_task in done:
                     if not cancel_requested:
                         cancel_requested = True
-                        query_task.cancel()
+                        _request_cancel_once(query_task)
                     break
                 if not done:
                     timed_out = True
                     if not cancel_requested:
                         cancel_requested = True
-                        query_task.cancel()
+                        _request_cancel_once(query_task)
                     break
 
             # Wait for ACTUAL settlement even under repeated outer cancellation.

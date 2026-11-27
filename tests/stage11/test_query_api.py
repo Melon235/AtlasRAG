@@ -24,6 +24,7 @@ from atlasrag.domain.enums import (
 from atlasrag.domain.errors import (
     DependencyUnavailableError,
     ErrorCode,
+    RuntimeShutdownFailedError,
 )
 from atlasrag.domain.requests import QueryFilters, UserTurnRequest
 from atlasrag.domain.results import (
@@ -37,6 +38,7 @@ from atlasrag.providers.cache.keys import query_cache_key
 from atlasrag.providers.cache.models import CachedQueryResult
 from atlasrag.runtime.modes import RuntimeMode
 from atlasrag.runtime.resources import ResourceGuard
+from atlasrag.runtime.tasks import TaskKind
 from atlasrag.server.app import create_app
 from atlasrag.server.config import ServerConfig
 from atlasrag.server.errors import ServerHttpError, TransportErrorCode
@@ -931,3 +933,326 @@ async def test_query_supervisor_timeout_repeated_cancel_saturation_and_cache_rac
             ]
     finally:
         await coordinator.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cross_layer_race_disconnect_first_then_shutdown() -> None:
+    """WPB-F01 Scenario A: disconnect cancels query, then coordinator shutdown reaches cancel phase."""
+
+    guard = ResourceGuard(capacity=1)
+    worker_started = asyncio.Event()
+    settling_started = asyncio.Event()
+    worker_release = asyncio.Event()
+    shutdown_cancel_phase = asyncio.Event()
+    cancel_deliveries = 0
+    close_calls = 0
+
+    async def shielded_worker(_req: UserTurnRequest) -> FinalResponse:
+        nonlocal cancel_deliveries
+        async with guard.slot():
+            inner = asyncio.create_task(worker_release.wait())
+            worker_started.set()
+            cancelled = False
+            while not inner.done():
+                try:
+                    await asyncio.shield(inner)
+                except asyncio.CancelledError:
+                    cancel_deliveries += 1
+                    settling_started.set()
+                    cancelled = True
+            if cancelled:
+                raise asyncio.CancelledError
+        return _local_only_final_response()
+
+    async def tracked_close() -> None:
+        nonlocal close_calls
+        close_calls += 1
+
+    coordinator, harness = await start_test_coordinator(
+        retrieval=shielded_worker,
+        close_resources=tracked_close,
+        shutdown_timeout_seconds=0.02,
+    )
+    real_cancel_all = harness.tasks.cancel_all
+
+    def tracked_cancel_all() -> None:
+        shutdown_cancel_phase.set()
+        real_cancel_all()
+
+    harness.tasks.cancel_all = tracked_cancel_all  # type: ignore[method-assign]
+    service = ApplicationServerService(
+        coordinator=coordinator,
+        runtime_config=sample_runtime_config(),
+        server_config=ServerConfig(query_timeout_seconds=10.0),
+    )
+    sid = (await service.sessions.create_session(ClientKind.WEB)).session_id
+    sig = DisconnectSignal()
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        query_call_task = asyncio.create_task(
+            service.query(
+                QueryRequest(session_id=sid, query="disconnect before shutdown"),
+                header_client_kind=ClientKind.WEB,
+                disconnect_signal=sig,
+            )
+        )
+        await worker_started.wait()
+
+        # Protected resources held prior to disconnect
+        assert harness.gate.active_queries == 1
+        assert len(harness.tasks.snapshot(TaskKind.QUERY)) == 1
+        assert guard._semaphore.locked()  # noqa: SLF001
+        assert service.sessions.in_flight(sid) == 1
+        assert service.supervisor.in_flight_queries == 1
+        assert harness.ownership.acquired
+
+        # Trigger disconnect and wait until query enters settlement phase
+        sig.trigger("client_disconnect")
+        await settling_started.wait()
+        assert cancel_deliveries == 1
+
+        # Keep worker unsettled and drive coordinator.shutdown() through drain timeout -> cancel_all()
+        shutdown_task = asyncio.create_task(coordinator.shutdown())
+        await shutdown_cancel_phase.wait()
+        with pytest.raises(RuntimeShutdownFailedError):
+            await shutdown_task
+
+        # While worker remains unsettled, ZERO duplicate cancels and ZERO premature resource release
+        assert cancel_deliveries == 1
+        assert harness.gate.active_queries == 1
+        assert len(harness.tasks.snapshot(TaskKind.QUERY)) == 1
+        assert guard._semaphore.locked()  # noqa: SLF001
+        assert service.sessions.in_flight(sid) == 1
+        assert service.supervisor.in_flight_queries == 1
+        assert harness.ownership.acquired
+        assert close_calls == 0
+
+        # Release worker settlement barrier and verify complete settlement + cleanup
+        worker_release.set()
+        with pytest.raises(ServerHttpError) as query_exc:
+            await query_call_task
+        assert query_exc.value.code is TransportErrorCode.REQUEST_CANCELLED
+
+        await coordinator.shutdown()
+        assert close_calls == 1
+        assert not harness.ownership.acquired
+        assert harness.gate.active_queries == 0
+        assert harness.tasks.snapshot() == ()
+        assert not guard._semaphore.locked()  # noqa: SLF001
+        assert service.sessions.in_flight(sid) == 0
+        assert service.supervisor.in_flight_queries == 0
+        assert not [
+            w
+            for w in caught_warnings
+            if "Task exception was never retrieved" in str(w.message)
+        ]
+
+
+@pytest.mark.asyncio
+async def test_cross_layer_race_shutdown_first_then_disconnect_and_cache_commit() -> (
+    None
+):
+    """WPB-F01 Scenario B: shutdown cancels query first, then disconnect/outer cancel & commit."""
+
+    guard = ResourceGuard(capacity=1)
+    worker_started = asyncio.Event()
+    settling_started = asyncio.Event()
+    worker_release = asyncio.Event()
+    shutdown_cancel_phase = asyncio.Event()
+    cancel_deliveries = 0
+    close_calls = 0
+
+    async def shielded_worker(_req: UserTurnRequest) -> FinalResponse:
+        nonlocal cancel_deliveries
+        async with guard.slot():
+            inner = asyncio.create_task(worker_release.wait())
+            worker_started.set()
+            cancelled = False
+            while not inner.done():
+                try:
+                    await asyncio.shield(inner)
+                except asyncio.CancelledError:
+                    cancel_deliveries += 1
+                    settling_started.set()
+                    cancelled = True
+            if cancelled:
+                raise asyncio.CancelledError
+        return _local_only_final_response()
+
+    async def tracked_close() -> None:
+        nonlocal close_calls
+        close_calls += 1
+
+    coordinator, harness = await start_test_coordinator(
+        retrieval=shielded_worker,
+        close_resources=tracked_close,
+        shutdown_timeout_seconds=0.02,
+    )
+    real_cancel_all = harness.tasks.cancel_all
+
+    def tracked_cancel_all() -> None:
+        shutdown_cancel_phase.set()
+        real_cancel_all()
+
+    harness.tasks.cancel_all = tracked_cancel_all  # type: ignore[method-assign]
+    service = ApplicationServerService(
+        coordinator=coordinator,
+        runtime_config=sample_runtime_config(),
+        server_config=ServerConfig(query_timeout_seconds=10.0),
+    )
+    sid = (await service.sessions.create_session(ClientKind.WEB)).session_id
+    sig = DisconnectSignal()
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        query_call_task = asyncio.create_task(
+            service.query(
+                QueryRequest(session_id=sid, query="shutdown before disconnect"),
+                header_client_kind=ClientKind.WEB,
+                disconnect_signal=sig,
+            )
+        )
+        await worker_started.wait()
+
+        # Start coordinator shutdown first and confirm actual shutdown cancellation phase
+        shutdown_task = asyncio.create_task(coordinator.shutdown())
+        await shutdown_cancel_phase.wait()
+        await settling_started.wait()
+        assert cancel_deliveries == 1
+
+        # Trigger both disconnect and outer request cancellation while worker still settles
+        sig.trigger("client_disconnect")
+        await asyncio.sleep(0)
+        query_call_task.cancel()
+        with pytest.raises(RuntimeShutdownFailedError):
+            await shutdown_task
+
+        # Worker still unsettled: zero duplicate cancels and zero premature resource release
+        assert cancel_deliveries == 1
+        assert not query_call_task.done()
+        assert harness.gate.active_queries == 1
+        assert len(harness.tasks.snapshot(TaskKind.QUERY)) == 1
+        assert guard._semaphore.locked()  # noqa: SLF001
+        assert service.sessions.in_flight(sid) == 1
+        assert service.supervisor.in_flight_queries == 1
+        assert harness.ownership.acquired
+        assert close_calls == 0
+
+        # Release worker and confirm complete cleanup
+        worker_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await query_call_task
+
+        await coordinator.shutdown()
+        assert close_calls == 1
+        assert not harness.ownership.acquired
+        assert harness.gate.active_queries == 0
+        assert harness.tasks.snapshot() == ()
+        assert not guard._semaphore.locked()  # noqa: SLF001
+        assert service.sessions.in_flight(sid) == 0
+        assert service.supervisor.in_flight_queries == 0
+
+        # Part 2: Eligible SessionQueryCache.commit settles cleanly under shutdown-first + disconnect
+        redis = _OfflineRedisQueryCache()
+        repo = FakeRuntimeMetadataRepo(invalidation_required=False)
+        cache = SessionQueryCache(
+            redis=cast(Any, redis),
+            uow_factory=cast(Any, lambda: FakeSyncUow(repo)),
+            runtime_fingerprint="fp-f01",
+            ttl_seconds=60,
+            policy=QueryCachePolicy(enabled=True),
+            clock=lambda: datetime.now(UTC),
+            require_write_fence=True,
+            expected_write_fence=lambda: "fence-1",
+        )
+        commit_started = asyncio.Event()
+        commit_release = asyncio.Event()
+        commit_finished = False
+        real_put = redis.put_fenced_query
+
+        async def gated_put(
+            session_id: str,
+            runtime_fingerprint: str,
+            req_hash: str,
+            value: CachedQueryResult,
+            *,
+            ttl_seconds: int,
+            write_fence: str | None = None,
+        ) -> bool:
+            nonlocal commit_finished
+            commit_started.set()
+            await commit_release.wait()
+            ok = await real_put(
+                session_id,
+                runtime_fingerprint,
+                req_hash,
+                value,
+                ttl_seconds=ttl_seconds,
+                write_fence=write_fence,
+            )
+            commit_finished = True
+            return ok
+
+        redis.put_fenced_query = gated_put
+
+        async def cache_commit_retrieval(req: UserTurnRequest) -> FinalResponse:
+            res = RagCoreResult(
+                final_response=_local_only_final_response("eligible commit [L1]."),
+                completion_status=RagCompletionStatus.SUCCESS,
+            )
+            await cache.store(req, res, web_invoked=False)
+            return res.final_response
+
+        coord2, harness2 = await start_test_coordinator(
+            retrieval=cache_commit_retrieval,
+            shutdown_timeout_seconds=0.02,
+        )
+        shut_cancel2 = asyncio.Event()
+        real_cancel2 = harness2.tasks.cancel_all
+
+        def tracked_cancel2() -> None:
+            shut_cancel2.set()
+            real_cancel2()
+
+        harness2.tasks.cancel_all = tracked_cancel2
+        service2 = ApplicationServerService(
+            coordinator=coord2,
+            runtime_config=sample_runtime_config(),
+            server_config=ServerConfig(query_timeout_seconds=10.0),
+        )
+        sid2 = (await service2.sessions.create_session(ClientKind.WEB)).session_id
+        sig2 = DisconnectSignal()
+
+        commit_query = asyncio.create_task(
+            service2.query(
+                QueryRequest(session_id=sid2, query="commit under dual cancel"),
+                header_client_kind=ClientKind.WEB,
+                disconnect_signal=sig2,
+            )
+        )
+        await commit_started.wait()
+        shut2 = asyncio.create_task(coord2.shutdown())
+        await shut_cancel2.wait()
+        sig2.trigger("client_disconnect")
+        with pytest.raises(RuntimeShutdownFailedError):
+            await shut2
+        assert not commit_query.done()
+        assert commit_finished is False
+
+        commit_release.set()
+        with pytest.raises(ServerHttpError) as commit_exc:
+            await commit_query
+        assert commit_exc.value.code is TransportErrorCode.REQUEST_CANCELLED
+        assert commit_finished is True
+        await coord2.shutdown()
+        assert not harness2.ownership.acquired
+        assert harness2.gate.active_queries == 0
+        assert harness2.tasks.snapshot() == ()
+        assert service2.sessions.in_flight(sid2) == 0
+        assert service2.supervisor.in_flight_queries == 0
+        assert not [
+            w
+            for w in caught_warnings
+            if "Task exception was never retrieved" in str(w.message)
+        ]
