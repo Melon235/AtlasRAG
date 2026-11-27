@@ -46,12 +46,19 @@ Without modifying or weakening any frozen Part I, Part II, Part III, or Stage 10
 To prevent premature acceptance claims, Part IV formally separates two distinct acceptance gates:
 
 1. **Stage 12 Web Demo & Existing RAG Acceptance Milestone:**
-   - Demonstrates end-to-end execution of the existing Part I/II RAG pipeline through the Stage 11 Local Application Server and Stage 12 same-origin Web Demo: question input, safe stage/status SSE events, reviewed `FinalResponse`, resolved Local/Web citations, truthful `cache_status`, `elapsed_ms`, `trace_id`, health/readiness display, new session creation, same-session exact-request cache hit, and cross-session cache isolation.
-   - Does **not** by itself claim completion of Stage 13 MCP capabilities or Stage 14 deployment/hardware/backup obligations.
+   - Demonstrates end-to-end execution of the existing Part I/II RAG pipeline through the Stage 11 Local Application Server and Stage 12 same-origin Web Demo, and **must include a bounded real-model, real-knowledge-base end-to-end demonstration** (fake-only transport demonstrations are insufficient to claim real RAG usability):
+     - Real Qwen embedding.
+     - Real selected BGE reranker.
+     - Real answer generation.
+     - Reviewed `FinalResponse` and resolved Local/Web citations.
+     - Existing Redis cache behavior: same-session exact-request cache hit and cross-session cache isolation.
+     - Safe stage/status SSE events, truthful `cache_status` / `elapsed_ms` / `trace_id`, health/readiness display, and basic runtime/resource observations.
+   - Exact real API budgets, bounded KB fixtures, and execution approval belong to **Stage 12 planning** (never executed prematurely in Stage 11).
+   - Does **not** by itself claim completion of Stage 13 MCP capabilities or full Stage 14 deployment/hardware/backup obligations.
 2. **Final Part IV Acceptance (`§94` — Stage 14 Milestone):**
-   - Preserves **all** previously frozen Part IV obligations, explicitly tracking deferred items to their owning stages:
+   - Preserves **all** previously frozen Part IV obligations, explicitly tracking deferred items to their owning stages without moving the full Stage 14 validation program into Stage 12:
      - **Deferred to Stage 13:** Inbound MCP protocol/SDK (`atlasrag_ask` / `search_domain_docs` / `search_external_evidence`), domain-aware metadata/ACLs, Evidence Mode, Evidence Publication Boundary, Evidence Cache, Domain Epoch, Web+MCP session isolation.
-     - **Deferred to Stage 14:** Coordinated backup and restore (`§90–91`), real Qwen/BGE CUDA weight loading and RTX 3070 8GB VRAM/OOM dual-session validation, MinerU SDK subprocess settlement verification, Web + MCP combined-entrypoint concurrency/maintenance-exclusion validation, and transferred Stage 9 performance requirements (`S9-17`, `S9-21`).
+     - **Deferred to Stage 14:** Coordinated backup and restore (`§90–91`), full RTX 3070 8GB VRAM/OOM stress and dual-entrypoint validation, real MinerU SDK subprocess settlement verification, combined Web Demo + MCP concurrency/isolation/maintenance-exclusion validation, and transferred Stage 9 performance requirements (`S9-17`, `S9-21`).
 
 ---
 
