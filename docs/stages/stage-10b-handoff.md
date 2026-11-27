@@ -1,6 +1,8 @@
 # Stage 10-B Handoff: Isolated Real Infrastructure Integration
 
-## 1. Current Authoritative State
+*(Historical Stage 10-A → Stage 10-B handoff snapshot preserved below. Stage 10-B (`12/12`), Stage 10-C3-R1 (`PASS` on `be5a2876`), and Stage 10-C4 Final Closeout are now COMPLETE — see [`stage-10b-completion.md`](stage-10b-completion.md), [`stage-10-acceptance.md`](stage-10-acceptance.md), and [`stage-10-closeout/CLOSEOUT_REPORT.md`](stage-10-closeout/CLOSEOUT_REPORT.md). Stage 10 is `ACCEPTED / PENDING_MERGE`; `PR #11` remains open/unmerged.)*
+
+## 1. Historical Stage 10-A Exit State (Superseded)
 
 - **Branch / PR:** `stage/10-part-iv-application-runtime` (`PR #11` OPEN and UNMERGED against `main`)
 - **Stage 10-A (`A-R1`–`A-R6`):** COMPLETE (offline verified; `make test-stage10` = `304 passed`)

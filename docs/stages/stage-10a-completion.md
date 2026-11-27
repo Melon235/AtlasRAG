@@ -1,10 +1,6 @@
 # Stage 10-A Implementation Completion
 
-Status: **Stage 10-A (A-R1 through A-R6) COMPLETE offline. `AR4-T01`
-deterministic transport and write-fence settlement RESOLVED offline; Stage 10-B
-(real isolated PostgreSQL/Milvus/Redis integration) and Stage 10-C (independent
-review) remain NOT_STARTED. Stage 10 overall remains PARTIAL; acceptance remains
-UNSATISFIED; PR #11 remains open/unmerged.**
+Status: **Stage 10-A (`A-R1` through `A-R6`) COMPLETE offline. (Superseding Stage 10-C4 closeout note: Stage 10-B real isolated integration, historical Stage 10-C1/C3 reviews & C2/C2-R1 remediations, Stage 10-C3-R1 final independent targeted re-review `PASS` on `be5a2876`, and Stage 10-C4 closeout are now COMPLETE — see [`stage-10b-completion.md`](stage-10b-completion.md), [`stage-10-acceptance.md`](stage-10-acceptance.md), [`stage-10-review/STAGE_10_C3_R1_REVIEW.md`](stage-10-review/STAGE_10_C3_R1_REVIEW.md), and [`stage-10-closeout/CLOSEOUT_REPORT.md`](stage-10-closeout/CLOSEOUT_REPORT.md). Stage 10 is `ACCEPTED / PENDING_MERGE`; `PR #11` remains open/unmerged; Stage 11 is `NOT_STARTED`.)**
 
 ## 10-A1 Production business composition
 
@@ -296,6 +292,8 @@ Added deterministic tests across `tests/stage10/test_ar6_redis_transport.py`,
     `AnswerConfig` value or mismatched `SharedResources` identity/dimension/analyzer.
 
 ## 10-A10 Verification
+
+*(Historical Stage 10-A snapshot below preserved unchanged; superseded by Stage 10-B `12/12` real-infrastructure completion, Stage 10-C3-R1 `PASS` on `be5a2876`, and [`stage-10-closeout/CLOSEOUT_REPORT.md`](stage-10-closeout/CLOSEOUT_REPORT.md).)*
 
 - `make test-stage10`: PASS — 304 tests.
 - `make verify`: PASS — 3611 passed, 1 skipped, 108 deselected.

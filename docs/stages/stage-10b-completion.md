@@ -4,11 +4,10 @@ Status: **Stage 10-B COMPLETE** (`12/12` real isolated integration tests PASS ac
 - **Stage 10-A (`A-R1`–`A-R6` + C2/C2-R1 regressions):** COMPLETE (offline verified; `make test-stage10` = `352 passed`)
 - **`AR4-T01` (Redis Transport Settlement):** `OFFLINE_AND_REAL_INFRA_VERIFIED`
 - **Stage 10-B:** COMPLETE (fail-closed isolated real infrastructure verification, cleanup `remaining=0`)
-- **Stage 10-C1:** COMPLETE (`FAIL` on `3a9de079`)
-- **Stage 10-C2 & Stage 10-C3:** `5f74b201` closed 5 blockers; `C3` verdict `FAIL` on `F-R10-01-01` / `C3-RISK-01` (`docs/stages/stage-10-review/STAGE_10_C3_REVIEW.md`)
-- **Stage 10-C2-R1 (Targeted Remediation):** COMPLETE (`docs/stages/stage-10-review/STAGE_10_C2_R1_REMEDIATION.md`)
-- **Stage 10-C3-R1 (Independent Targeted Re-Review):** `READY` / `PENDING_INDEPENDENT_REVIEW`
-- **Stage 10 Overall / Acceptance:** `PARTIAL` / `UNSATISFIED` (`PR #11` remains OPEN and UNMERGED against `main`)
+- **Stage 10-C1 / C3 (Historical Failures):** `3a9de079` (`C1` FAIL); `5f74b201` closed 5 blockers, `C3` verdict `FAIL` on `F-R10-01-01` / `C3-RISK-01` (`docs/stages/stage-10-review/STAGE_10_C3_REVIEW.md`)
+- **Stage 10-C2-R1 (Targeted Remediation):** COMPLETE on `be5a2876` (`docs/stages/stage-10-review/STAGE_10_C2_R1_REMEDIATION.md`)
+- **Stage 10-C3-R1 (Final Independent Targeted Re-Review):** **`COMPLETE / PASS`** on `be5a2876` (`6/6` blocking findings closed; `docs/stages/stage-10-review/STAGE_10_C3_R1_REVIEW.md`)
+- **Stage 10-C4 / Overall State:** **`COMPLETE`** — Stage 10 **`ACCEPTED / PENDING_MERGE`** (`23/23` requirements SATISFIED; `PR #11` OPEN and UNMERGED against `main` awaiting owner authorization; Stage 11 `NOT_STARTED`)
 
 ## 1. Environment & Strict Isolation Boundaries
 
@@ -57,6 +56,6 @@ Stage 10-B runs `ApplicationComposition` and `build_default_business` against re
 
 - `make test-stage10-integration` (isolated Compose `postgres:17.8-alpine`, `redis:8.2.10-alpine`, `milvusdb/milvus:v2.6.20` with fail-closed `scripts/stage10_isolation.py` ownership & run-`run_id` cleanup): PASS — `12 passed in 734.68s (0:12:14)`, `remaining=0`.
 - `make test-stage10`: PASS — `352 passed`.
-- `make verify`: PASS — `3660 passed, 1 skipped` (`deepeval`), `120 deselected`, `ruff format --check .` (`487` files), `ruff check .`, `mypy src/atlasrag scripts tests` (`396` source files), `make architecture-check`, and `git diff --check`.
+- `make verify` (offline repository gate on `be5a2876`): PASS — `3660 passed, 1 skipped` (`deepeval`), `120 deselected`, `ruff format --check .` (`489` files), `ruff check .`, `mypy src/atlasrag scripts tests` (`396` source files), `make architecture-check`, and `git diff --check`.
 - Stage 9 raw artifacts (`docs/stages/stage-09-closeout/artifact_integrity.json`): PASS — `12/12` SHA-256 and byte-size matches.
-- **Stage 10-C3-R1 Handoff:** Perform independent targeted re-review of `F-R10-01-01` / `C3-RISK-01` ([`docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md`](stage-10-review/STAGE_10_C3_HANDOFF.md), closing `G-07` & `G-10`) and verify remote CI + PR #11 readiness before any merge to `main`. Real Qwen/BGE CUDA weight loading / RTX 3070 VRAM checks, MinerU subprocess settlement, OS signal/launcher termination, and Stage 11 API/UI/benchmark/performance work remain deferred beyond Stage 10-B/C.
+- **Stage 10-C3-R1 & Stage 10-C4 Final Closeout:** Independent targeted re-review completed with **`PASS / READY_FOR_FINAL_ACCEPTANCE`** on `be5a2876` ([`docs/stages/stage-10-review/STAGE_10_C3_R1_REVIEW.md`](stage-10-review/STAGE_10_C3_R1_REVIEW.md)), closing `G-07` & `G-10`; formal closeout & Stage 11 handoff recorded in [`docs/stages/stage-10-closeout/CLOSEOUT_REPORT.md`](stage-10-closeout/CLOSEOUT_REPORT.md), [`docs/stages/stage-10-closeout/ACCEPTANCE_AUDIT.md`](stage-10-closeout/ACCEPTANCE_AUDIT.md), and [`docs/stages/stage-10-closeout/STAGE_11_HANDOFF.md`](stage-10-closeout/STAGE_11_HANDOFF.md). Real Qwen/BGE CUDA weight loading / RTX 3070 VRAM checks, MinerU subprocess settlement, OS signal/launcher termination, and Stage 11 local server/CLI/streaming/backup/performance work remain explicitly deferred beyond Stage 10.

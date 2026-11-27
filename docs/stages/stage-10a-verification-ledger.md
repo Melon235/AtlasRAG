@@ -1,12 +1,13 @@
 # Stage 10-A Offline Verification Ledger
 
 Status: **Stage 10-A COMPLETE offline (`352` Stage 10 tests pass across
-`A-R1`..`A-R6` + Stage 10-C2/C2-R1 regressions). `AR4-T01` is now
-`OFFLINE_AND_REAL_INFRA_VERIFIED` via [Stage 10-B completion](stage-10b-completion.md);
-Stage 10-C1 (`FAIL`), Stage 10-C2 (`COMPLETE`), Stage 10-C3 (`FAIL` — 5 closed,
-`F-R10-01-01`/`C3-RISK-01` open), and Stage 10-C2-R1 (`COMPLETE`) are recorded;
-Stage 10-C3-R1 targeted re-review remains `PENDING_INDEPENDENT_REVIEW`. Stage 10
-overall remains PARTIAL; acceptance remains UNSATISFIED.**
+`A-R1`..`A-R6` + Stage 10-C2/C2-R1 regressions); Stage 10-B (`12/12` real-infra)
+and `AR4-T01` (`OFFLINE_AND_REAL_INFRA_VERIFIED`) COMPLETE ([Stage 10-B completion](stage-10b-completion.md));
+historical Stage 10-C1 (`FAIL`), Stage 10-C2 (`COMPLETE`), historical Stage 10-C3
+(`FAIL` — `5/6` closed, `F-R10-01-01`/`C3-RISK-01` open), Stage 10-C2-R1 (`COMPLETE`),
+Stage 10-C3-R1 (`PASS` on `be5a2876`), and Stage 10-C4 closeout COMPLETE.
+Stage 10 Technical Acceptance is `PASS` (`ACCEPTED / PENDING_MERGE`, `PR #11`
+open/unmerged awaiting owner authorization; Stage 11 `NOT_STARTED`).**
 
 ## A-R1 Production composition — COMPLETE (offline, fake technical boundaries)
 
@@ -567,12 +568,12 @@ Added deterministic verification across
 |---|---|
 | `make test-stage10` (post-C2-R1) | PASS — 352 tests |
 | `make verify` (post-C2-R1) | PASS — 3660 passed, 1 skipped (`deepeval` absent), 120 deselected |
-| `ruff check .` / `ruff format --check .` (487 files) / `mypy` (396 source files) | PASS |
+| `ruff check .` / `ruff format --check .` (489 files) / `mypy` (396 source files) | PASS |
 | `make architecture-check` / `git diff --check` | PASS |
 | Stage 9 raw artifact integrity | PASS — 12/12 SHA-256 and size matches |
 | `AR4-T01` Redis transport settlement | OFFLINE_AND_REAL_INFRA_VERIFIED (`A-R6` + Stage 10-B) |
 | Real isolated PostgreSQL/Milvus/Redis integration | COMPLETE (Stage 10-B — 12/12 PASS in 734.68s, `remaining=0`, see `docs/stages/stage-10b-completion.md`) |
-| Independent review | Stage 10-C1 FAIL (`3a9de079`); Stage 10-C3 FAIL (`5f74b201`: 5 closed, `F-R10-01-01`/`C3-RISK-01` open); Stage 10-C2-R1 COMPLETE; Stage 10-C3-R1 READY / PENDING_INDEPENDENT_REVIEW (`docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md`) |
+| Independent review & Stage 10-C4 closeout | PASS (historical C1 `FAIL` on `3a9de079`; historical C3 `FAIL` on `5f74b201`; C2-R1 COMPLETE on `be5a2876`; Stage 10-C3-R1 **`PASS`** on `be5a2876` closing `6/6` blocking findings — see `docs/stages/stage-10-review/STAGE_10_C3_R1_REVIEW.md` and `docs/stages/stage-10-closeout/CLOSEOUT_REPORT.md`) |
 
 *Stage 10-B offline regression additions incorporated into `AR6-04` and
 `AR6-07` above:* `CacheFreshnessBarrier.active_write_fence` +

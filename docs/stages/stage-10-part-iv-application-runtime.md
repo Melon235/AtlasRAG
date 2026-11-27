@@ -2,12 +2,15 @@
 
 ## Status
 
-**PARTIAL — Stage 10-A (`A-R1`–`A-R6` offline, `352` tests), Stage 10-B (`12/12`
-isolated real PostgreSQL/Milvus/Redis integration), Stage 10-C1 (`FAIL`),
-Stage 10-C2, Stage 10-C3 (`FAIL` — 5 closed, `F-R10-01-01`/`C3-RISK-01` open),
-and Stage 10-C2-R1 remediation COMPLETE. Stage 10-C3-R1 (independent targeted
-re-review) remains `READY / PENDING_INDEPENDENT_REVIEW`. Stage 10 overall
-acceptance remains UNSATISFIED (`PR #11` open/unmerged).**
+**ACCEPTED / PENDING_MERGE (`PASS`) — Stage 10-A (`A-R1`–`A-R6` offline,
+`352` tests), Stage 10-B (`12/12` isolated real PostgreSQL/Milvus/Redis
+integration), historical Stage 10-C1 (`FAIL` on `3a9de079`), Stage 10-C2,
+historical Stage 10-C3 (`FAIL` on `5f74b201`, `5/6` closed), Stage 10-C2-R1
+(`be5a2876`), Stage 10-C3-R1 final independent targeted re-review (`PASS`), and
+Stage 10-C4 closeout COMPLETE. Original acceptance requirements: `23/23`
+SATISFIED (`6/6` blocking findings CLOSED, `10/10` gaps CLOSED within approved
+scope). `PR #11` remains `OPEN / UNMERGED` (`READY — OWNER_AUTHORIZATION_REQUIRED`);
+Stage 11 is `NOT_STARTED`.**
 
 Stage 9 remains closed under its amended acceptance scope (12/12 artifacts
 verified). Stage 10 does not merge automatically.
@@ -143,16 +146,19 @@ local disposable-cache assumption is explicit.
   COMPLETE (`12/12` real-infra tests pass with fail-closed `scripts/stage10_isolation.py`
   ownership; `AR4-T01` live Redis settlement verified — see
   [`stage-10b-completion.md`](stage-10b-completion.md)).
-- **Stage 10-C1 / C2 / C3 / C2-R1 / C3-R1 (independent review & remediation):**
-  Stage 10-C1 `FAIL` on `3a9de079` ([`stage-10-review/STAGE_10_C1_REVIEW.md`](stage-10-review/STAGE_10_C1_REVIEW.md)),
+- **Stage 10-C1 / C2 / C3 / C2-R1 / C3-R1 / C4 (independent review & closeout):**
+  Historical Stage 10-C1 `FAIL` on `3a9de079` ([`stage-10-review/STAGE_10_C1_REVIEW.md`](stage-10-review/STAGE_10_C1_REVIEW.md)),
   Stage 10-C2 COMPLETE ([`stage-10-review/STAGE_10_C2_REMEDIATION.md`](stage-10-review/STAGE_10_C2_REMEDIATION.md)),
-  Stage 10-C3 `FAIL` on `5f74b201` with `5/6` blockers closed and `F-R10-01-01` /
-  `C3-RISK-01` open ([`stage-10-review/STAGE_10_C3_REVIEW.md`](stage-10-review/STAGE_10_C3_REVIEW.md)),
+  historical Stage 10-C3 `FAIL` on `5f74b201` with `5/6` blockers closed and
+  `F-R10-01-01` / `C3-RISK-01` open ([`stage-10-review/STAGE_10_C3_REVIEW.md`](stage-10-review/STAGE_10_C3_REVIEW.md)),
   Stage 10-C2-R1 targeted remediation COMPLETE ([`stage-10-review/STAGE_10_C2_R1_REMEDIATION.md`](stage-10-review/STAGE_10_C2_R1_REMEDIATION.md)),
-  Stage 10-C3-R1 `READY / PENDING_INDEPENDENT_REVIEW`
-  ([`stage-10-review/STAGE_10_C3_HANDOFF.md`](stage-10-review/STAGE_10_C3_HANDOFF.md);
+  Stage 10-C3-R1 final independent targeted re-review **PASS / READY_FOR_FINAL_ACCEPTANCE**
+  on `be5a2876` ([`stage-10-review/STAGE_10_C3_R1_REVIEW.md`](stage-10-review/STAGE_10_C3_R1_REVIEW.md)),
+  and Stage 10-C4 closeout COMPLETE ([`stage-10-closeout/CLOSEOUT_REPORT.md`](stage-10-closeout/CLOSEOUT_REPORT.md),
+  [`stage-10-closeout/ACCEPTANCE_AUDIT.md`](stage-10-closeout/ACCEPTANCE_AUDIT.md),
+  [`stage-10-closeout/STAGE_11_HANDOFF.md`](stage-10-closeout/STAGE_11_HANDOFF.md);
   see also [`stage-10-review/REVIEW_SUMMARY.md`](stage-10-review/REVIEW_SUMMARY.md)).
 - Real Qwen/BGE GPU initialization, MinerU guarded boundary measurement, RTX
   3070 VRAM/OOM and SDK subprocess settlement, OS signal delivery, launcher
-  termination, and final API/CLI/streaming/backup/performance work remain
-  deferred to later deployment and Stage 11+ work.
+  termination, and Stage 11+ server/CLI/streaming/backup/performance work remain
+  explicitly deferred beyond Stage 10 (`Stage 11: NOT_STARTED`).

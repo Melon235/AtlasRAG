@@ -8,7 +8,7 @@ The authoritative design is
 
 **Current implementation stage: Stage 10 — Part IV: Application Runtime Foundation (`stage/10-part-iv-application-runtime`)**
 
-**Status: Stage 10-A (`A-R1`–`A-R6` offline), Stage 10-B (`12/12` isolated real infra), Stage 10-C1 (`FAIL`), Stage 10-C2, Stage 10-C3 (`5/6` closed, `F-R10-01-01`/`C3-RISK-01` open), and Stage 10-C2-R1 remediation COMPLETE; Stage 10-C3-R1 independent re-review PENDING (`PR #11` open/unmerged)**
+**Status: Stage 10 `ACCEPTED / PENDING_MERGE` — Stage 10-A (`COMPLETE`), Stage 10-B (`COMPLETE`), Stage 10-C (`COMPLETE / PASS` via Stage 10-C3-R1 on `be5a2876`), and Stage 10-C4 (`COMPLETE`); `23/23` requirements SATISFIED, `6/6` blocking findings CLOSED, `10/10` gaps CLOSED; `PR #11` OPEN/UNMERGED (`READY — OWNER_AUTHORIZATION_REQUIRED`); Stage 11 `NOT_STARTED`**
 
 Stage 9 adds an external benchmark harness under `benchmarks/`, with frozen
 dataset snapshot validation, modality-filtered Open RAGBench metadata, corpus
@@ -28,11 +28,14 @@ and Stage 10-B handoff in
 Stage 9 is closed under its amended acceptance scope (`12/12` preserved raw
 artifacts verified); Stage 10-A (`A-R1`–`A-R6`), Stage 10-B (`12/12` isolated
 real PG/Milvus/Redis integration), Stage 10-C1 (`FAIL`), Stage 10-C2, Stage 10-C3
-(`5/6` blockers closed; `F-R10-01-01`/`C3-RISK-01` open), and Stage 10-C2-R1
-remediation are complete, while Stage 10 overall acceptance remains partial
-(`UNSATISFIED`) pending Stage 10-C3-R1 independent targeted re-review
-([`docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md`](docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md),
-`PR #11` open/unmerged).
+(`5/6` closed), Stage 10-C2-R1, Stage 10-C3-R1 final independent targeted
+re-review (`PASS` on `be5a2876`), and Stage 10-C4 closeout
+([`docs/stages/stage-10-closeout/CLOSEOUT_REPORT.md`](docs/stages/stage-10-closeout/CLOSEOUT_REPORT.md),
+[`docs/stages/stage-10-closeout/ACCEPTANCE_AUDIT.md`](docs/stages/stage-10-closeout/ACCEPTANCE_AUDIT.md),
+[`docs/stages/stage-10-closeout/STAGE_11_HANDOFF.md`](docs/stages/stage-10-closeout/STAGE_11_HANDOFF.md))
+are complete. Stage 10 technical acceptance is `PASS` (`23/23` requirements,
+`6/6` findings, `10/10` gaps closed within approved scope); `PR #11` remains
+OPEN/UNMERGED awaiting owner merge authorization, and Stage 11 is `NOT_STARTED`.
 
 ## Setup
 
@@ -180,7 +183,8 @@ make stage10-verify
 runs the `12` Stage 10-B real isolated PostgreSQL/Milvus/Redis tests via
 `scripts/stage10_verify.sh --integration-only`; `make stage10-verify` runs
 offline verification followed by real isolated Stage 10-B integration; Stage 10-C3-R1
-independent targeted re-review remains pending.
+independent targeted re-review (`PASS` on `be5a2876`) and Stage 10-C4 closeout
+are complete (`PR #11` open/unmerged awaiting owner authorization).
 
 Ordinary `make verify` remains network-free, Docker-free, parser-SDK-free,
 model-free, and independent of PostgreSQL, Redis, Milvus, and SearXNG.

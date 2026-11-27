@@ -3,11 +3,11 @@
 - **Branch / PR:** `stage/10-part-iv-application-runtime` / `PR #11` (`OPEN / UNMERGED`)
 - **Accepted Base (`origin/main`):** `2f3f487f9346a8067faabca1ee49820035d8ed8d`
 - **Historical C3 Candidate / Verdict:** `5f74b201b076850bc18da9ecff12b56acde0260b` / **FAIL** (5 closed, `F-R10-01-01` via `C3-RISK-01` + `composition.py:282` still open)
-- **Stage 10-C2-R1 Status:** **COMPLETE**
-- **Stage 10-C3-R1 Status:** **READY / PENDING_INDEPENDENT_REVIEW**
-- **Gap `G-07`:** **FIX_IMPLEMENTED / PENDING_INDEPENDENT_REVIEW** (solely on `F-R10-01-01` / `C3-RISK-01`)
-- **Gap `G-10`:** **OPEN** (pending Stage 10-C3-R1 independent re-review)
-- **Stage 10 Overall Acceptance:** **PARTIAL / UNSATISFIED** (`PR #11` must remain OPEN/UNMERGED; no Stage 11 started)
+- **Stage 10-C2-R1 Status (`be5a2876`):** **COMPLETE** ([`STAGE_10_C2_R1_REMEDIATION.md`](STAGE_10_C2_R1_REMEDIATION.md))
+- **Stage 10-C3-R1 Status:** **COMPLETE / PASS** (`READY_FOR_FINAL_ACCEPTANCE` — [`STAGE_10_C3_R1_REVIEW.md`](STAGE_10_C3_R1_REVIEW.md))
+- **Gap `G-07`:** **CLOSED** (`F-R10-01-01` / `C3-RISK-01` / `R10-03-F02` / line-`282` independently verified closed on `be5a2876`)
+- **Gap `G-10`:** **CLOSED** (Stage 10-C1/C3/C3-R1 independent review cycle complete)
+- **Stage 10 Overall Acceptance:** **`ACCEPTED / PENDING_MERGE`** (`23/23` requirements SATISFIED, `6/6` blocking findings CLOSED, `10/10` gaps CLOSED; `PR #11` remains OPEN/UNMERGED awaiting owner authorization; Stage 11 `NOT_STARTED` — [`../stage-10-closeout/CLOSEOUT_REPORT.md`](../stage-10-closeout/CLOSEOUT_REPORT.md))
 
 ## 1. Remediated & Preserved Scope
 
