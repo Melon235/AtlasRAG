@@ -9,7 +9,6 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 
 from atlasrag.domain.errors import (
     AtlasRAGError,
@@ -19,6 +18,7 @@ from atlasrag.domain.errors import (
 )
 from atlasrag.runtime.coordinator import ApplicationCoordinator
 from atlasrag.runtime.modes import RuntimeMode
+from atlasrag.server.cancellation import settle_task_no_raise
 from atlasrag.server.config import ServerConfig
 from atlasrag.server.errors import (
     ServerHttpError,
@@ -249,23 +249,30 @@ class MaintenanceOperationRegistry:
             self._active_task = op_task
 
         draining_wait = asyncio.create_task(draining_event.wait())
+        wait_cancelled = False
         try:
             await asyncio.wait(
                 {draining_wait, op_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
         except asyncio.CancelledError:
-            await self._settle_task_quietly(draining_wait, cancel=True)
-            if not draining_event.is_set():
-                await self._settle_task_quietly(op_task, cancel=True)
-                await self._rollback_unadmitted(operation_id)
-            raise
+            wait_cancelled = True
         finally:
-            await self._settle_task_quietly(draining_wait, cancel=True)
+            helper_cancel, _ = await settle_task_no_raise(draining_wait, cancel=True)
+            if helper_cancel:
+                wait_cancelled = True
+
+        if wait_cancelled:
+            if not draining_event.is_set():
+                await settle_task_no_raise(op_task, cancel=True)
+                await self._rollback_unadmitted(operation_id)
+            raise asyncio.CancelledError
 
         if not draining_event.is_set():
-            await self._settle_task_quietly(op_task, cancel=False)
+            settle_cancel, _ = await settle_task_no_raise(op_task, cancel=False)
             await self._rollback_unadmitted(operation_id)
+            if settle_cancel:
+                raise asyncio.CancelledError
             if pre_admission_error is not None:
                 if isinstance(pre_admission_error, (AtlasRAGError, ServerHttpError)):
                     raise pre_admission_error
@@ -288,22 +295,6 @@ class MaintenanceOperationRegistry:
             status=OperationStatus.RUNNING,
             accepted_at=entry.accepted_at,
         )
-
-    async def _settle_task_quietly(
-        self, task: asyncio.Task[Any], *, cancel: bool
-    ) -> None:
-        if cancel and not task.done():
-            task.cancel()
-        while not task.done():
-            try:
-                await asyncio.wait((task,))
-            except asyncio.CancelledError:
-                pass
-        if not task.cancelled():
-            try:
-                task.exception()
-            except BaseException:
-                pass
 
     async def _rollback_unadmitted(self, operation_id: str) -> None:
         async with self._lock:
@@ -333,9 +324,17 @@ class MaintenanceOperationRegistry:
                 message=entry.message,
             )
 
-    async def wait_active(self) -> None:
-        """Await any active server-owned maintenance task until settled."""
+    async def wait_active(self, *, timeout: float | None = None) -> bool:
+        """Await any active server-owned maintenance task up to optional timeout.
+
+        Returns True when no active operation remains unsettled; returns False on
+        timeout without cancelling the operation or falsifying its terminal state.
+        Propagates outer cancellation immediately.
+        """
 
         task = self._active_task
-        if task is not None and not task.done():
-            await self._settle_task_quietly(task, cancel=False)
+        if task is None or task.done():
+            return True
+        effective_timeout = None if timeout is None else max(0.0, timeout)
+        done, _ = await asyncio.wait((task,), timeout=effective_timeout)
+        return task in done or task.done()

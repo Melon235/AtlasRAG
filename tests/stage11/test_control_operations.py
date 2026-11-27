@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any, cast
 
 import httpx
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from atlasrag.domain.errors import (
     DependencyUnavailableError,
+    RuntimeShutdownFailedError,
     RuntimeShuttingDownError,
 )
 from atlasrag.domain.requests import UserTurnRequest
@@ -926,3 +928,198 @@ async def test_control_shutdown_boundary_injection_and_admission_closure() -> No
             assert (await client.get("/api/v1/status")).status_code == 503
     finally:
         await coord.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_wpc_f04_maintenance_idempotent_cancellation_and_bounded_wait_active() -> (
+    None
+):
+    """WPC-F04: No duplicate cancel across HTTP+shutdown races, rollback intact, and wait_active timeout safe."""
+
+    # Scenario 1: Pre-admission HTTP cancellation first, coordinator shutdown second
+    worker_started = asyncio.Event()
+    settling_started = asyncio.Event()
+    worker_release = asyncio.Event()
+    cancel_deliveries = 0
+
+    async def shielded_pre_admission() -> None:
+        nonlocal cancel_deliveries
+        inner = asyncio.create_task(worker_release.wait())
+        worker_started.set()
+        cancelled = False
+        while not inner.done():
+            try:
+                await asyncio.shield(inner)
+            except asyncio.CancelledError:
+                cancel_deliveries += 1
+                settling_started.set()
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+
+    coord1, harness1 = await start_test_coordinator(shutdown_timeout_seconds=0.02)
+    reg1 = MaintenanceOperationRegistry(
+        coordinator=coord1, server_config=ServerConfig()
+    )
+    real_begin1 = harness1.gate.begin_maintenance
+
+    async def shielded_begin1() -> Any:
+        await shielded_pre_admission()
+        return await real_begin1()
+
+    harness1.gate.begin_maintenance = shielded_begin1  # type: ignore[method-assign]
+    shut1_phase = asyncio.Event()
+    real_cancel_all1 = harness1.tasks.cancel_all
+
+    def tracked_cancel1() -> None:
+        shut1_phase.set()
+        real_cancel_all1()
+
+    harness1.tasks.cancel_all = tracked_cancel1  # type: ignore[method-assign]
+    try:
+        req1 = asyncio.create_task(reg1.start_operation(OperationKind.SYNC))
+        await worker_started.wait()
+        assert reg1.active_operation_id is not None
+
+        # Cancel HTTP pre-admission first, hold unsettled while coordinator.shutdown() runs
+        req1.cancel()
+        await settling_started.wait()
+        assert cancel_deliveries == 1
+
+        shut_task1 = asyncio.create_task(coord1.shutdown())
+        await shut1_phase.wait()
+        with pytest.raises(RuntimeShutdownFailedError):
+            await shut_task1
+        assert cancel_deliveries == 1
+        assert harness1.ownership.acquired
+
+        # Release worker -> clean settlement, rollback of STARTING reservation, zero stranded lease
+        worker_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await req1
+        await coord1.shutdown()
+        assert reg1.active_operation_id is None
+        assert reg1.active_task is None
+        assert reg1.retained_count() == 0
+        assert harness1.tasks.snapshot() == ()
+        assert not harness1.ownership.acquired
+    finally:
+        await coord1.shutdown()
+
+    # Scenario 2: Coordinator shutdown cancellation first, repeated HTTP cancellation second
+    worker_started.clear()
+    settling_started.clear()
+    worker_release.clear()
+    cancel_deliveries = 0
+
+    coord2, harness2 = await start_test_coordinator(shutdown_timeout_seconds=0.02)
+    reg2 = MaintenanceOperationRegistry(
+        coordinator=coord2, server_config=ServerConfig()
+    )
+    real_begin2 = harness2.gate.begin_maintenance
+
+    async def shielded_begin2() -> Any:
+        await shielded_pre_admission()
+        return await real_begin2()
+
+    harness2.gate.begin_maintenance = shielded_begin2
+    shut2_phase = asyncio.Event()
+    real_cancel_all2 = harness2.tasks.cancel_all
+
+    def tracked_cancel2() -> None:
+        shut2_phase.set()
+        real_cancel_all2()
+
+    harness2.tasks.cancel_all = tracked_cancel2
+    try:
+        req2 = asyncio.create_task(reg2.start_operation(OperationKind.SYNC))
+        await worker_started.wait()
+
+        # Trigger coordinator shutdown first
+        shut_task2 = asyncio.create_task(coord2.shutdown())
+        await shut2_phase.wait()
+        await settling_started.wait()
+        assert cancel_deliveries == 1
+
+        # Repeated HTTP outer cancellations while worker remains unsettled
+        req2.cancel()
+        await asyncio.sleep(0)
+        req2.cancel()
+        with pytest.raises(RuntimeShutdownFailedError):
+            await shut_task2
+        assert cancel_deliveries == 1
+        assert harness2.ownership.acquired
+
+        worker_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await req2
+        await coord2.shutdown()
+        assert reg2.active_operation_id is None
+        assert reg2.active_task is None
+        assert reg2.retained_count() == 0
+        assert harness2.tasks.snapshot() == ()
+        assert not harness2.ownership.acquired
+    finally:
+        await coord2.shutdown()
+
+    # Scenario 3: Bounded wait_active(timeout=...) returns False without cancelling worker or faking cleanup
+    op_entered = asyncio.Event()
+    op_release = asyncio.Event()
+
+    async def long_sync() -> SyncResult:
+        inner = asyncio.create_task(op_release.wait())
+        op_entered.set()
+        cancelled = False
+        while not inner.done():
+            try:
+                await asyncio.shield(inner)
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+        return SyncResult(
+            outcome=SyncOutcome.SUCCESS,
+            serving_safety=ServingSafety.SAFE_TO_SERVE,
+            checked_documents=2,
+        )
+
+    coord3, harness3 = await start_test_coordinator(
+        sync_fn=long_sync,
+        shutdown_timeout_seconds=0.02,
+    )
+    reg3 = MaintenanceOperationRegistry(
+        coordinator=coord3, server_config=ServerConfig()
+    )
+    try:
+        accepted = await reg3.start_operation(OperationKind.SYNC)
+        await op_entered.wait()
+
+        t0 = monotonic()
+        settled = await reg3.wait_active(timeout=0.03)
+        elapsed = monotonic() - t0
+        assert settled is False
+        assert elapsed < 0.5
+        # Must NOT cancel op_task, mark operation terminal, or release ownership!
+        assert reg3.active_task is not None
+        assert not reg3.active_task.done()
+        assert not reg3.active_task.cancelled()
+        status_mid = await reg3.get_operation(accepted.operation_id)
+        assert status_mid.status is OperationStatus.RUNNING
+        assert harness3.ownership.acquired
+        assert len(harness3.tasks.snapshot(TaskKind.MAINTENANCE)) == 1
+
+        # Shutdown fails closed while unresolved maintenance stays owned
+        with pytest.raises(RuntimeShutdownFailedError):
+            await coord3.shutdown()
+        assert harness3.ownership.acquired
+
+        # Settling worker permits normal final cleanup
+        op_release.set()
+        assert await reg3.wait_active(timeout=1.0) is True
+        status_end = await reg3.get_operation(accepted.operation_id)
+        assert status_end.status is OperationStatus.FAILED
+        assert reg3.active_task is None
+        await coord3.shutdown()
+        assert not harness3.ownership.acquired
+    finally:
+        await coord3.shutdown()

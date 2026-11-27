@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections import deque
 from collections.abc import Callable
 
 from atlasrag.domain.errors import AtlasRAGError, ErrorCode
@@ -82,6 +83,7 @@ class StreamChannel:
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self._session_id = session_id
+        self._max_queue_size = server_config.sse_queue_maxsize
         self._max_progress_bytes = server_config.max_progress_event_bytes
         self._max_response_bytes = server_config.max_response_bytes
         self._loop = asyncio.get_running_loop() if loop is None else loop
@@ -92,6 +94,9 @@ class StreamChannel:
         self._progress_queue: asyncio.Queue[bytes] = asyncio.Queue(
             maxsize=server_config.sse_queue_maxsize
         )
+        self._pending_cross_thread: deque[bytes] = deque()
+        self._drain_scheduled = False
+        self._scheduled_wakeups_count = 0
         self._trace_id: str | None = None
         self._accepted_frame: bytes | None = None
         self._terminal_frame: bytes | None = None
@@ -117,6 +122,16 @@ class StreamChannel:
     @property
     def dropped_progress_count(self) -> int:
         return self._dropped_progress
+
+    @property
+    def pending_cross_thread_count(self) -> int:
+        with self._state_lock:
+            return len(self._pending_cross_thread)
+
+    @property
+    def scheduled_wakeups_count(self) -> int:
+        with self._state_lock:
+            return self._scheduled_wakeups_count
 
     @property
     def is_closed(self) -> bool:
@@ -160,18 +175,28 @@ class StreamChannel:
             return
         if self._loop.is_closed():
             return
+        need_schedule = False
         with self._state_lock:
             if self._closed or self._terminal_frame is not None:
                 return
+            if len(self._pending_cross_thread) >= self._max_queue_size:
+                self._pending_cross_thread.popleft()
+                self._dropped_progress += 1
+            self._pending_cross_thread.append(frame)
+            if not self._drain_scheduled:
+                self._drain_scheduled = True
+                self._scheduled_wakeups_count += 1
+                need_schedule = True
+        if not need_schedule:
+            return
         try:
-            self._loop.call_soon_threadsafe(self._enqueue_progress_on_loop, frame)
+            self._loop.call_soon_threadsafe(self._drain_cross_thread_on_loop)
         except RuntimeError:
+            with self._state_lock:
+                self._drain_scheduled = False
             return
 
-    def _enqueue_progress_on_loop(self, frame: bytes) -> None:
-        with self._state_lock:
-            if self._closed or self._terminal_frame is not None:
-                return
+    def _push_loop_queue_frame(self, frame: bytes) -> None:
         if self._progress_queue.full():
             try:
                 self._progress_queue.get_nowait()
@@ -182,6 +207,26 @@ class StreamChannel:
             self._progress_queue.put_nowait(frame)
         except asyncio.QueueFull:
             return
+
+    def _enqueue_progress_on_loop(self, frame: bytes) -> None:
+        with self._state_lock:
+            if self._closed or self._terminal_frame is not None:
+                return
+        self._push_loop_queue_frame(frame)
+        self._wakeup.set()
+
+    def _drain_cross_thread_on_loop(self) -> None:
+        with self._state_lock:
+            self._drain_scheduled = False
+            if self._closed or self._terminal_frame is not None:
+                self._pending_cross_thread.clear()
+                return
+            frames = list(self._pending_cross_thread)
+            self._pending_cross_thread.clear()
+        if not frames:
+            return
+        for frame in frames:
+            self._push_loop_queue_frame(frame)
         self._wakeup.set()
 
     def publish_final(self, response: QueryResponse) -> None:
@@ -234,10 +279,17 @@ class StreamChannel:
         self._set_terminal_frame(format_sse_frame("error", payload.model_dump_json()))
 
     def _set_terminal_frame(self, frame: bytes) -> None:
+        pending_frames: list[bytes] = []
         with self._state_lock:
             if self._terminal_frame is not None:
                 return
+            if not self._closed and self._pending_cross_thread:
+                pending_frames = list(self._pending_cross_thread)
+            self._pending_cross_thread.clear()
             self._terminal_frame = frame
+        if threading.get_ident() == self._loop_thread_id:
+            for item in pending_frames:
+                self._push_loop_queue_frame(item)
         self._wakeup.set()
 
     def close(self) -> None:
@@ -245,6 +297,7 @@ class StreamChannel:
 
         with self._state_lock:
             self._closed = True
+            self._pending_cross_thread.clear()
         self._wakeup.set()
 
     def pop_progress_nowait(self) -> bytes | None:

@@ -110,6 +110,7 @@ STAGE11_FRAMEWORK_FREE_SERVER_MODULES = frozenset(
         "src/atlasrag/server/schemas.py",
         "src/atlasrag/server/errors.py",
         "src/atlasrag/server/auth.py",
+        "src/atlasrag/server/cancellation.py",
         "src/atlasrag/server/sessions.py",
         "src/atlasrag/server/events.py",
         "src/atlasrag/server/operations.py",

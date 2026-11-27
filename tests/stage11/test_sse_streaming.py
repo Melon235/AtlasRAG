@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 import threading
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from datetime import UTC, datetime
 from typing import Any, cast
 
 import httpx
 import pytest
+import uvicorn
 from starlette.types import Message, Scope
 
 from atlasrag.application.rag_core import RagCoreExecution
@@ -52,8 +54,8 @@ from atlasrag.runtime.tasks import TaskKind
 from atlasrag.server.app import create_app
 from atlasrag.server.config import ServerConfig
 from atlasrag.server.events import InvocationEventBus, StreamChannel
-from atlasrag.server.schemas import ClientKind
-from atlasrag.server.service import ApplicationServerService
+from atlasrag.server.schemas import ClientKind, QueryRequest, QueryResponse
+from atlasrag.server.service import ApplicationServerService, DisconnectSignal
 from atlasrag.services.cache.policy import QueryCachePolicy
 from atlasrag.services.cache.session import QueryCacheStatus, SessionQueryCache
 from atlasrag.services.sync.models import (
@@ -1448,3 +1450,519 @@ async def test_sse_slow_consumer_overflow_during_active_stream_completes_unblock
             assert bus.bound_count() == 0
     finally:
         await coord.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_wpc_f01_sse_http_framing_and_real_uvicorn_loopback() -> None:
+    """WPC-F01: SseStreamResponse omits Content-Length and streams cleanly over real Uvicorn + h11."""
+
+    bus = InvocationEventBus()
+
+    async def framing_retrieval(_req: UserTurnRequest) -> FinalResponse:
+        trace_id = current_invocation_id()
+        assert trace_id is not None
+        deliver_observation(
+            bus,
+            ProductionObservation(
+                stage=ObservationStage.DENSE,
+                status="OK",
+                invocation_id=trace_id,
+            ),
+        )
+        deliver_observation(
+            bus,
+            ProductionObservation(
+                stage=ObservationStage.ANSWER,
+                status="SUCCESS",
+                invocation_id=trace_id,
+            ),
+        )
+        return _sample_final_with_citation("Real Uvicorn framing answer [L1].")
+
+    coord, harness = await start_test_coordinator(retrieval=framing_retrieval)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(16)
+    port = sock.getsockname()[1]
+
+    app = create_app(
+        runtime_config=sample_runtime_config(),
+        server_config=ServerConfig(port=port, sse_send_timeout_seconds=2.0),
+        coordinator=coord,
+        event_bus=bus,
+    )
+    server_task: asyncio.Task[None] | None = None
+    server: uvicorn.Server | None = None
+    try:
+        # 1. Direct ASGI inspection: zero Content-Length emitted on http.response.start
+        async with app.router.lifespan_context(app):
+            svc: ApplicationServerService = app.state.server_service
+            sid_asgi = (await svc.sessions.create_session(ClientKind.WEB)).session_id
+            payload = json.dumps({"session_id": sid_asgi, "query": "headers"}).encode()
+            body_done = False
+            asgi_msgs: list[MutableMapping[str, Any]] = []
+
+            async def recv_once() -> Message:
+                nonlocal body_done
+                if not body_done:
+                    body_done = True
+                    return {"type": "http.request", "body": payload, "more_body": False}
+                await asyncio.sleep(5.0)
+                return {"type": "http.disconnect"}
+
+            async def send_cap(msg: Message) -> None:
+                asgi_msgs.append(dict(msg))
+
+            scope = _make_http_scope(
+                headers=[
+                    (b"host", f"127.0.0.1:{port}".encode("ascii")),
+                    (b"origin", f"http://127.0.0.1:{port}".encode("ascii")),
+                    (b"x-atlasrag-client", b"web"),
+                    (b"content-type", b"application/json"),
+                ]
+            )
+            await app(scope, recv_once, send_cap)
+            start_msg = next(m for m in asgi_msgs if m["type"] == "http.response.start")
+            assert start_msg["status"] == 200
+            hdr_names = [k.lower() for k, _ in start_msg["headers"]]
+            assert b"content-length" not in hdr_names
+            assert b"transfer-encoding" not in hdr_names
+            hdr_map = {k.lower(): v for k, v in start_msg["headers"]}
+            assert hdr_map[b"content-type"].startswith(b"text/event-stream")
+            assert hdr_map[b"cache-control"] == b"no-cache"
+
+        # 2. Real Uvicorn + h11 loopback TCP protocol regression
+        uv_config = uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=port,
+            workers=1,
+            reload=False,
+            log_level="warning",
+            access_log=False,
+        )
+
+        class _NoSignalServer(uvicorn.Server):
+            def capture_signals(self) -> Any:
+                return nullcontext()
+
+        server = _NoSignalServer(uv_config)
+        server_task = asyncio.create_task(server.serve(sockets=[sock]))
+        for _ in range(500):
+            if server.started:
+                break
+            await asyncio.sleep(0.01)
+        assert server.started
+
+        headers = {
+            "host": f"127.0.0.1:{port}",
+            "origin": f"http://127.0.0.1:{port}",
+            "x-atlasrag-client": "web",
+        }
+        async with httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{port}",
+            trust_env=False,
+            timeout=5.0,
+        ) as client:
+            sess = await client.post(
+                "/api/v1/sessions",
+                json={"client_kind": "web"},
+                headers=headers,
+            )
+            assert sess.status_code == 201
+            sid_tcp = sess.json()["session_id"]
+
+            async with client.stream(
+                "POST",
+                "/api/v1/query/stream",
+                json={"session_id": sid_tcp, "query": "loopback uvicorn sse"},
+                headers=headers,
+            ) as stream_resp:
+                assert stream_resp.status_code == 200
+                assert "content-length" not in {
+                    k.lower() for k in stream_resp.headers.keys()
+                }
+                assert stream_resp.headers["content-type"].startswith(
+                    "text/event-stream"
+                )
+                wire_bytes = await stream_resp.aread()
+
+            events = _parse_sse_events(wire_bytes)
+            assert [name for name, _ in events] == [
+                "accepted",
+                "progress",
+                "progress",
+                "final",
+            ]
+            assert (
+                json.loads(events[-1][1])["response"]["answer_text"]
+                == "Real Uvicorn framing answer [L1]."
+            )
+
+            # Pre-admission JSON error behavior preserved over real socket
+            await harness.gate.mark_blocked()
+            blocked_resp = await client.post(
+                "/api/v1/query/stream",
+                json={"session_id": sid_tcp, "query": "blocked over tcp"},
+                headers=headers,
+            )
+            assert blocked_resp.status_code == 503
+            assert blocked_resp.headers["content-type"].startswith("application/json")
+            assert blocked_resp.json()["error_code"] == "RUNTIME_NOT_READY"
+            assert bus.bound_count() == 0
+    finally:
+        if server is not None:
+            server.should_exit = True
+        if server_task is not None:
+            await asyncio.wait_for(server_task, timeout=5.0)
+        sock.close()
+        await coord.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_wpc_f02_sse_monitor_lifetime_and_admission_handoff_cancellation() -> (
+    None
+):
+    """WPC-F02: Sole disconnect monitor outlives query settlement until SSE cleanup; helper/handoff cancel never leaks."""
+
+    bus = InvocationEventBus()
+    guard = ResourceGuard(capacity=1)
+    baseline_tasks = len(asyncio.all_tasks())
+
+    # Part 1: Query finishes fast while terminal frame send blocks; monitor stays alive & detects disconnect
+    async def quick_retrieval(_req: UserTurnRequest) -> FinalResponse:
+        async with guard.slot():
+            return sample_response("Quick completion.")
+
+    coord, harness = await start_test_coordinator(retrieval=quick_retrieval)
+    app = create_app(
+        runtime_config=sample_runtime_config(),
+        server_config=ServerConfig(
+            max_concurrent_streams=1,
+            max_concurrent_queries=2,
+            max_in_flight_per_session=2,
+            sse_send_timeout_seconds=2.0,
+        ),
+        coordinator=coord,
+        event_bus=bus,
+    )
+    try:
+        async with app.router.lifespan_context(app):
+            svc: ApplicationServerService = app.state.server_service
+            sid = (await svc.sessions.create_session(ClientKind.WEB)).session_id
+            payload = json.dumps({"session_id": sid, "query": "monitor live"}).encode()
+            body_sent = False
+            monitor_active = False
+            disconnect_gate = asyncio.Event()
+            terminal_send_entered = asyncio.Event()
+            terminal_send_release = asyncio.Event()
+            max_concurrent_receive = 0
+            in_flight_receive = 0
+
+            async def single_receive() -> Message:
+                nonlocal \
+                    body_sent, \
+                    monitor_active, \
+                    max_concurrent_receive, \
+                    in_flight_receive
+                if not body_sent:
+                    body_sent = True
+                    return {"type": "http.request", "body": payload, "more_body": False}
+                in_flight_receive += 1
+                max_concurrent_receive = max(max_concurrent_receive, in_flight_receive)
+                monitor_active = True
+                try:
+                    await disconnect_gate.wait()
+                    return {"type": "http.disconnect"}
+                finally:
+                    monitor_active = False
+                    in_flight_receive -= 1
+
+            async def blocking_final_send(msg: Message) -> None:
+                if msg["type"] == "http.response.body" and b"event: final" in msg.get(
+                    "body", b""
+                ):
+                    terminal_send_entered.set()
+                    await terminal_send_release.wait()
+
+            stream_task = asyncio.create_task(
+                app(_make_http_scope(), single_receive, blocking_final_send)
+            )
+            await terminal_send_entered.wait()
+            # Yield cleanly so QuerySupervisor finishes query settlement while terminal send blocks
+            await asyncio.sleep(0.02)
+            assert harness.gate.active_queries == 0
+            assert svc.supervisor.in_flight_queries == 0
+            assert svc.sessions.in_flight(sid) == 0
+            assert not guard._semaphore.locked()  # noqa: SLF001
+            # Stream capacity MUST stay held and sole disconnect monitor MUST still be active!
+            assert svc.supervisor.in_flight_streams == 1
+            assert monitor_active is True
+            assert max_concurrent_receive == 1
+
+            # Disconnect arrives during buffered/terminal delivery -> monitor detects it
+            disconnect_gate.set()
+            terminal_send_release.set()
+            await stream_task
+
+            assert monitor_active is False
+            assert svc.supervisor.in_flight_streams == 0
+            assert bus.bound_count() == 0
+    finally:
+        await coord.shutdown()
+
+    # Part 2: Cancel right during pre-admission wait AND immediately after authoritative admission
+    gate_enter = asyncio.Event()
+    gate_release = asyncio.Event()
+
+    async def blocking_probe() -> None:
+        gate_enter.set()
+        await gate_release.wait()
+
+    probe_armed = {"flag": False}
+
+    async def probe_fn() -> None:
+        if probe_armed["flag"]:
+            await blocking_probe()
+
+    coord2, harness2 = await start_test_coordinator(
+        probes={"postgres": probe_fn}, refresh_interval=0.0
+    )
+    svc2 = ApplicationServerService(
+        coordinator=coord2,
+        runtime_config=sample_runtime_config(),
+        server_config=ServerConfig(max_concurrent_streams=1),
+        event_bus=bus,
+    )
+    try:
+        probe_armed["flag"] = True
+        sid2 = (await svc2.sessions.create_session(ClientKind.WEB)).session_id
+        sig2 = DisconnectSignal()
+        mon_cancelled_clean = {"done": False}
+
+        def _mon(signal: DisconnectSignal) -> asyncio.Task[None]:
+            del signal
+
+            async def _w() -> None:
+                try:
+                    await asyncio.sleep(10.0)
+                finally:
+                    mon_cancelled_clean["done"] = True
+
+            return asyncio.create_task(_w())
+
+        call2 = asyncio.create_task(
+            svc2.start_stream_query(
+                QueryRequest(session_id=sid2, query="pre-admission cancel"),
+                header_client_kind=ClientKind.WEB,
+                monitor_factory=_mon,
+                disconnect_signal=sig2,
+            )
+        )
+        await gate_enter.wait()
+        call2.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call2
+        gate_release.set()
+        assert mon_cancelled_clean["done"] is True
+        assert svc2.supervisor.in_flight_queries == 0
+        assert svc2.supervisor.in_flight_streams == 0
+        assert svc2.sessions.in_flight(sid2) == 0
+        assert bus.bound_count() == 0
+    finally:
+        await coord2.shutdown()
+
+    # Part 3: Cancellation immediately after authoritative admission (before handle transfer)
+    admitted_now = asyncio.Event()
+    worker_rel = asyncio.Event()
+
+    async def slow_admitted(_req: UserTurnRequest) -> FinalResponse:
+        await worker_rel.wait()
+        return sample_response()
+
+    coord3, harness3 = await start_test_coordinator(retrieval=slow_admitted)
+    svc3 = ApplicationServerService(
+        coordinator=coord3,
+        runtime_config=sample_runtime_config(),
+        server_config=ServerConfig(max_concurrent_streams=1),
+        event_bus=bus,
+    )
+    real_run_query = coord3.run_query
+
+    async def hook_run_query(req: UserTurnRequest, *, on_admitted: Any = None) -> Any:
+        def wrapped_admitted(trace_id: str) -> None:
+            if on_admitted is not None:
+                on_admitted(trace_id)
+            admitted_now.set()
+            # Cancel waiting caller synchronously right after on_admitted sets accepted_event!
+            outer_waiter.cancel()
+
+        return await real_run_query(req, on_admitted=wrapped_admitted)
+
+    coord3.run_query = hook_run_query
+    try:
+        sid3 = (await svc3.sessions.create_session(ClientKind.WEB)).session_id
+        outer_waiter = asyncio.create_task(
+            svc3.start_stream_query(
+                QueryRequest(session_id=sid3, query="cancel right after on_admitted"),
+                header_client_kind=ClientKind.WEB,
+            )
+        )
+        await admitted_now.wait()
+        worker_rel.set()
+        with pytest.raises(asyncio.CancelledError):
+            await outer_waiter
+        assert harness3.gate.active_queries == 0
+        assert svc3.supervisor.in_flight_queries == 0
+        assert svc3.supervisor.in_flight_streams == 0
+        assert svc3.sessions.in_flight(sid3) == 0
+        assert bus.bound_count() == 0
+    finally:
+        await coord3.shutdown()
+
+    assert len(asyncio.all_tasks()) <= baseline_tasks
+
+
+@pytest.mark.asyncio
+async def test_wpc_f03_cross_thread_bounded_handoff_and_terminal_preservation() -> None:
+    """WPC-F03: Stalled event loop bounds cross-thread pending buffer and scheduled wakeups cleanly."""
+
+    channel = StreamChannel(
+        session_id="web_xt",
+        server_config=ServerConfig(sse_queue_maxsize=16, max_progress_event_bytes=512),
+    )
+    channel.mark_admitted("trace-xt")
+
+    # Burst 200 worker-thread events while event loop has NOT yet yielded/consumed callbacks
+    burst_done = threading.Event()
+
+    def burst_worker() -> None:
+        for idx in range(1, 201):
+            channel.observe(
+                ProductionObservation(
+                    stage=ObservationStage.DENSE,
+                    status="OK",
+                    attempt_index=idx,
+                    invocation_id="trace-xt",
+                )
+            )
+        # Unallowlisted + cross-invocation MUST be dropped cleanly on worker thread too
+        channel.observe(
+            ProductionObservation(
+                stage=ObservationStage.DENSE,
+                status="UNALLOWLISTED_INTERNAL_ERROR",
+                invocation_id="trace-xt",
+            )
+        )
+        channel.observe(
+            ProductionObservation(
+                stage=ObservationStage.BM25,
+                status="OK",
+                invocation_id="trace-OTHER",
+            )
+        )
+        burst_done.set()
+
+    t = threading.Thread(target=burst_worker)
+    t.start()
+    t.join(timeout=2.0)
+    assert burst_done.is_set()
+
+    # Before yielding to event loop: pending storage capped at 16 and at most 1 callback scheduled!
+    assert channel.pending_cross_thread_count == 16
+    assert channel.scheduled_wakeups_count == 1
+    assert channel.dropped_progress_count == 184
+
+    # Yield to loop -> single scheduled callback transfers newest 16 (185..200) to progress queue
+    await asyncio.sleep(0)
+    assert channel.pending_cross_thread_count == 0
+    attempts: list[int] = []
+    while True:
+        item = channel.pop_progress_nowait()
+        if item is None:
+            break
+        attempts.append(json.loads(item.split(b"data: ", 1)[1])["attempt"])
+    assert attempts == list(range(185, 201))
+
+    # Another worker burst + terminal final preserves terminal slot and stops subsequent progress
+    burst2_done = threading.Event()
+
+    def burst_worker_2() -> None:
+        for idx in range(1, 41):
+            channel.observe(
+                ProductionObservation(
+                    stage=ObservationStage.BM25,
+                    status="OK",
+                    attempt_index=idx,
+                    invocation_id="trace-xt",
+                )
+            )
+        burst2_done.set()
+
+    t2 = threading.Thread(target=burst_worker_2)
+    t2.start()
+    t2.join(timeout=2.0)
+    assert burst2_done.is_set()
+    assert channel.pending_cross_thread_count == 16
+    channel.publish_final(
+        QueryResponse(
+            trace_id="trace-xt",
+            session_id="web_xt",
+            cache_status=QueryCacheStatus.MISS,
+            elapsed_ms=2.0,
+            response=sample_response("Terminal retained."),
+        )
+    )
+    # Late worker observation after terminal MUST NOT enqueue
+    late_done = threading.Event()
+
+    def late_worker() -> None:
+        channel.observe(
+            ProductionObservation(
+                stage=ObservationStage.ANSWER,
+                status="SUCCESS",
+                attempt_index=999,
+                invocation_id="trace-xt",
+            )
+        )
+        late_done.set()
+
+    t3 = threading.Thread(target=late_worker)
+    t3.start()
+    t3.join(timeout=2.0)
+    assert late_done.is_set()
+    await asyncio.sleep(0)
+
+    assert channel.terminal_frame is not None
+    assert channel.terminal_frame.startswith(b"event: final\n")
+    assert channel.pending_cross_thread_count == 0
+
+    # Closing a channel with queued cross-thread frames cleans up safely
+    channel2 = StreamChannel(
+        session_id="web_close",
+        server_config=ServerConfig(sse_queue_maxsize=16),
+    )
+    channel2.mark_admitted("trace-c2")
+    c2_done = threading.Event()
+
+    def worker_c2() -> None:
+        for idx in range(1, 30):
+            channel2.observe(
+                ProductionObservation(
+                    stage=ObservationStage.DENSE,
+                    status="OK",
+                    attempt_index=idx,
+                    invocation_id="trace-c2",
+                )
+            )
+        c2_done.set()
+
+    t4 = threading.Thread(target=worker_c2)
+    t4.start()
+    t4.join(timeout=2.0)
+    assert c2_done.is_set()
+    channel2.close()
+    await asyncio.sleep(0)
+    assert channel2.pending_cross_thread_count == 0
+    assert not channel2.has_pending_progress()

@@ -21,6 +21,7 @@ from atlasrag.domain.errors import (
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.runtime.coordinator import ApplicationCoordinator, QueryResponseEnvelope
 from atlasrag.runtime.modes import RuntimeMode
+from atlasrag.server.cancellation import request_cancel_once, settle_task_no_raise
 from atlasrag.server.config import ServerConfig
 from atlasrag.server.errors import ServerHttpError, TransportErrorCode
 from atlasrag.server.events import InvocationEventBus, StreamChannel
@@ -70,47 +71,6 @@ class DisconnectSignal:
 
 
 MonitorFactory = Callable[[DisconnectSignal], asyncio.Task[None]]
-
-
-def _request_cancel_once(task: asyncio.Task[Any]) -> bool:
-    """Cancel task iff it is active and not already in a cancelling state."""
-
-    if task.done():
-        return False
-    if task.cancelling() == 0:
-        task.cancel()
-    return True
-
-
-async def _settle_task_no_raise(
-    task: asyncio.Task[Any] | None,
-    *,
-    cancel: bool,
-    already_cancelled: bool = False,
-) -> tuple[bool, bool]:
-    """Wait for actual task settlement via asyncio.wait, sending at most one cancel."""
-
-    if task is None:
-        return False, already_cancelled
-    outer_cancelled = False
-    cancel_sent = already_cancelled or task.cancelling() > 0
-    if cancel and not cancel_sent and not task.done():
-        _request_cancel_once(task)
-        cancel_sent = True
-    while not task.done():
-        try:
-            await asyncio.wait((task,))
-        except asyncio.CancelledError:
-            outer_cancelled = True
-            if not cancel_sent and not task.done():
-                _request_cancel_once(task)
-                cancel_sent = True
-    if not task.cancelled():
-        try:
-            task.exception()
-        except BaseException:
-            pass
-    return outer_cancelled, cancel_sent
 
 
 async def _release_session_shielded(
@@ -173,10 +133,11 @@ class StreamHandle:
     supervisor_task: asyncio.Task[None]
     event_bus: InvocationEventBus
     _stream_slot: _StreamSlot
+    _get_monitor_task: Callable[[], asyncio.Task[None] | None] = lambda: None
     _closed: bool = False
 
     async def close_and_settle(self) -> None:
-        """Close the channel, settle query execution if unfinished, and free stream slot."""
+        """Close the channel, settle query execution and monitor, and free stream slot."""
 
         if self._closed:
             return
@@ -184,12 +145,15 @@ class StreamHandle:
         self.channel.close()
         if not self.supervisor_task.done():
             self.disconnect_signal.trigger("stream_closed")
-        outer_cancelled, _ = await _settle_task_no_raise(
+        sup_cancelled, _ = await settle_task_no_raise(
             self.supervisor_task, cancel=False
+        )
+        mon_cancelled, _ = await settle_task_no_raise(
+            self._get_monitor_task(), cancel=True
         )
         self.event_bus.unbind(self.channel.trace_id)
         self._stream_slot.release()
-        if outer_cancelled:
+        if sup_cancelled or mon_cancelled:
             raise asyncio.CancelledError
 
 
@@ -240,6 +204,8 @@ class QuerySupervisor:
         monitor_factory: MonitorFactory | None = None,
         disconnect_signal: DisconnectSignal | None = None,
         stream_slot: _StreamSlot | None = None,
+        own_monitor: bool = True,
+        on_monitor_started: Callable[[asyncio.Task[None]], None] | None = None,
     ) -> QueryResponseEnvelope:
         if len(request.query) > self._server_config.max_query_chars:
             raise ServerHttpError(
@@ -285,6 +251,8 @@ class QuerySupervisor:
             )
             if monitor_factory is not None:
                 monitor_task = monitor_factory(signal)
+                if on_monitor_started is not None:
+                    on_monitor_started(monitor_task)
             disconnect_wait_task = asyncio.create_task(signal.event.wait())
             query_task = asyncio.create_task(
                 self._coordinator.run_query(user_turn, on_admitted=on_admitted)
@@ -300,7 +268,7 @@ class QuerySupervisor:
                     timed_out = True
                     if not cancel_requested:
                         cancel_requested = True
-                        _request_cancel_once(query_task)
+                        request_cancel_once(query_task)
                     break
                 pending = {task for task in wait_set if not task.done()}
                 if not pending:
@@ -315,24 +283,24 @@ class QuerySupervisor:
                     outer_cancelled = True
                     if not cancel_requested:
                         cancel_requested = True
-                        _request_cancel_once(query_task)
+                        request_cancel_once(query_task)
                     break
                 if query_task.done():
                     break
                 if disconnect_wait_task in done:
                     if not cancel_requested:
                         cancel_requested = True
-                        _request_cancel_once(query_task)
+                        request_cancel_once(query_task)
                     break
                 if not done:
                     timed_out = True
                     if not cancel_requested:
                         cancel_requested = True
-                        _request_cancel_once(query_task)
+                        request_cancel_once(query_task)
                     break
 
             # Wait for ACTUAL settlement even under repeated outer cancellation.
-            shield_cancel, cancel_requested = await _settle_task_no_raise(
+            shield_cancel, cancel_requested = await settle_task_no_raise(
                 query_task,
                 cancel=False,
                 already_cancelled=cancel_requested,
@@ -358,21 +326,22 @@ class QuerySupervisor:
         finally:
             cleanup_cancelled = False
             if query_task is not None and not query_task.done():
-                extra_cancel, cancel_requested = await _settle_task_no_raise(
+                extra_cancel, cancel_requested = await settle_task_no_raise(
                     query_task,
                     cancel=True,
                     already_cancelled=cancel_requested,
                 )
                 if extra_cancel:
                     cleanup_cancelled = True
-            wait_cancel, _ = await _settle_task_no_raise(
+            wait_cancel, _ = await settle_task_no_raise(
                 disconnect_wait_task, cancel=True
             )
             if wait_cancel:
                 cleanup_cancelled = True
-            mon_cancel, _ = await _settle_task_no_raise(monitor_task, cancel=True)
-            if mon_cancel:
-                cleanup_cancelled = True
+            if own_monitor:
+                mon_cancel, _ = await settle_task_no_raise(monitor_task, cancel=True)
+                if mon_cancel:
+                    cleanup_cancelled = True
             if slot_acquired:
                 self._in_flight_queries = max(0, self._in_flight_queries - 1)
             if await _release_session_shielded(self._sessions, session_lease):
@@ -590,11 +559,15 @@ class ApplicationServerService:
             server_config=self._server_config,
         )
         stream_slot = self._supervisor.reserve_stream_slot()
+        monitor_holder: list[asyncio.Task[None] | None] = [None]
         pre_admission_error: BaseException | None = None
 
         def _on_admitted(trace_id: str) -> None:
             channel.mark_admitted(trace_id)
             self._event_bus.bind(trace_id, channel)
+
+        def _on_monitor_started(task: asyncio.Task[None]) -> None:
+            monitor_holder[0] = task
 
         async def _drive_stream_query() -> None:
             nonlocal pre_admission_error
@@ -606,6 +579,8 @@ class ApplicationServerService:
                     monitor_factory=monitor_factory,
                     disconnect_signal=signal,
                     stream_slot=stream_slot,
+                    own_monitor=False,
+                    on_monitor_started=_on_monitor_started,
                 )
             except BaseException as exc:
                 if not channel.accepted_event.is_set():
@@ -632,30 +607,40 @@ class ApplicationServerService:
             channel.accepted_event.wait()
         )
         disconnect_wait: asyncio.Task[bool] = asyncio.create_task(signal.event.wait())
+        outer_cancelled = False
         try:
             await asyncio.wait(
                 {accepted_wait, supervisor_task, disconnect_wait},
                 return_when=asyncio.FIRST_COMPLETED,
             )
         except asyncio.CancelledError:
-            await _settle_task_no_raise(accepted_wait, cancel=True)
-            await _settle_task_no_raise(disconnect_wait, cancel=True)
-            signal.trigger("pre_admission_cancelled")
-            await _settle_task_no_raise(supervisor_task, cancel=False)
+            outer_cancelled = True
+        finally:
+            acc_cancel, _ = await settle_task_no_raise(accepted_wait, cancel=True)
+            disc_cancel, _ = await settle_task_no_raise(disconnect_wait, cancel=True)
+            if acc_cancel or disc_cancel:
+                outer_cancelled = True
+
+        async def _cleanup_untransferred(cancel_reason: str | None) -> bool:
+            if cancel_reason is not None and not supervisor_task.done():
+                signal.trigger(cancel_reason)
+            sup_cancel, _ = await settle_task_no_raise(supervisor_task, cancel=False)
+            mon_cancel, _ = await settle_task_no_raise(monitor_holder[0], cancel=True)
             self._event_bus.unbind(channel.trace_id)
             channel.close()
             stream_slot.release()
-            raise
-        finally:
-            await _settle_task_no_raise(accepted_wait, cancel=True)
-            await _settle_task_no_raise(disconnect_wait, cancel=True)
+            return sup_cancel or mon_cancel
+
+        if outer_cancelled:
+            await _cleanup_untransferred("pre_admission_cancelled")
+            raise asyncio.CancelledError
 
         if not channel.accepted_event.is_set():
-            if signal.event.is_set():
-                signal.trigger("client_disconnect")
-            await _settle_task_no_raise(supervisor_task, cancel=False)
-            channel.close()
-            stream_slot.release()
+            cleanup_cancel = await _cleanup_untransferred(
+                "client_disconnect" if signal.event.is_set() else None
+            )
+            if cleanup_cancel:
+                raise asyncio.CancelledError
             if pre_admission_error is not None:
                 raise pre_admission_error
             if signal.event.is_set():
@@ -663,10 +648,9 @@ class ApplicationServerService:
             raise RuntimeShuttingDownError
 
         if signal.event.is_set():
-            channel.close()
-            await _settle_task_no_raise(supervisor_task, cancel=False)
-            self._event_bus.unbind(channel.trace_id)
-            stream_slot.release()
+            cleanup_cancel = await _cleanup_untransferred("client_disconnect")
+            if cleanup_cancel:
+                raise asyncio.CancelledError
             raise ServerHttpError(TransportErrorCode.REQUEST_CANCELLED)
 
         return StreamHandle(
@@ -675,6 +659,7 @@ class ApplicationServerService:
             supervisor_task=supervisor_task,
             event_bus=self._event_bus,
             _stream_slot=stream_slot,
+            _get_monitor_task=lambda: monitor_holder[0],
         )
 
     async def start_sync(

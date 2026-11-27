@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import cast
+from typing import Any, cast
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -26,6 +26,7 @@ from atlasrag.server.auth import (
     validate_host_header,
     validate_origin_and_referer,
 )
+from atlasrag.server.cancellation import settle_task_no_raise
 from atlasrag.server.config import ServerConfig
 from atlasrag.server.errors import (
     ServerHttpError,
@@ -236,6 +237,13 @@ class SseStreamResponse(Response):
                 "X-Accel-Buffering": "no",
             },
         )
+        if "content-length" in self.headers:
+            del self.headers["content-length"]
+        self._response_headers = [
+            (key, value)
+            for key, value in self.raw_headers
+            if key.lower() != b"content-length"
+        ]
 
     async def _send_with_timeout(self, send: Send, message: Message) -> None:
         await asyncio.wait_for(
@@ -252,6 +260,7 @@ class SseStreamResponse(Response):
             await self._handle.close_and_settle()
             return
         send_failed = False
+        outer_cancelled = False
         try:
             try:
                 await self._send_with_timeout(
@@ -259,7 +268,7 @@ class SseStreamResponse(Response):
                     {
                         "type": "http.response.start",
                         "status": 200,
-                        "headers": self.raw_headers,
+                        "headers": self._response_headers,
                     },
                 )
                 await self._send_with_timeout(
@@ -312,26 +321,28 @@ class SseStreamResponse(Response):
 
                     wakeup_task = asyncio.create_task(channel.wait_wakeup())
                     disconnect_task = asyncio.create_task(signal.event.wait())
+                    done: set[asyncio.Task[bool | None]] | set[asyncio.Task[Any]] = (
+                        set()
+                    )
                     try:
                         done, _ = await asyncio.wait(
                             {wakeup_task, disconnect_task},
                             timeout=self._heartbeat_seconds,
                             return_when=asyncio.FIRST_COMPLETED,
                         )
+                    except asyncio.CancelledError:
+                        outer_cancelled = True
+                        raise
                     finally:
-                        for helper in (wakeup_task, disconnect_task):
-                            if not helper.done():
-                                helper.cancel()
-                            while not helper.done():
-                                try:
-                                    await asyncio.wait((helper,))
-                                except asyncio.CancelledError:
-                                    pass
-                            if not helper.cancelled():
-                                try:
-                                    helper.exception()
-                                except BaseException:
-                                    pass
+                        w_cancel, _ = await settle_task_no_raise(
+                            wakeup_task, cancel=True
+                        )
+                        d_cancel, _ = await settle_task_no_raise(
+                            disconnect_task, cancel=True
+                        )
+                        if (w_cancel or d_cancel) and not outer_cancelled:
+                            outer_cancelled = True
+                            raise asyncio.CancelledError
 
                     if signal.event.is_set():
                         break
@@ -438,7 +449,9 @@ def create_app(
         finally:
             if owns_shutdown and active_coordinator is not None:
                 await active_coordinator.shutdown()
-            await service.operations.wait_active()
+            await service.operations.wait_active(
+                timeout=runtime_config.maintenance.shutdown_timeout_seconds
+            )
 
     app = FastAPI(
         title="AtlasRAG Local Application Server",

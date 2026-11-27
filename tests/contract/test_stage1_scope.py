@@ -380,6 +380,7 @@ STAGE11_PRODUCTION_FILES = frozenset(
         "server/__init__.py",
         "server/app.py",
         "server/auth.py",
+        "server/cancellation.py",
         "server/config.py",
         "server/errors.py",
         "server/events.py",
