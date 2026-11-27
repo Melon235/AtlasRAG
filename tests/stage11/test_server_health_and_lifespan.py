@@ -175,9 +175,9 @@ async def test_blocked_startup_and_soft_degradation_and_refresh_cooldown() -> No
             client.get("/api/v1/status?refresh=true")
             assert probe_calls["postgres"] == calls_after_start
 
-            # Unknown WP-B/C endpoints are not exposed in WP-A
-            assert client.post("/api/v1/sessions", json={}).status_code == 404
-            assert client.post("/api/v1/query", json={}).status_code == 404
+            # Unimplemented WP-C endpoints remain 404 in WP-B
+            assert client.post("/api/v1/query/stream", json={}).status_code == 404
+            assert client.post("/api/v1/control/sync", json={}).status_code == 404
     finally:
         await degraded_coord.shutdown()
 

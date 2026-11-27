@@ -1,12 +1,13 @@
-"""Thin FastAPI application factory and WP-A health/status endpoints."""
+"""Thin FastAPI application factory and local HTTP transport routes."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import cast
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -21,6 +22,7 @@ from atlasrag.server.auth import (
     build_allowed_hosts,
     build_allowed_origins,
     validate_bearer_token,
+    validate_client_csrf_header,
     validate_host_header,
     validate_origin_and_referer,
 )
@@ -32,17 +34,65 @@ from atlasrag.server.errors import (
 )
 from atlasrag.server.schemas import (
     ApiErrorResponse,
+    ClientKind,
+    CreateSessionRequest,
     LivenessResponse,
+    QueryRequest,
+    QueryResponse,
     ReadinessResponse,
     RuntimeStatusResponse,
+    SessionResponse,
 )
-from atlasrag.server.service import ApplicationServerService, serialize_bounded_response
+from atlasrag.server.service import (
+    ApplicationServerService,
+    DisconnectSignal,
+    serialize_bounded_response,
+)
+from atlasrag.server.sessions import SessionRegistry
 
 CoordinatorFactory = Callable[[RuntimeConfig], Awaitable[ApplicationCoordinator]]
 
 
 class _RequestSizeLimitExceeded(Exception):
     pass
+
+
+class _LocalSecurityMiddleware:
+    """Enforce Host and same-origin/Referer checks without BaseHTTPMiddleware."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        allowed_hosts: frozenset[str],
+        allowed_origins: frozenset[str],
+    ) -> None:
+        self._app = app
+        self._allowed_hosts = allowed_hosts
+        self._allowed_origins = allowed_origins
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+        headers = {
+            key.decode("latin1").casefold(): value.decode("latin1")
+            for key, value in scope.get("headers", ())
+        }
+        try:
+            validate_host_header(headers.get("host"), self._allowed_hosts)
+            validate_origin_and_referer(
+                method=str(scope.get("method", "GET")),
+                origin=headers.get("origin"),
+                referer=headers.get("referer"),
+                allowed_origins=self._allowed_origins,
+            )
+        except ServerHttpError as error:
+            status, payload = translate_exception(error)
+            response = _json_error_response(status, payload)
+            await response(scope, _empty_receive, send)
+            return
+        await self._app(scope, receive, send)
 
 
 class _RequestBodyLimitMiddleware:
@@ -141,6 +191,23 @@ async def _empty_receive() -> Message:
     return {"type": "http.disconnect"}
 
 
+async def _watch_http_disconnect(
+    receive: Callable[[], Awaitable[Message]], signal: DisconnectSignal
+) -> None:
+    """Single authoritative post-body ASGI receive consumer for HTTP query disconnect."""
+
+    try:
+        while True:
+            message = await receive()
+            if message.get("type") == "http.disconnect":
+                signal.trigger("client_disconnect")
+                return
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        signal.trigger("receive_error")
+
+
 def _json_error_response(status_code: int, payload: ApiErrorResponse) -> JSONResponse:
     return JSONResponse(
         status_code=status_code, content=payload.model_dump(mode="json")
@@ -156,6 +223,14 @@ def require_control_bearer(request: Request) -> None:
 
     provider = cast(Callable[[], str | None], request.app.state.control_token_provider)
     validate_bearer_token(request.headers.get("authorization"), provider())
+
+
+def require_knowledge_client(request: Request) -> ClientKind:
+    """FastAPI dependency enforcing mandatory X-AtlasRAG-Client classification."""
+
+    return ClientKind(
+        validate_client_csrf_header(request.headers.get("x-atlasrag-client"))
+    )
 
 
 def create_app(
@@ -189,12 +264,15 @@ def create_app(
                 active_coordinator = await ApplicationComposition(
                     runtime_config
                 ).start()
+        sessions = SessionRegistry(server_config)
         app.state.coordinator = active_coordinator
         app.state.control_token_provider = token_provider
+        app.state.sessions = sessions
         app.state.server_service = ApplicationServerService(
             coordinator=active_coordinator,
             runtime_config=runtime_config,
             server_config=server_config,
+            sessions=sessions,
         )
         try:
             yield
@@ -212,27 +290,16 @@ def create_app(
     )
     app.state.control_token_provider = token_provider
 
-    @app.middleware("http")
-    async def local_security_middleware(
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
-        try:
-            validate_host_header(request.headers.get("host"), allowed_hosts)
-            validate_origin_and_referer(
-                method=request.method,
-                origin=request.headers.get("origin"),
-                referer=request.headers.get("referer"),
-                allowed_origins=allowed_origins,
-            )
-        except ServerHttpError as error:
-            status, payload = translate_exception(error)
-            return _json_error_response(status, payload)
-        return await call_next(request)
-
+    # Pure ASGI middleware ordering: _LocalSecurityMiddleware outermost,
+    # then _RequestBodyLimitMiddleware inside it; zero BaseHTTPMiddleware.
     app.add_middleware(
         _RequestBodyLimitMiddleware,
         max_request_bytes=server_config.max_request_bytes,
+    )
+    app.add_middleware(
+        _LocalSecurityMiddleware,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
     )
 
     @app.exception_handler(ServerHttpError)
@@ -328,6 +395,56 @@ def create_app(
     async def status_endpoint(request: Request, refresh: bool = False) -> Response:
         service = _service_from_request(request)
         payload = await service.status(refresh=refresh)
+        raw = serialize_bounded_response(
+            payload, max_bytes=service.server_config.max_response_bytes
+        )
+        return Response(content=raw, status_code=200, media_type="application/json")
+
+    @app.post("/api/v1/sessions", response_model=SessionResponse, status_code=201)
+    async def create_session_endpoint(
+        request: Request,
+        client_kind: ClientKind = Depends(require_knowledge_client),
+    ) -> Response:
+        service = _service_from_request(request)
+        raw_body = await request.body()
+        dto = (
+            CreateSessionRequest()
+            if not raw_body.strip()
+            else CreateSessionRequest.model_validate_json(raw_body)
+        )
+        payload = await service.create_session(dto, header_client_kind=client_kind)
+        raw = serialize_bounded_response(
+            payload, max_bytes=service.server_config.max_response_bytes
+        )
+        return Response(content=raw, status_code=201, media_type="application/json")
+
+    @app.delete("/api/v1/sessions/{session_id}", status_code=204)
+    async def delete_session_endpoint(
+        request: Request,
+        session_id: str,
+        client_kind: ClientKind = Depends(require_knowledge_client),
+    ) -> Response:
+        service = _service_from_request(request)
+        await service.close_session(session_id, header_client_kind=client_kind)
+        return Response(status_code=204)
+
+    @app.post("/api/v1/query", response_model=QueryResponse)
+    async def query_endpoint(
+        request: Request,
+        client_kind: ClientKind = Depends(require_knowledge_client),
+    ) -> Response:
+        service = _service_from_request(request)
+        raw_body = await request.body()
+        dto = QueryRequest.model_validate_json(raw_body)
+
+        def _spawn_monitor(signal: DisconnectSignal) -> asyncio.Task[None]:
+            return asyncio.create_task(_watch_http_disconnect(request.receive, signal))
+
+        payload = await service.query(
+            dto,
+            header_client_kind=client_kind,
+            monitor_factory=_spawn_monitor,
+        )
         raw = serialize_bounded_response(
             payload, max_bytes=service.server_config.max_response_bytes
         )

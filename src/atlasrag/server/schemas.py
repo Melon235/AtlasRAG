@@ -28,6 +28,26 @@ class LivenessStatus(StrEnum):
     SHUTTING_DOWN = "SHUTTING_DOWN"
 
 
+class ClientKind(StrEnum):
+    WEB = "web"
+    CLI = "cli"
+
+
+class CreateSessionRequest(FrozenModel):
+    """Strict session creation payload preserving default web classification."""
+
+    client_kind: ClientKind = ClientKind.WEB
+
+
+class SessionResponse(FrozenModel):
+    """Server-issued session identity and expiration metadata."""
+
+    session_id: StrictStr
+    client_kind: ClientKind
+    created_at: datetime
+    expires_at: datetime
+
+
 class ApiErrorResponse(FrozenModel):
     """Stable public error payload without stack traces, DSNs, or raw inputs."""
 

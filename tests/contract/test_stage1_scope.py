@@ -384,6 +384,7 @@ STAGE11_PRODUCTION_FILES = frozenset(
         "server/errors.py",
         "server/schemas.py",
         "server/service.py",
+        "server/sessions.py",
     }
 )
 STAGE2_PRODUCTION_FILES = frozenset(

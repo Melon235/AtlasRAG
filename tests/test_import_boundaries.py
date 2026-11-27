@@ -488,7 +488,15 @@ def test_core_layers_reject_server_and_cli_imports(
 
 @pytest.mark.parametrize(
     "module_name",
-    ["__init__.py", "config.py", "schemas.py", "errors.py", "auth.py", "service.py"],
+    [
+        "__init__.py",
+        "config.py",
+        "schemas.py",
+        "errors.py",
+        "auth.py",
+        "sessions.py",
+        "service.py",
+    ],
 )
 @pytest.mark.parametrize("framework", ["fastapi", "starlette", "uvicorn"])
 def test_framework_free_server_modules_reject_web_frameworks(
