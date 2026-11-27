@@ -238,6 +238,7 @@ class ApplicationComposition:
         self._config = config
         self._ownership = RuntimeOwnershipLock()
         self._pool: PostgresPool | None = None
+        self._pool_cleanup_failed = False
         self._milvus: MilvusIndexProvider | None = None
         self._redis_client: redis.Redis | None = None
         self._redis: RedisCacheProvider | None = None
@@ -263,24 +264,34 @@ class ApplicationComposition:
             startup_delay = config.runtime.startup_retry_delay_seconds
 
             async def _open_pool() -> PostgresPool:
+                if (
+                    self._pool is not None
+                    or self._pool_cleanup_failed
+                    or self._cleanup_error is not None
+                ):
+                    raise RuntimeBootstrapFailedError
                 pool = PostgresPool(
                     _dsn(config),
                     min_size=config.runtime.postgres_pool_min_size,
                     max_size=config.runtime.postgres_pool_max_size,
                 )
+                self._pool = pool
                 try:
                     await pool.open()
                 except BaseException as primary:
                     try:
                         await pool.close()
                     except BaseException as cleanup:
-                        if isinstance(cleanup, asyncio.CancelledError):
-                            raise cleanup from primary
+                        self._pool_cleanup_failed = True
+                        self._cleanup_error = cleanup
                         note = f"pool close cleanup failure: {type(cleanup).__name__}"
                         primary.add_note(note)
+                        if isinstance(cleanup, asyncio.CancelledError):
+                            raise cleanup from primary
                         if isinstance(primary, asyncio.CancelledError):
-                            raise
+                            raise primary
                         raise RuntimeBootstrapFailedError from primary
+                    self._pool = None
                     raise
                 return pool
 
@@ -458,11 +469,23 @@ class ApplicationComposition:
         self._closed = True
         first: BaseException | None = None
         cancelled: asyncio.CancelledError | None = None
+        if isinstance(self._cleanup_error, asyncio.CancelledError):
+            cancelled = self._cleanup_error
+        elif self._cleanup_error is not None:
+            first = self._cleanup_error
         operations = (
             ("business", self._business.close if self._business else None),
             ("milvus", self._milvus.close if self._milvus else None),
             ("redis", self._redis_client.aclose if self._redis_client else None),
-            ("postgres", self._pool.close if self._pool else None),
+            (
+                "postgres",
+                (
+                    self._pool.close
+                    if self._pool is not None
+                    and not getattr(self, "_pool_cleanup_failed", False)
+                    else None
+                ),
+            ),
             (
                 "deepseek_http",
                 self._deepseek_http.aclose if self._deepseek_http else None,

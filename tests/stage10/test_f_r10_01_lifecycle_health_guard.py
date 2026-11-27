@@ -451,14 +451,24 @@ async def test_f_r10_01_01_composition_double_failure_retains_lock_and_preserves
 @pytest.mark.parametrize("failure_mode", ["cancel_on_close", "error_on_close"])
 async def test_r10_03_f02_open_pool_aborts_retries_on_close_cancel_or_error(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     failure_mode: str,
 ) -> None:
+    from atlasrag.runtime.ownership import RuntimeOwnershipLock
+
+    lock_path = tmp_path / "run" / "runtime.lock"
+    monkeypatch.setattr(
+        "atlasrag.runtime.ownership.canonical_lock_path", lambda: lock_path
+    )
     open_attempts = 0
+    close_attempts = 0
     close_started = asyncio.Event()
+    created_pools: list[Any] = []
 
     class Pool:
         def __init__(self, dsn: str, *, min_size: int, max_size: int) -> None:
             _ = (dsn, min_size, max_size)
+            created_pools.append(self)
 
         async def open(self) -> None:
             nonlocal open_attempts
@@ -466,15 +476,14 @@ async def test_r10_03_f02_open_pool_aborts_retries_on_close_cancel_or_error(
             raise DependencyUnavailableError()
 
         async def close(self) -> None:
+            nonlocal close_attempts
+            close_attempts += 1
             close_started.set()
             if failure_mode == "cancel_on_close":
                 await asyncio.Event().wait()
-            raise OSError("close failed")
+            raise OSError("close failed: pw=secret")
 
     monkeypatch.setattr(composition_module, "PostgresPool", Pool)
-    monkeypatch.setattr(
-        composition_module, "RuntimeOwnershipLock", lambda: RecordingOwnership([])
-    )
     cfg = runtime_config()
     cfg = cfg.model_copy(
         update={
@@ -484,23 +493,454 @@ async def test_r10_03_f02_open_pool_aborts_retries_on_close_cancel_or_error(
         }
     )
 
-    if failure_mode == "cancel_on_close":
-        task = asyncio.create_task(
-            composition_module.ApplicationComposition(cfg).start()
-        )
-        await asyncio.wait_for(close_started.wait(), timeout=1.0)
+    comp = composition_module.ApplicationComposition(cfg)
+    try:
+        if failure_mode == "cancel_on_close":
+            task = asyncio.create_task(comp.start())
+            await asyncio.wait_for(close_started.wait(), timeout=1.0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=1.0)
+        else:
+            with pytest.raises(RuntimeBootstrapFailedError) as exc_info:
+                await asyncio.wait_for(comp.start(), timeout=1.0)
+            assert isinstance(exc_info.value.__cause__, DependencyUnavailableError)
+            cause_notes = " ".join(
+                list(getattr(exc_info.value, "__notes__", ()))
+                + list(getattr(exc_info.value.__cause__, "__notes__", ()))
+            )
+            assert "pw=secret" not in cause_notes
+
+        assert open_attempts == 1
+        assert close_attempts == 1
+        assert len(created_pools) == 1
+        assert comp._pool is created_pools[0]
+        assert comp._cleanup_error is not None
+        assert comp._ownership.acquired is True
+
+        # Competing runtime acquisition must fail closed while partial pool cleanup is uncertain.
+        with pytest.raises(RuntimeOwnershipConflictError):
+            await composition_module.ApplicationComposition(cfg).start()
+        competing = RuntimeOwnershipLock(lock_path)
+        with pytest.raises(RuntimeOwnershipConflictError):
+            competing.acquire()
+    finally:
+        comp._ownership.release()
+
+
+@pytest.mark.asyncio
+async def test_c3r_01_recoverable_pool_open_failure_retry_and_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from atlasrag.domain.indexing.models import EmbeddingModelIdentity
+    from atlasrag.providers.reranker.base import RerankerModelIdentity
+    from atlasrag.runtime.ownership import RuntimeOwnershipLock
+
+    lock_path = tmp_path / "run" / "runtime.lock"
+    monkeypatch.setattr(
+        "atlasrag.runtime.ownership.canonical_lock_path", lambda: lock_path
+    )
+    (tmp_path / "kb").mkdir(parents=True, exist_ok=True)
+    cfg = runtime_config()
+    cfg = cfg.model_copy(
+        update={
+            "infrastructure": cfg.infrastructure.model_copy(
+                update={"knowledge_directory": str(tmp_path / "kb")}
+            ),
+            "runtime": cfg.runtime.model_copy(
+                update={"startup_attempts": 2, "startup_retry_delay_seconds": 0.001}
+            ),
+        }
+    )
+
+    # Subcase A: attempt 1 open fails & close succeeds -> retry permitted; attempt 2 succeeds.
+    pools_created: list[Any] = []
+    attempt = 0
+
+    class RecoveringPool:
+        def __init__(self, dsn: str, *, min_size: int, max_size: int) -> None:
+            _ = (dsn, min_size, max_size)
+            self.closed = 0
+            pools_created.append(self)
+
+        async def open(self) -> None:
+            nonlocal attempt
+            attempt += 1
+            if attempt == 1:
+                raise DependencyUnavailableError()
+
+        async def close(self) -> None:
+            self.closed += 1
+
+        async def health(self) -> None:
+            return None
+
+    class OkMilvus:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            self.embedding_dimension = cfg.part_i.embedding_dimension
+            self.analyzer = cfg.part_i.bm25_analyzer
+
+        async def initialize(self) -> None:
+            return None
+
+        async def health(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+        async def iter_all_projection(self, *a: Any, **k: Any) -> Any:
+            if False:
+                yield None
+
+        async def iter_revision_projection(self, *a: Any, **k: Any) -> Any:
+            if False:
+                yield None
+
+        async def delete_revision(self, *a: Any, **k: Any) -> int:
+            return 0
+
+        async def wait_revision_visible(self, *a: Any, **k: Any) -> None:
+            return None
+
+    class OkEmbed:
+        def __init__(self, device: str) -> None:
+            self.identity = EmbeddingModelIdentity(
+                model_id=cfg.models.embedding_model_id,
+                model_revision=cfg.models.embedding_model_revision,
+                tokenizer_id=cfg.models.embedding_tokenizer_id,
+                tokenizer_revision=cfg.models.embedding_tokenizer_revision,
+                dimension=cfg.part_i.embedding_dimension,
+                device=device,
+            )
+
+        async def initialize(self, *, allow_download: bool = False) -> None:
+            return None
+
+    class OkRerank:
+        def __init__(self, device: str) -> None:
+            self.identity = RerankerModelIdentity(
+                model_id=cfg.models.reranker_model_id,
+                model_revision=cfg.models.reranker_model_revision,
+                tokenizer_id=cfg.models.reranker_model_id,
+                tokenizer_revision=cfg.models.reranker_model_revision,
+                device=device,
+                dtype="float16",
+                max_input_tokens=8192,
+            )
+
+        async def initialize(self, *, allow_download: bool = False) -> None:
+            return None
+
+    class OkRedis:
+        async def ping(self) -> bool:
+            return True
+
+        async def get(self, key: str) -> bytes | None:
+            return None
+
+        async def set(self, key: str, value: Any, **_kw: Any) -> bool:
+            return True
+
+        async def delete(self, *keys: str) -> int:
+            return 0
+
+        async def unlink(self, *keys: str) -> int:
+            return 0
+
+        async def eval(self, *_a: Any) -> Any:
+            return [b"fence", None]
+
+        async def scan(self, **_kw: Any) -> tuple[int, list[bytes]]:
+            return (0, [])
+
+        async def aclose(self) -> None:
+            return None
+
+    class OkHttp:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        async def get(self, *_a: Any, **_kw: Any) -> Any:
+            return type("Resp", (), {"status_code": 200})()
+
+        async def aclose(self) -> None:
+            return None
+
+    class OkUnit:
+        def __init__(self, *_a: Any) -> None:
+            self.documents = self
+            self.runtime_metadata = self
+
+        async def __aenter__(self) -> OkUnit:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+        async def list(self) -> tuple[object, ...]:
+            return ()
+
+        async def get(self) -> Any:
+            from atlasrag.repositories.postgres.records import RuntimeMetadata
+
+            return RuntimeMetadata(query_cache_invalidation_required=False)
+
+    monkeypatch.setattr(composition_module, "PostgresPool", RecoveringPool)
+    monkeypatch.setattr(composition_module, "MilvusClient", lambda **k: object())
+    monkeypatch.setattr(composition_module, "MilvusIndexProvider", OkMilvus)
+    monkeypatch.setattr(composition_module, "QwenEmbeddingProvider", OkEmbed)
+    monkeypatch.setattr(composition_module, "BgeRerankerProvider", OkRerank)
+    monkeypatch.setattr(redis, "from_url", lambda *a, **k: OkRedis())
+    monkeypatch.setattr(httpx, "AsyncClient", OkHttp)
+    monkeypatch.setattr(production_module, "PostgresUnitOfWork", lambda pool: OkUnit())
+    monkeypatch.setattr(composition_module, "PostgresUnitOfWork", lambda pool: OkUnit())
+
+    comp = composition_module.ApplicationComposition(cfg)
+    coord = await comp.start()
+    try:
+        assert attempt == 2
+        assert len(pools_created) == 2
+        assert pools_created[0].closed == 1
+        assert comp._pool is pools_created[1]
+        assert comp._cleanup_error is None
+        assert coord.gate.mode is RuntimeMode.SERVING
+    finally:
+        await coord.shutdown()
+    assert pools_created[1].closed == 1
+
+    # Subcase B: exhausted transient retries with clean closes release lock once.
+    exhaust_pools: list[Any] = []
+
+    class ExhaustPool:
+        def __init__(self, dsn: str, *, min_size: int, max_size: int) -> None:
+            _ = (dsn, min_size, max_size)
+            self.closed = 0
+            exhaust_pools.append(self)
+
+        async def open(self) -> None:
+            raise DependencyUnavailableError()
+
+        async def close(self) -> None:
+            self.closed += 1
+
+    monkeypatch.setattr(composition_module, "PostgresPool", ExhaustPool)
+    comp_fail = composition_module.ApplicationComposition(cfg)
+    try:
+        with pytest.raises(DependencyUnavailableError):
+            await comp_fail.start()
+        assert len(exhaust_pools) == 2
+        assert all(p.closed == 1 for p in exhaust_pools)
+        assert comp_fail._pool is None
+        assert comp_fail._cleanup_error is None
+        assert comp_fail._ownership.acquired is False
+        reacquire = RuntimeOwnershipLock(lock_path)
+        reacquire.acquire()
+        reacquire.release()
+    finally:
+        comp_fail._ownership.release()
+
+
+@pytest.mark.asyncio
+async def test_c3r_04_pool_open_cancel_with_close_failure_preserves_cancel_and_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from atlasrag.runtime.ownership import RuntimeOwnershipLock
+
+    lock_path = tmp_path / "run" / "runtime.lock"
+    monkeypatch.setattr(
+        "atlasrag.runtime.ownership.canonical_lock_path", lambda: lock_path
+    )
+    open_started = asyncio.Event()
+    open_attempts = 0
+    close_attempts = 0
+    created_pools: list[Any] = []
+
+    class CancelThenCloseErrorPool:
+        def __init__(self, dsn: str, *, min_size: int, max_size: int) -> None:
+            _ = (dsn, min_size, max_size)
+            created_pools.append(self)
+
+        async def open(self) -> None:
+            nonlocal open_attempts
+            open_attempts += 1
+            open_started.set()
+            await asyncio.Event().wait()
+
+        async def close(self) -> None:
+            nonlocal close_attempts
+            close_attempts += 1
+            raise OSError("pg close secret=top-secret-pw")
+
+    monkeypatch.setattr(composition_module, "PostgresPool", CancelThenCloseErrorPool)
+    cfg = runtime_config()
+    cfg = cfg.model_copy(
+        update={
+            "runtime": cfg.runtime.model_copy(
+                update={"startup_attempts": 5, "startup_retry_delay_seconds": 0.01}
+            )
+        }
+    )
+
+    comp = composition_module.ApplicationComposition(cfg)
+    try:
+        task = asyncio.create_task(comp.start())
+        await asyncio.wait_for(open_started.wait(), timeout=1.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError) as exc_info:
+            await asyncio.wait_for(task, timeout=1.0)
+
+        notes = " ".join(list(getattr(exc_info.value, "__notes__", ())))
+        assert "OSError" in notes
+        assert "top-secret-pw" not in notes
+        assert open_attempts == 1
+        assert close_attempts == 1
+        assert comp._pool is created_pools[0]
+        assert isinstance(comp._cleanup_error, OSError)
+        assert comp._ownership.acquired is True
+
+        competing = RuntimeOwnershipLock(lock_path)
+        with pytest.raises(RuntimeOwnershipConflictError):
+            competing.acquire()
+    finally:
+        comp._ownership.release()
+
+
+@pytest.mark.asyncio
+async def test_c3r_06_pool_open_cancel_with_clean_close_releases_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from atlasrag.runtime.ownership import RuntimeOwnershipLock
+
+    lock_path = tmp_path / "run" / "runtime.lock"
+    monkeypatch.setattr(
+        "atlasrag.runtime.ownership.canonical_lock_path", lambda: lock_path
+    )
+    open_started = asyncio.Event()
+    open_attempts = 0
+    close_attempts = 0
+
+    class CancelThenCleanClosePool:
+        def __init__(self, dsn: str, *, min_size: int, max_size: int) -> None:
+            _ = (dsn, min_size, max_size)
+
+        async def open(self) -> None:
+            nonlocal open_attempts
+            open_attempts += 1
+            open_started.set()
+            await asyncio.Event().wait()
+
+        async def close(self) -> None:
+            nonlocal close_attempts
+            close_attempts += 1
+
+    monkeypatch.setattr(composition_module, "PostgresPool", CancelThenCleanClosePool)
+    cfg = runtime_config()
+    cfg = cfg.model_copy(
+        update={
+            "runtime": cfg.runtime.model_copy(
+                update={"startup_attempts": 5, "startup_retry_delay_seconds": 0.01}
+            )
+        }
+    )
+
+    comp = composition_module.ApplicationComposition(cfg)
+    try:
+        task = asyncio.create_task(comp.start())
+        await asyncio.wait_for(open_started.wait(), timeout=1.0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=1.0)
-    else:
-        with pytest.raises(RuntimeBootstrapFailedError) as exc_info:
-            await asyncio.wait_for(
-                composition_module.ApplicationComposition(cfg).start(),
-                timeout=1.0,
-            )
-        assert isinstance(exc_info.value.__cause__, DependencyUnavailableError)
 
-    assert open_attempts == 1
+        assert open_attempts == 1
+        assert close_attempts == 1
+        assert comp._pool is None
+        assert comp._cleanup_error is None
+        assert comp._ownership.acquired is False
+
+        reacquire = RuntimeOwnershipLock(lock_path)
+        reacquire.acquire()
+        reacquire.release()
+    finally:
+        comp._ownership.release()
+
+
+@pytest.mark.asyncio
+async def test_c3r_08_close_resources_retains_preexisting_cleanup_error_across_variants(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "atlasrag.runtime.ownership.canonical_lock_path",
+        lambda: tmp_path / "run" / "runtime.lock",
+    )
+
+    class CountedPool:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def close(self) -> None:
+            self.close_calls += 1
+
+    class CloseClient:
+        def __init__(self, *, error: BaseException | None = None) -> None:
+            self.calls = 0
+            self.error = error
+
+        async def aclose(self) -> None:
+            self.calls += 1
+            if self.error is not None:
+                raise self.error
+
+    # Variant A: no other resources remain, pre-existing pool error still fails repeated calls.
+    pool_a: Any = CountedPool()
+    comp_a = composition_module.ApplicationComposition(runtime_config())
+    comp_a._pool = pool_a
+    comp_a._pool_cleanup_failed = True
+    comp_a._cleanup_error = OSError("preexisting pool close error")
+    with pytest.raises(OSError):
+        await comp_a._close_resources()
+    assert pool_a.close_calls == 0
+    assert comp_a._pool is pool_a
+    with pytest.raises(OSError):
+        await comp_a._close_resources()
+    assert pool_a.close_calls == 0
+
+    # Variant B: other resources close cleanly -> still raises pre-existing pool error.
+    pool_b = CountedPool()
+    redis_b = CloseClient()
+    http_b = CloseClient()
+    comp_b = composition_module.ApplicationComposition(runtime_config())
+    comp_b._pool = pool_b  # type: ignore[assignment]
+    comp_b._redis_client = redis_b  # type: ignore[assignment]
+    comp_b._deepseek_http = http_b  # type: ignore[assignment]
+    comp_b._pool_cleanup_failed = True
+    comp_b._cleanup_error = OSError("preexisting pool close error")
+    with pytest.raises(OSError):
+        await comp_b._close_resources()
+    assert redis_b.calls == 1
+    assert http_b.calls == 1
+    assert pool_b.close_calls == 0
+
+    # Variant C: another cleanup fails -> pre-existing error retained with sanitized secondary note.
+    pool_c = CountedPool()
+    redis_c = CloseClient(error=RuntimeError("redis secret=do-not-leak"))
+    comp_c = composition_module.ApplicationComposition(runtime_config())
+    comp_c._pool = pool_c  # type: ignore[assignment]
+    comp_c._redis_client = redis_c  # type: ignore[assignment]
+    comp_c._pool_cleanup_failed = True
+    comp_c._cleanup_error = OSError("preexisting pool close error")
+    with pytest.raises(OSError) as exc_c:
+        await comp_c._close_resources()
+    notes_c = " ".join(list(getattr(exc_c.value, "__notes__", ())))
+    assert "redis/RuntimeError" in notes_c
+    assert "do-not-leak" not in notes_c
+    assert pool_c.close_calls == 0
+    with pytest.raises(OSError):
+        await comp_c._close_resources()
 
 
 # ---------------------------------------------------------------------------

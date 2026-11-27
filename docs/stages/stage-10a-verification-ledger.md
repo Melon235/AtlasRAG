@@ -1,11 +1,12 @@
 # Stage 10-A Offline Verification Ledger
 
-Status: **Stage 10-A COMPLETE offline (`304` Stage 10 tests pass across
-`A-R1`..`A-R6`, plus Stage 10-B startup-fence fail-closed and CUDA device-match
-regressions). `AR4-T01` is now `OFFLINE_AND_REAL_INFRA_VERIFIED` via
-[Stage 10-B completion](stage-10b-completion.md); independent review remains
-Stage 10-C (`NOT_STARTED`). Stage 10 overall remains PARTIAL; acceptance
-remains UNSATISFIED.**
+Status: **Stage 10-A COMPLETE offline (`352` Stage 10 tests pass across
+`A-R1`..`A-R6` + Stage 10-C2/C2-R1 regressions). `AR4-T01` is now
+`OFFLINE_AND_REAL_INFRA_VERIFIED` via [Stage 10-B completion](stage-10b-completion.md);
+Stage 10-C1 (`FAIL`), Stage 10-C2 (`COMPLETE`), Stage 10-C3 (`FAIL` — 5 closed,
+`F-R10-01-01`/`C3-RISK-01` open), and Stage 10-C2-R1 (`COMPLETE`) are recorded;
+Stage 10-C3-R1 targeted re-review remains `PENDING_INDEPENDENT_REVIEW`. Stage 10
+overall remains PARTIAL; acceptance remains UNSATISFIED.**
 
 ## A-R1 Production composition — COMPLETE (offline, fake technical boundaries)
 
@@ -564,14 +565,14 @@ Added deterministic verification across
 
 | Check | Result |
 |---|---|
-| `make test-stage10` (post-C2) | PASS — 348 tests |
-| `make verify` (post-C2) | PASS — 3656 passed, 1 skipped (`deepeval` absent), 120 deselected |
-| `ruff check .` / `ruff format --check .` (484 files) / `mypy` (396 source files) | PASS |
+| `make test-stage10` (post-C2-R1) | PASS — 352 tests |
+| `make verify` (post-C2-R1) | PASS — 3660 passed, 1 skipped (`deepeval` absent), 120 deselected |
+| `ruff check .` / `ruff format --check .` (487 files) / `mypy` (396 source files) | PASS |
 | `make architecture-check` / `git diff --check` | PASS |
 | Stage 9 raw artifact integrity | PASS — 12/12 SHA-256 and size matches |
 | `AR4-T01` Redis transport settlement | OFFLINE_AND_REAL_INFRA_VERIFIED (`A-R6` + Stage 10-B) |
-| Real isolated PostgreSQL/Milvus/Redis integration | COMPLETE (Stage 10-B — 12/12 PASS, `remaining=0`, see `docs/stages/stage-10b-completion.md`) |
-| Independent review | Stage 10-C1 FAIL (`3a9de079`); Stage 10-C2 COMPLETE; Stage 10-C3 READY / PENDING_INDEPENDENT_REVIEW (`docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md`) |
+| Real isolated PostgreSQL/Milvus/Redis integration | COMPLETE (Stage 10-B — 12/12 PASS in 734.68s, `remaining=0`, see `docs/stages/stage-10b-completion.md`) |
+| Independent review | Stage 10-C1 FAIL (`3a9de079`); Stage 10-C3 FAIL (`5f74b201`: 5 closed, `F-R10-01-01`/`C3-RISK-01` open); Stage 10-C2-R1 COMPLETE; Stage 10-C3-R1 READY / PENDING_INDEPENDENT_REVIEW (`docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md`) |
 
 *Stage 10-B offline regression additions incorporated into `AR6-04` and
 `AR6-07` above:* `CacheFreshnessBarrier.active_write_fence` +

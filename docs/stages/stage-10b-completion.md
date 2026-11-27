@@ -1,12 +1,13 @@
 # Stage 10-B Completion: Real Isolated PostgreSQL, Milvus & Redis Integration
 
-Status: **Stage 10-B COMPLETE** (`12/12` real isolated integration tests PASS across `postgres:17.8-alpine`, `redis:8.2.10-alpine`, and `milvusdb/milvus:v2.6.20` after Stage 10-C2 remediation).
-- **Stage 10-A (`A-R1`–`A-R6` + C2 regressions):** COMPLETE (offline verified; `make test-stage10` = `348 passed`)
+Status: **Stage 10-B COMPLETE** (`12/12` real isolated integration tests PASS across `postgres:17.8-alpine`, `redis:8.2.10-alpine`, and `milvusdb/milvus:v2.6.20` after Stage 10-C2-R1 remediation).
+- **Stage 10-A (`A-R1`–`A-R6` + C2/C2-R1 regressions):** COMPLETE (offline verified; `make test-stage10` = `352 passed`)
 - **`AR4-T01` (Redis Transport Settlement):** `OFFLINE_AND_REAL_INFRA_VERIFIED`
 - **Stage 10-B:** COMPLETE (fail-closed isolated real infrastructure verification, cleanup `remaining=0`)
 - **Stage 10-C1:** COMPLETE (`FAIL` on `3a9de079`)
-- **Stage 10-C2 (Remediation):** COMPLETE (`docs/stages/stage-10-review/STAGE_10_C2_REMEDIATION.md`)
-- **Stage 10-C3 (Independent Re-Review & Release Gate):** `READY` / `PENDING_INDEPENDENT_REVIEW`
+- **Stage 10-C2 & Stage 10-C3:** `5f74b201` closed 5 blockers; `C3` verdict `FAIL` on `F-R10-01-01` / `C3-RISK-01` (`docs/stages/stage-10-review/STAGE_10_C3_REVIEW.md`)
+- **Stage 10-C2-R1 (Targeted Remediation):** COMPLETE (`docs/stages/stage-10-review/STAGE_10_C2_R1_REMEDIATION.md`)
+- **Stage 10-C3-R1 (Independent Targeted Re-Review):** `READY` / `PENDING_INDEPENDENT_REVIEW`
 - **Stage 10 Overall / Acceptance:** `PARTIAL` / `UNSATISFIED` (`PR #11` remains OPEN and UNMERGED against `main`)
 
 ## 1. Environment & Strict Isolation Boundaries
@@ -48,14 +49,14 @@ Stage 10-B runs `ApplicationComposition` and `build_default_business` against re
 
 ## 4. Runner, Makefile & CI Automation (`B10-13`, `B10-14`)
 
-- Added `scripts/stage10_verify.sh` (`[full|--integration-only]`) spinning up isolated Compose services (`postgres redis etcd minio milvus`), waiting on PG/Redis/Milvus, executing `tests/integration/test_stage10_*.py`, dumping logs on failure, and tearing down `-v --remove-orphans` on exit.
+- Added `scripts/stage10_verify.sh` (`[full|--integration-only]`) with `scripts/stage10_isolation.py` spinning up ephemeral Compose services (`postgres redis etcd minio milvus`) under exclusive project/run `flock` locks, verifying loopback ports and PG/Redis/Milvus ownership sentinels, executing `tests/integration/test_stage10_*.py`, dumping logs on failure, and tearing down strictly `atlasrag.stage10b.run_id`-owned containers/volumes/networks (`remaining=0`).
 - Replaced the temporary `Makefile` `test-stage10-integration` offline alias with `scripts/stage10_verify.sh --integration-only` and updated `stage10-verify` to invoke `scripts/stage10_verify.sh`, while keeping `make test-stage10` and `make verify` purely offline.
 - Upgraded `.github/workflows/integration.yml` `stage10-runtime` job to build the pinned MinIO binary from official source, generate ephemeral local config with unique `COMPOSE_PROJECT_NAME`, run `make test-stage10-integration`, emit container logs on failure, and destroy volumes on `always()`. Covered by `tests/test_ci_workflow.py::test_stage10_ci_uses_isolated_real_services_and_cleanup`.
 
-## 5. Verification Summary & Stage 10-C3 Handoff
+## 5. Verification Summary & Stage 10-C3-R1 Handoff
 
-- `make test-stage10-integration` (isolated Compose `postgres:17.8-alpine`, `redis:8.2.10-alpine`, `milvusdb/milvus:v2.6.20` with fail-closed `scripts/stage10_isolation.py` ownership & run-`run_id` cleanup): PASS — `12 passed in 741.24s (0:12:21)`, `remaining=0`.
-- `make test-stage10`: PASS — `348 passed`.
-- `make verify`: PASS — `3656 passed, 1 skipped` (`deepeval`), `120 deselected`, `ruff format --check .` (`484` files), `ruff check .`, `mypy src/atlasrag scripts tests` (`396` source files), `make architecture-check`, and `git diff --check`.
+- `make test-stage10-integration` (isolated Compose `postgres:17.8-alpine`, `redis:8.2.10-alpine`, `milvusdb/milvus:v2.6.20` with fail-closed `scripts/stage10_isolation.py` ownership & run-`run_id` cleanup): PASS — `12 passed in 734.68s (0:12:14)`, `remaining=0`.
+- `make test-stage10`: PASS — `352 passed`.
+- `make verify`: PASS — `3660 passed, 1 skipped` (`deepeval`), `120 deselected`, `ruff format --check .` (`487` files), `ruff check .`, `mypy src/atlasrag scripts tests` (`396` source files), `make architecture-check`, and `git diff --check`.
 - Stage 9 raw artifacts (`docs/stages/stage-09-closeout/artifact_integrity.json`): PASS — `12/12` SHA-256 and byte-size matches.
-- **Stage 10-C3 Handoff:** Perform independent multi-angle re-review (`docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md`, closing `G-10`) and verify remote CI + PR #11 readiness before any merge to `main`. Real Qwen/BGE CUDA weight loading / RTX 3070 VRAM checks, MinerU subprocess settlement, OS signal/launcher termination, and Stage 11 API/UI/benchmark/performance work remain deferred beyond Stage 10-B/C.
+- **Stage 10-C3-R1 Handoff:** Perform independent targeted re-review of `F-R10-01-01` / `C3-RISK-01` ([`docs/stages/stage-10-review/STAGE_10_C3_HANDOFF.md`](stage-10-review/STAGE_10_C3_HANDOFF.md), closing `G-07` & `G-10`) and verify remote CI + PR #11 readiness before any merge to `main`. Real Qwen/BGE CUDA weight loading / RTX 3070 VRAM checks, MinerU subprocess settlement, OS signal/launcher termination, and Stage 11 API/UI/benchmark/performance work remain deferred beyond Stage 10-B/C.
