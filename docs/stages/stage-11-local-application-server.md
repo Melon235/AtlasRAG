@@ -1,7 +1,8 @@
 # Stage 11 Detailed Design — Local Application Server
 
-- **Status:** `READY_FOR_FINAL_OWNER_REVIEW` (Incorporates `S11-DESIGN-F01`–`F05` review corrections — **Implementation `NOT_STARTED`**)
+- **Status:** `READY_FOR_IMPLEMENTATION_AUTHORIZATION` (Incorporates `S11-DESIGN-F01`–`F05` closure & final launcher/guardrail reconciliation — **Implementation `NOT_STARTED`**)
 - **Baseline (`origin/main`):** `9cd2344f2076d60ee53568eb35aaa625474dc645` (`PR #11` & `PR #12` **MERGED**)
+- **Approved Owner Decisions:** `OD11-01 = B`, `OD11-02 = B`, `OD11-03 = B` (**OWNER_APPROVED**)
 - **Governing Authorities:**
   - [`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](../architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md)
   - [`docs/architecture/ADR-001-part-iv-web-mcp-architecture.md`](../architecture/ADR-001-part-iv-web-mcp-architecture.md)
@@ -22,12 +23,12 @@ Together with **Stage 12 (Web Demo and Existing RAG Acceptance)**, Stage 11 form
 - Framework-independent application service boundary (`ApplicationServerService`) sitting above `ApplicationCoordinator`, cleanly reusable by both Stage 11/12 HTTP+SSE routes and future Stage 13 MCP adapters.
 - Versioned HTTP/SSE transport (`/api/v1/*`) with Pydantic v2 `FrozenModel` transport DTOs and envelopes preserving `UserTurnRequest`, `QueryFilters`, and `FinalResponse` unchanged.
 - Process-local bounded `SessionRegistry` preserving `SessionQueryCache` isolation.
-- Explicit ASGI client-disconnect monitoring and `QuerySupervisor` cancellation settlement across both normal JSON HTTP and SSE paths.
+- Single authoritative ASGI `receive` disconnect monitoring (`SseStreamResponse` for SSE; post-body `receive` monitor for JSON HTTP) + `QuerySupervisor` cancellation settlement across both JSON HTTP and SSE paths, with actual ASGI `send()` timeouts on SSE frames.
 - Authoritative `ApplicationCoordinator`-minted invocation identity (`trace_id`) bound to an isolated request stream channel after real `QueryLease` admission and prior to SSE HTTP `200` header commitment.
 - Safe stage/status SSE streaming (`accepted`, `progress`, `final`, `error`) projected from `ProductionObservation` without exposing raw observations, unreviewed tokens, CoT, or private evidence.
-- Process-local bounded `MaintenanceOperationRegistry` (control-plane operation ledger, never duplicating `InFlightTaskRegistry`) with verified `RuntimeGate` handoff before HTTP `202` and explicit `SyncOutcome` + `ServingSafety` reporting.
-- Local Transport Authorization (loopback bind, Host/Origin validation, browser simple-form CSRF guard, `0o600` Bearer control token written only after authoritative lock ownership, request/response size bounds).
-- Thin `argparse` + `httpx` operational CLI (`serve`, `ask`, `health`, `status`, `sync`, `recover`, `stop`) with verified process identity (`pidfd` + `/proc/<pid>/stat` start time + `boot_id`) for `stop --force`.
+- Process-local bounded `MaintenanceOperationRegistry` (control-plane HTTP ledger, never duplicating `InFlightTaskRegistry`) with exception-safe `on_draining` `MaintenanceLease` handoff before HTTP `202` and explicit `SyncOutcome` + `ServingSafety` reporting.
+- Local Transport Authorization (loopback bind, Host/Origin validation, browser simple-form CSRF guard, `0o600` Bearer control token written and cleaned up strictly under authoritative `RuntimeOwnershipLock` ownership, request/response size bounds).
+- Thin `argparse` + `httpx` operational CLI (`serve`, `ask`, `health`, `status`, `sync`, `recover`, `stop`) with pre-shutdown process-identity capture (`pidfd` + post-open `/proc/<pid>/stat` start time + `boot_id`) and instance-specific clean-shutdown receipt (`shutdown-<server_instance_id>.json`).
 
 ### Explicit Out-of-Scope Boundaries (Deferred)
 
@@ -55,8 +56,8 @@ Together with **Stage 12 (Web Demo and Existing RAG Acceptance)**, Stage 11 form
 | FastAPI + Uvicorn ASGI Server (workers=1, reload=False)           |
 |  - Host / Origin / CSRF / Body Size Middleware                    |
 |  - Control Plane Bearer Auth Dependency (/api/v1/control/*)       |
-|  - Explicit ASGI DisconnectMonitor (http.disconnect watcher)      |
-|  - Lifespan + Socket-Bind Gate: Ownership -> Auth -> Bind -> Meta |
+|  - Single Authoritative ASGI receive/send (SseStreamResponse)     |
+|  - Ownership-Safe Lifespan: Lock -> Token -> Bind -> server.json  |
 +-------------------------------+-----------------------------------+
                                 |
                                 v
@@ -102,7 +103,7 @@ Every Stage 11 design decision is grounded in the accepted Stage 10 source files
 | Module | Inspected Symbols & Exact Behavior | Stage 11 Impact |
 |---|---|---|
 | [`src/atlasrag/runtime/composition.py`](../../src/atlasrag/runtime/composition.py) | `ApplicationComposition(config).start(build_business=None) -> ApplicationCoordinator`; acquires `RuntimeOwnershipLock`, retries PG/Milvus/Qwen startup, softly degrades BGE on non-hard errors, initializes `CacheFreshnessBarrier`, `RuntimeGate`, `InFlightTaskRegistry`, `HealthRegistry`, `MaintenanceCoordinator`, runs `coordinator._start()`. Retains `RuntimeOwnershipLock` on `_pool_cleanup_failed` or `_close_resources()` errors. | Sole composition root invoked exclusively inside `atlasrag serve` lifespan startup. |
-| [`src/atlasrag/runtime/coordinator.py`](../../src/atlasrag/runtime/coordinator.py) | `ApplicationCoordinator`: `run_query(request: UserTurnRequest) -> QueryResponseEnvelope`, `run_maintenance() -> SyncResult`, `recover() -> SyncResult`, `health() -> HealthSnapshot`, `readiness() -> bool`, `shutdown() -> None`. Uses `_begin_operation(TaskKind)` + `observation_invocation(invocation)` after `acquire_query()`. | All HTTP/SSE queries, health/status checks, maintenance, recovery, and shutdown flow through this single coordinator. Requires minimal `on_admitted` / `on_draining` hooks and `status(refresh=...)`. |
+| [`src/atlasrag/runtime/coordinator.py`](../../src/atlasrag/runtime/coordinator.py) | `ApplicationCoordinator`: `run_query(request: UserTurnRequest) -> QueryResponseEnvelope`, `run_maintenance() -> SyncResult`, `recover() -> SyncResult`, `health() -> HealthSnapshot`, `readiness() -> bool`, `shutdown() -> None`. Uses `_begin_operation(TaskKind)` + `observation_invocation(invocation)` after `acquire_query()`, and releases `ownership` at line 284 after `close_resources()`. | All HTTP/SSE queries, health/status checks, maintenance, recovery, and shutdown flow through this single coordinator. Requires minimal `on_admitted`, `on_draining`, `on_shutdown_settled` hooks and `status(refresh=...)`. |
 | [`src/atlasrag/runtime/ownership.py`](../../src/atlasrag/runtime/ownership.py) | `RuntimeOwnershipLock`: fixed `~/.local/state/atlasrag/runtime.lock` (`0o700` dir, `0o600` regular non-symlink file, `O_NOFOLLOW`, `flock(LOCK_EX | LOCK_NB)`), writes `pid=<pid>\n`. | Guarantees single runtime per OS user. Never overridden, bypassed, or touched by competing startup metadata writes. |
 | [`src/atlasrag/runtime/gate.py`](../../src/atlasrag/runtime/gate.py) | `RuntimeGate`: atomic mode (`STARTING`, `SERVING`, `DRAINING`, `MAINTENANCE`, `BLOCKED`, `SHUTTING_DOWN`), `lifecycle_generation`, `active_queries`, `acquire_query() -> QueryLease`, `begin_maintenance()`, `begin_recovery()`, `begin_shutdown()`. | Enforces atomic serving vs maintenance mutual exclusion; HTTP routes never duplicate lock/mode state. |
 | [`src/atlasrag/runtime/tasks.py`](../../src/atlasrag/runtime/tasks.py) | `InFlightTaskRegistry`: tracks actual `asyncio.Task` objects by `TaskKind` (`QUERY`, `MAINTENANCE`, `HEALTH`, `STARTUP`, `CACHE`), supports `close()`, `wait_empty(timeout)`, `cancel_all()`. | Sole runtime task registry; HTTP/SSE supervisors must await task settlement before releasing outer resources. |
@@ -115,7 +116,7 @@ Every Stage 11 design decision is grounded in the accepted Stage 10 source files
 | [`src/atlasrag/services/cache/session.py`](../../src/atlasrag/services/cache/session.py) & [`src/atlasrag/graphs/retrieval/graph.py`](../../src/atlasrag/graphs/retrieval/graph.py) | `SessionQueryCache`: `lookup(request) -> FinalResponse | None`, `prepare(...)`, `commit(...) -> CacheCommitOutcome` (`STORED`, `BYPASSED`, `UNKNOWN`). `RetrievalRunner.run(request) -> FinalResponse`. | **Gap:** Neither `SessionQueryCache.lookup` nor `RetrievalRunner.run` exposes lookup outcome (`HIT` vs `MISS` vs `BYPASSED`) to `ApplicationCoordinator`. |
 | [`src/atlasrag/domain/errors.py`](../../src/atlasrag/domain/errors.py) | `ErrorCode` (`15` codes) and `AtlasRAGError` hierarchy (`safe_message` without secrets/stack traces). | All 15 codes mapped 1:1 to HTTP responses without duplicating meanings. |
 
-### 3.2 Required Minimal Stage 10 Interface Extensions (`OD11-01`, `S11-DESIGN-F03`, `S11-DESIGN-F05`)
+### 3.2 Required Minimal Stage 10 Interface Extensions (`OD11-01`, `S11-DESIGN-F03`, `S11-DESIGN-F05`, Pre-Release Hook)
 
 All extensions use backward-compatible defaults so existing Stage 10 callers and tests remain 100% compatible:
 
@@ -149,14 +150,15 @@ All extensions use backward-compatible defaults so existing Stage 10 callers and
      3. `current = self._begin_operation(TaskKind.QUERY)`.
      4. `invocation = uuid4().hex` (minted exclusively by `ApplicationCoordinator`).
      5. If `on_admitted is not None`: call `on_admitted(invocation)` **before** entering `with observation_invocation(invocation):` or calling `self._deps.retrieval(request)`. (If `on_admitted` raises, `finally:` releases `lease` and unregisters `current` cleanly.)
-   - This guarantees `InvocationEventBus` binds the request's `StreamChannel` to the authoritative `trace_id` before any graph observation can fire, and proves real `QueryLease` admission succeeded before SSE HTTP `200` headers are committed.
-3. **Maintenance Gate-Admission Handoff Hook (`coordinator.py`, `maintenance.py` — `S11-DESIGN-F05`):**
-   - Add optional `on_draining: Callable[[], None] | None = None` to `ApplicationCoordinator.run_maintenance` / `recover` and `MaintenanceCoordinator.run` / `recover_blocked`, invoked synchronously immediately after `await self._gate.begin_maintenance()` / `begin_recovery()` acquires `MaintenanceLease` (`RuntimeMode.DRAINING`) and before `await lease.wait_for_drain(...)`.
-   - Allows `POST /api/v1/control/sync` and `/recover` to confirm both `InFlightTaskRegistry` registration and `RuntimeGate` `DRAINING` entry in microseconds before returning `202 Accepted`.
-4. **Per-Invocation `ProductionObserver` Routing (`production.py`, `coordinator.py`, `composition.py`):**
+3. **Exception-Safe Maintenance Handoff Hook (`coordinator.py`, `maintenance.py` — `S11-DESIGN-F05`):**
+   - Add optional `on_draining: Callable[[], None] | None = None` to `ApplicationCoordinator.run_maintenance` / `recover` and `MaintenanceCoordinator.run` / `recover_blocked`, invoked synchronously immediately after `await self._gate.begin_maintenance()` / `begin_recovery()` acquires `MaintenanceLease` (`RuntimeMode.DRAINING`) and inside `try ... except BaseException: await lease.abort(); raise` before `await lease.wait_for_drain(...)`:
+     - If `on_draining()` raises for any reason, `await lease.abort()` executes immediately so the `MaintenanceLease` is **never** stranded in `DRAINING`.
+4. **Pre-Release Clean-Shutdown Metadata Hook (`coordinator.py`, `composition.py` — Final Launcher Closure):**
+   - Add optional `on_shutdown_settled: Callable[[], Awaitable[None] | None] | None = None` on `CoordinatorDependencies` / `ApplicationComposition.start(...)`, invoked inside `ApplicationCoordinator.shutdown()` **strictly after** `await self._deps.close_resources()` succeeds and **strictly before** `self._deps.ownership.release()`.
+   - Ensures instance-owned `control.token` / `server.json` removal and `shutdown-<server_instance_id>.json` receipt creation execute atomically under `RuntimeOwnershipLock`, eliminating any check-and-delete race with a newly starting server, and ensuring zero cleanup/receipt emission if `RuntimeShutdownFailedError` or `close_resources()` failure prevents lock release.
+5. **Per-Invocation `ProductionObserver` Routing (`production.py`, `coordinator.py`, `composition.py`):**
    - Wire an invocation-scoped `ProductionObserver` multiplexer (`InvocationObserverMux`, dispatching strictly by `event.invocation_id or current_invocation_id()`) into `LocalEvidenceServices.observer` and `RagCoreServices.observer` in `build_default_business`, accepted via optional `observer: ProductionObserver | None = None` on `ApplicationComposition.start(...)`.
-   - Optionally add genuine `ObservationStage.CACHE` / `ObservationStage.WEB` emissions in `retrieval/graph.py` / `rag_core/subgraph.py` only when actually executed (zero fabricated stages on cache hits or skipped branches).
-5. **Truthful `query_cache` Health Projection & Bounded Status Read (`health.py`, `coordinator.py`):**
+6. **Truthful `query_cache` Health Projection & Bounded Status Read (`health.py`, `coordinator.py`):**
    - Add optional `query_cache_status: Callable[[DependencyHealth], str] | None = None` on `HealthRegistry` so `HealthSnapshot.query_cache` reflects real `CacheFreshnessBarrier.state` + `config.cache.query_cache_enabled` + current snapshot's `redis` health (`"ACTIVE"` only when `enabled and barrier.state is TRUSTED and redis is HEALTHY`; `"DISABLED"` when disabled; `"BYPASSED"` otherwise).
    - Add `ApplicationCoordinator.status(self, *, refresh: bool = False) -> HealthSnapshot` using `refresh_if_stale()` when `refresh=False` and `refresh()` (with server-side manual cooldown) when `refresh=True`.
 
@@ -197,8 +199,8 @@ src/atlasrag/
 │   ├── events.py        # InvocationEventBus + StreamChannel (strict SSE allowlist)
 │   ├── operations.py    # Bounded process-local MaintenanceOperationRegistry (HTTP ledger only)
 │   ├── service.py       # Framework-independent ApplicationServerService + QuerySupervisor
-│   ├── app.py           # Thin FastAPI app factory, lifespan, middleware, DisconnectMonitor, routes
-│   └── launcher.py      # Ownership-safe Uvicorn launcher, pid/proc identity, signals, exit codes
+│   ├── app.py           # Thin FastAPI app factory, lifespan, middleware, SseStreamResponse, routes
+│   └── launcher.py      # Ownership-safe Uvicorn launcher, pre-release cleanup, pidfd identity, exit codes
 └── cli/
     ├── __init__.py
     └── main.py          # argparse + httpx thin CLI (serve, ask, health, status, sync, recover, stop)
@@ -208,62 +210,65 @@ src/atlasrag/
 
 ---
 
-### D11-02 — Single Runtime Ownership, Ownership-Safe Metadata, and Bounded Shutdown (`S11-DESIGN-F01`, `S11-DESIGN-F04`)
+### D11-02 — Single Runtime Ownership, Ownership-Safe Metadata, and Bounded Shutdown (`S11-DESIGN-F01`, `S11-DESIGN-F04`, Final Closure)
 
 `atlasrag serve` is the **sole production runtime-owning entrypoint**:
 
 - `uvicorn.Config(..., host=server_cfg.host, port=server_cfg.port, workers=1, reload=False, timeout_graceful_shutdown=runtime_cfg.maintenance.shutdown_timeout_seconds)`.
 - `workers = 1`, `reload = False`, `ApplicationComposition = 1`, `ApplicationCoordinator = 1`.
 
-#### Ownership-Safe Startup Invariants (`S11-DESIGN-F01`)
+#### Ownership-Safe Startup & Metadata Replacement Invariants
 
-1. **Zero pre-lock state mutation:** Before `RuntimeOwnershipLock.acquire()` succeeds inside `ApplicationComposition.start()`, the process **must not** create, overwrite, rotate, or remove `control.token`, `server.json`, or any shared server state file.
+1. **Zero pre-lock state mutation:** Before `RuntimeOwnershipLock.acquire()` succeeds inside `ApplicationComposition.start()`, the process **must not** create, overwrite, rotate, or remove `control.token`, `server.json`, `shutdown-*.json`, or any shared server state file.
 2. **Failed competing startup:** A second `atlasrag serve` hits `RuntimeOwnershipConflictError` inside `ApplicationComposition.start()` and exits `3` without altering the running server's `control.token`, `server.json`, `runtime.lock`, or resources.
-3. **Socket bind & metadata ordering:** `ServerLauncher` wraps `uvicorn.Server.startup()` so `server.json` is written **only after** both `lifespan` startup (`ApplicationComposition.start()` + ownership-gated `control.token` write) **and** Uvicorn TCP socket binding succeed:
+3. **Socket bind & metadata ordering:** `ServerLauncher` wraps `uvicorn.Server.startup()` so `control.token` is written only after lock acquisition, and `server.json` is written **only after** both `lifespan` startup and Uvicorn TCP socket binding succeed:
 
 ```text
 1. Pre-Lock Config Load & Validation
    └── load_runtime_config() + load_server_config() -> invalid: exit 2 (disk untouched)
 
 2. Uvicorn Server.startup() -> Step A: FastAPI Lifespan Startup
-   ├── coordinator = await ApplicationComposition(runtime_config).start(observer=event_bus)
+   ├── coordinator = await ApplicationComposition(runtime_config).start(
+   │       observer=event_bus,
+   │       on_shutdown_settled=owned_cleanup_and_receipt,
+   │   )
    │    ├── RuntimeOwnershipLock.acquire()
-   │    │    └── RuntimeOwnershipConflictError -> abort -> exit 3 (control.token & server.json untouched)
+   │    │    └── RuntimeOwnershipConflictError -> abort -> exit 3 (shared files untouched)
    │    ├── Open PG/Milvus/Redis/HTTP/Qwen(+BGE), reconcile, source_safety, verify
    │    │    ├── Hard failure -> cleanup + release lock (unless cleanup failed) -> exit 4 (disk untouched)
    │    │    └── Unsafe KB -> RuntimeMode.BLOCKED (alive, not ready) | Safe -> SERVING
-   └── NOW (authoritative lock owner):
+   └── NOW (authoritative lock owner — safe replacement of any stale files from dead processes):
         ├── Generate server_instance_id = uuid4().hex, control_token = secrets.token_hex(32)
+        ├── Prune stale shutdown-*.json receipts beyond latest 8 (under lock ownership)
         └── Atomically write ~/.local/state/atlasrag/control.token (0o700 dir, temp+replace, 0o600, O_NOFOLLOW)
 
 3. Uvicorn Server.startup() -> Step B: TCP Socket Bind (127.0.0.1:<port>)
    ├── Bind fails (e.g., EADDRINUSE):
    │    ├── Uvicorn runs lifespan shutdown -> coordinator.shutdown()
-   │    ├── Ownership-verified remove of control.token (only if content matches this instance's token)
-   │    ├── server.json was NEVER written -> exit 4
+   │    ├── Pre-release on_shutdown_settled removes instance control.token (under lock!)
+   │    ├── server.json was NEVER written -> lock released -> exit 4
    └── Bind succeeds (socket listening, actual bound port captured):
         ├── Read /proc/self/stat starttime (field 22) & /proc/sys/kernel/random/boot_id
         └── Atomically write ~/.local/state/atlasrag/server.json (0o600, O_NOFOLLOW)
             {url, host, port, pid, process_start_ticks, boot_id, server_instance_id, started_at}
 ```
 
-4. **Ownership-verified cleanup:** Unlinking `server.json` verifies `server_instance_id` matches the terminating instance; unlinking `control.token` verifies its bytes constant-time match the terminating instance's in-memory token. Neither file is ever deleted by an unowned/competing process.
+#### Ownership-Safe Cleanup & Complete Bounded Shutdown Timeline
 
-#### Complete Bounded Shutdown Timeline (`S11-DESIGN-F04`)
+All shared-file cleanup (`server.json`, `control.token`) and clean-shutdown receipt emission (`shutdown-<server_instance_id>.json`) run **strictly under authoritative `RuntimeOwnershipLock` ownership**—never after `ownership.release()`—eliminating any check-and-delete race with a newly starting server:
 
 ```text
 Shutdown Trigger (SIGINT / SIGTERM / POST /api/v1/control/shutdown)
   │
-  ├─ T=0 (Prompt Admission Closure & Discovery Removal):
+  ├─ T=0 (Prompt Admission Closure & Discovery Removal — under RuntimeOwnershipLock):
   │   ├── await coordinator.gate.begin_shutdown()  (all new /query, /query/stream, /control/sync|recover -> 503)
-  │   ├── Ownership-verified removal of server.json (clients no longer discover shutting-down URL)
+  │   ├── Instance-owned unlink of server.json (only if server_instance_id matches)
   │   └── Set uvicorn.Server.should_exit = True
   │
   ├─ T=0 .. T_http (Bounded Uvicorn Connection Drain):
-  │   ├── Uvicorn closes listening socket & drains active HTTP/SSE tasks up to:
+  │   ├── Uvicorn stops accepting connections & drains active HTTP/SSE tasks up to:
   │   │     timeout_graceful_shutdown = runtime_cfg.maintenance.shutdown_timeout_seconds
-  │   │   (never indefinite; stalled keep-alive or slow sockets cannot delay coordinator shutdown)
-  │   ├── Quick in-flight queries finish cleanly within this window
+  │   │   (never indefinite; stalled sockets cannot postpone coordinator shutdown)
   │   └── At expiry, Uvicorn cancels remaining ASGI tasks -> QuerySupervisor cancels query_task
   │       and awaits task settlement before returning from ASGI handlers
   │
@@ -273,19 +278,29 @@ Shutdown Trigger (SIGINT / SIGTERM / POST /api/v1/control/shutdown)
            ├── If unsettled: await begin_guard_shutdown() -> tasks.cancel_all()
            │     -> await asyncio.wait(remaining, timeout=shutdown_timeout_seconds)
            ├── If still pending -> raises RuntimeShutdownFailedError:
-           │     ├── RuntimeOwnershipLock RETAINED until OS process exit
-           │     ├── control.token NOT treated as clean shutdown
-           │     └── atlasrag serve exits code 4 (UNRESOLVED_SHUTDOWN — NOT clean!)
+           │     ├── on_shutdown_settled NOT called; NO clean-shutdown receipt written
+           │     ├── RuntimeOwnershipLock RETAINED for as long as live process persists
+           │     └── ServerLauncher reports shutdown failure & attempts exit code 4
            └── If settled:
-                 ├── close_resources() (if error -> raises, lock RETAINED, exit code 4)
-                 ├── ownership.release()
-                 ├── Ownership-verified removal of control.token
-                 └── atlasrag serve exits code 0 (CLEAN_SHUTDOWN)
+                 ├── close_resources() (if error -> raises, no receipt, lock RETAINED, exit 4)
+                 ├── on_shutdown_settled() runs STILL HOLDING RuntimeOwnershipLock:
+                 │     ├── Instance-verified unlink of server.json (if still present)
+                 │     ├── Instance-verified unlink of control.token
+                 │     └── Atomic write of shutdown-<server_instance_id>.json
+                 │         {"server_instance_id": ..., "pid": ..., "status": "CLEAN_SHUTDOWN", "completed_at": ...}
+                 ├── ownership.release() (ONLY AFTER all owned file ops finished!)
+                 └── atlasrag serve exits code 0
 ```
 
-**Distinction between runtime cleanup failure and forced process termination:**
-- If `coordinator.shutdown()` raises `RuntimeShutdownFailedError` or resource cleanup fails inside the live server process, the server retains `RuntimeOwnershipLock` and exits non-zero (`4`), never reporting clean shutdown.
-- If an external caller (`atlasrag stop --force`) must escalate to `SIGKILL` because the server process hung past timeout, that process exit is **forced/unverified** (`atlasrag stop` exits `4`, never `0`); next `atlasrag serve` startup runs `StartupReconciliation` (`§80`).
+#### Unresolved Worker, Live Process State, and Clean-Shutdown Distinction
+
+- **Five explicitly distinguished outcomes:**
+  1. **Shutdown accepted:** `POST /control/shutdown` returned `202`, `gate.begin_shutdown()` closed admission.
+  2. **Clean runtime shutdown (exit `0`):** Original `pidfd`/process exited **AND** `shutdown-<server_instance_id>.json` exists with matching `server_instance_id`, `pid`, and `status == "CLEAN_SHUTDOWN"`.
+  3. **Runtime shutdown failure (exit `4`):** `coordinator.shutdown()` raised `RuntimeShutdownFailedError` or `close_resources()` failed -> **no** clean-shutdown receipt written, `RuntimeOwnershipLock` retained while process remains alive, `ServerLauncher` reports runtime shutdown failure and returns exit code `4`. Note: **setting exit code `4` does not by itself guarantee immediate OS process exit** if non-daemon Python threads or blocked C/SDK workers keep the interpreter alive; while alive, the OS process continues holding `RuntimeOwnershipLock` (blocking competing startups with `RuntimeOwnershipConflictError`).
+  4. **Forced process termination (exit `4`):** `atlasrag stop --force` escalated to `SIGTERM`/`SIGKILL` via retained `pidfd` after timeout -> OS kernel reaps process and releases `flock` fd; `stop` exits `4` (never `0`).
+  5. **Unverified process exit (exit `4`):** Original `pidfd`/PID disappears (crash, OOM kill, external `kill -9`) **without** a valid `shutdown-<server_instance_id>.json` receipt (or `stop` lacked `pidfd` verification). `stop` exits `4` (never `0`).
+- **Subsequent startup recovery:** After any failed shutdown, forced termination, or unverified exit, the next `atlasrag serve` acquires `RuntimeOwnershipLock` safely (replacing any stale files only after lock acquisition) and executes `StartupReconciliation` (`§80`).
 
 ---
 
@@ -309,7 +324,7 @@ All 11 endpoints are necessary and non-redundant:
 
 #### Request & Response Bounds (No Truncation of `FinalResponse`)
 
-- `QueryRequest` (`FrozenModel`, `extra="forbid"`): `session_id` (1..128 chars, validated against `SessionRegistry`), `query` (non-blank Unicode scalar, `<= 8192` chars), `filters: QueryFilters | None = None` (`file_name`, `source_type`, `sheet_name`). Unsupported options (`top_k`, `web_enabled`, `model`, `milvus_expr`) fail `422 INVALID_REQUEST`.
+- `QueryRequest` (`FrozenModel`, `extra="forbid"`): `session_id` (1..128 chars, validated against `SessionRegistry`), `query` (non-blank Unicode scalar, `<= 8192` chars), `filters: QueryFilters | None = None` (`file_name`, `source_type`, `sheet_name` — exact `atlasrag.domain.requests.QueryFilters`). Unsupported options (`top_k`, `web_enabled`, `model`, `milvus_expr`) fail `422 INVALID_REQUEST`.
 - Max request body: `65_536` bytes (`64 KiB`) enforced before JSON parsing (`413 PAYLOAD_TOO_LARGE`).
 - Max serialized response size: `ServerConfig.max_response_bytes = 4_194_304` (`4 MiB`). If a serialized `QueryResponse` exceeds `max_response_bytes`, return a mapped safe error (`500 INVARIANT_VIOLATION`) — **never** truncate `FinalResponse` into invalid JSON or broken citations.
 - Default query execution timeout: `ServerConfig.query_timeout_seconds = 120.0` (configurable `1.0..600.0`).
@@ -339,9 +354,15 @@ All 11 endpoints are necessary and non-redundant:
 
 ---
 
-### D11-06 — Minimal Safe SSE & Admission Synchronization (`S11-DESIGN-F03`)
+### D11-06 — Minimal Safe SSE, Single Receive Consumer & Actual Send Timeout (`S11-DESIGN-F03`, Guardrails)
 
-#### Authoritative Admission & Header Commit Flow
+#### Authoritative Admission, Header Commit & Custom `SseStreamResponse`
+
+- **Single authoritative ASGI `receive` consumer & actual ASGI `send()` timeout:**
+  Starlette's built-in `StreamingResponse` spawns its own internal `listen_for_disconnect(receive)` task, which would collide with a route-level `receive()` monitor (violating ASGI's single-consumer rule) and does not wrap `send()` with a per-frame timeout. Therefore Stage 11 uses a minimal custom `SseStreamResponse(Response)` (in `src/atlasrag/server/app.py`, overriding `__call__(self, scope, receive, send)`) that:
+  1. Starts **exactly one** `receive` disconnect monitor (`http.disconnect` -> `disconnect_event.set()`).
+  2. Sends HTTP `200 text/event-stream` response headers only **after** `accepted_event` is already set.
+  3. Wraps every actual `await send({"type": "http.response.body", "body": frame, "more_body": True})` call in `asyncio.wait_for(..., timeout=server_cfg.sse_send_timeout_seconds)` (default `5.0s`)—so an indefinitely stalled TCP socket times out at the actual ASGI `send()` boundary rather than hanging on backpressure, triggers `disconnect_event.set()` -> `query_task.cancel()` -> `QuerySupervisor` settlement, and cleans up!
 
 ```text
 POST /api/v1/query/stream
@@ -349,17 +370,18 @@ POST /api/v1/query/stream
   2. SessionRegistry.acquire(session_id)               -> fail: 404/503 JSON
   3. Transport semaphore acquire                       -> fail: 503 JSON
   4. Allocate isolated StreamChannel(progress_queue, terminal_event, accepted_event)
-  5. Spawn query_task = create_task(coordinator.run_query(req, on_admitted=bind_and_accept))
-     └─ QuerySupervisor monitors query_task + DisconnectMonitor + timeout
+  5. Spawn single pre-admission DisconnectMonitor + query_task = create_task(
+       coordinator.run_query(req, on_admitted=bind_and_accept)
+     ) supervised by QuerySupervisor
   6. Await first_completed(accepted_event.wait(), query_task, disconnect_event.wait()):
      ├── Pre-admission failure (RuntimeNotReadyError, RuntimeShuttingDownError, probe error):
      │     -> settle & release resources -> return HTTP 503/504/500 JSON (NO 200 SSE headers!)
      ├── Client disconnected pre-admission:
      │     -> cancel query_task, await settlement, release resources -> return 499/empty
      └── accepted_event SET (QueryLease held, TaskKind.QUERY registered, trace_id bound):
-           -> return StreamingResponse(200 OK, text/event-stream)
+           -> return SseStreamResponse(handing off the same single DisconnectMonitor!)
               ├─ Frame 1: event: accepted {"trace_id": ..., "session_id": ...}
-              ├─ Frame 2..N: event: progress {...} & `: heartbeat`
+              ├─ Frame 2..N: event: progress {...} & `: heartbeat` (via bounded-timeout send)
               └─ Terminal frame: event: final {QueryResponse} OR event: error {safe error}
 ```
 
@@ -374,29 +396,25 @@ POST /api/v1/query/stream
 
 - **Buffer & slow-consumer rules:**
   - `progress_queue = asyncio.Queue(maxsize=64)`. Observer callback uses strictly non-blocking `put_nowait`, dropping oldest `progress` item on overflow so RAG execution never blocks.
-  - Dedicated `terminal_event` slot guarantees terminal `final`/`error` retention inside the **application buffer** (never lost to `progress_queue` overflow), **without** implying delivery over an already-disconnected or indefinitely stalled TCP socket.
-  - `sse_send_timeout_seconds = 5.0`: if yielding/sending an SSE chunk stalls or client disconnects, abort stream -> `QuerySupervisor` cancels `query_task`, awaits settlement, unregisters `InvocationEventBus` entry, and cleans up session/semaphore.
+  - Dedicated `terminal_event` slot guarantees terminal `final`/`error` retention inside the **application buffer**, **without** implying delivery over an already-disconnected or indefinitely stalled TCP socket.
   - Cache-hit SSE: emits `accepted` -> (optional `CACHE`/`HIT` if instrumented) -> `final` with `cache_status="HIT"`, zero fabricated retrieval/answer stage events.
   - Heartbeat `: heartbeat\n\n` every `sse_heartbeat_seconds = 15.0`.
 
 ---
 
-### D11-07 — Explicit Client Disconnect & Query Supervision (`S11-DESIGN-F02`)
+### D11-07 — Explicit Client Disconnect & Query Supervision (`S11-DESIGN-F02`, Guardrails)
 
 Uvicorn does not automatically cancel an `async def` HTTP route handler on TCP disconnect. Therefore **both** `POST /api/v1/query` and `POST /api/v1/query/stream` share `DisconnectMonitor` + `QuerySupervisor`:
 
-1. **`DisconnectMonitor` (`app.py` -> `DisconnectSignal` protocol in `service.py`):**
-   - After FastAPI parses and validates the request body, `app.py` spawns `monitor_task` reading `await request.receive()` until `message["type"] == "http.disconnect"` (or SSE send failure / `GeneratorExit`), setting `disconnect_event.set()`.
-   - `service.py` accepts a framework-independent `disconnect_waiter: Callable[[], Awaitable[None]]` (zero Starlette/FastAPI imports in `service.py`).
+1. **Single Authoritative `DisconnectMonitor` (`app.py` -> `DisconnectSignal` in `service.py`):**
+   - For JSON `POST /api/v1/query`: after FastAPI parses the body, `app.py` runs one task reading `await request.receive()` until `{"type": "http.disconnect"}` and sets `disconnect_event.set()`.
+   - For SSE `POST /api/v1/query/stream`: one shared `receive()` watcher runs pre-admission and continues inside `SseStreamResponse.__call__` (never running Starlette's `StreamingResponse.listen_for_disconnect`), plus ASGI `send()` timeout/error also triggers `disconnect_event.set()`.
 2. **`QuerySupervisor` (`service.py`):**
    - Owns `query_task = asyncio.create_task(coordinator.run_query(user_turn, on_admitted=...))` inside bounded transport admission (`max_concurrent_queries = 16`, `max_concurrent_streams = 16`).
-   - Races `query_task` against `disconnect_event.wait()` and `query_timeout_seconds` deadline.
-   - Leaves server-shutdown drain vs cancellation to `InFlightTaskRegistry` (`coordinator.shutdown()`) rather than killing in-flight queries on shutdown initiation.
-   - **Idempotent cancellation:** guarded by `cancel_requested = False` before calling `query_task.cancel()`.
-   - **Repeated outer cancellation & mandatory settlement:**
+   - Races `query_task` against `disconnect_event.wait()` and `query_timeout_seconds` deadline, handling concurrent races across disconnect, request timeout, and coordinator shutdown cancellation.
+   - Leaves server-shutdown drain vs cancellation to `InFlightTaskRegistry` (`coordinator.shutdown()`).
+   - **Idempotent cancellation & repeated outer cancellation settlement:**
      ```python
-     # Never release SessionRegistry.in_flight, transport semaphore, or stream channel
-     # until query_task (and its QueryLease / ResourceGuard / InFlightTaskRegistry cleanup) settles!
      while not query_task.done():
          try:
              await asyncio.shield(query_task)
@@ -409,86 +427,138 @@ Uvicorn does not automatically cancel an `async def` HTTP route handler on TCP d
          except BaseException:
              break
      ```
-   - **Cleanup:** In `finally:`, cancel and await `monitor_task` (suppressing `CancelledError`), unregister `InvocationEventBus` channel, decrement `SessionRegistry.in_flight`, and release transport concurrency semaphore **strictly after** `query_task.done()` is `True`.
-   - **Unresolved workers:** If an underlying worker refuses cancellation during shutdown, `query_task` remains registered in `InFlightTaskRegistry`, `coordinator.shutdown()` raises `RuntimeShutdownFailedError`, `RuntimeOwnershipLock` stays held, and the server exits `4`.
+   - **Cleanup strictly post-settlement:** In `finally:`, cancel and await `monitor_task` (suppressing `CancelledError`), unregister `InvocationEventBus` channel, decrement `SessionRegistry.in_flight`, and release transport concurrency semaphore **only after** `query_task.done()` is `True`.
+   - **Unresolved workers:** If an underlying worker refuses cancellation during shutdown, `query_task` remains registered in `InFlightTaskRegistry`, `coordinator.shutdown()` raises `RuntimeShutdownFailedError`, `RuntimeOwnershipLock` stays held, and no clean-shutdown receipt is written.
 
 ---
 
-### D11-08 — Maintenance Operation Ownership & Acceptance (`S11-DESIGN-F05`)
+### D11-08 — Maintenance Operation Ownership & Acceptance (`S11-DESIGN-F05`, Guardrails)
 
 - **No duplicate task registry:** `InFlightTaskRegistry` (`TaskKind.MAINTENANCE`) remains the **only** runtime task registry. `MaintenanceOperationRegistry` is strictly a bounded HTTP control-plane ledger mapping `operation_id` (`op_<24-hex>`) to the active or recent terminal operation (`max_retained_operations = 32`, FIFO eviction).
-- **Atomic reservation & verified `RuntimeGate` handoff before `202`:**
+- **Atomic reservation & exception-safe `MaintenanceLease` handoff before `202`:**
   1. Under `MaintenanceOperationRegistry._lock`, verify no active operation exists (`409 MAINTENANCE_BUSY`) and pre-check `coordinator.gate.mode` (`SERVING` for `sync`, `BLOCKED` for `recover`, else `503 RUNTIME_NOT_READY` / `RUNTIME_SHUTTING_DOWN` or `409 MAINTENANCE_BUSY`).
   2. Reserve `OperationRecord` atomically (`status="STARTING"`) and spawn server-owned `asyncio.Task` calling `coordinator.run_maintenance(on_draining=...)` or `coordinator.recover(on_draining=...)`.
-  3. **Await microsecond handoff (`first_completed([draining_event.wait(), op_task])`):**
-     - `coordinator` registers `op_task` in `InFlightTaskRegistry` (`TaskKind.MAINTENANCE`) and calls `gate.begin_maintenance()` / `begin_recovery()`, immediately invoking `on_draining()` -> transitions `OperationRecord` to `RUNNING` and returns `202 Accepted`!
-     - If shutdown or mode change raced before `RuntimeGate` entered `DRAINING`, `op_task` fails immediately -> reservation is rolled back and HTTP returns the real `503`/`409` error (never a false `202`).
-- **Disconnect resilience & terminal states:** HTTP/CLI client disconnect after `202` never cancels `op_task`. On completion, `OperationStatusResponse` reports **both** `sync_outcome` (`SyncOutcome`) and `serving_safety` (`ServingSafety`) plus `runtime_mode`, `unsafe_reasons`, and `blocked_code` — never inferring a safe runtime from `SUCCESS` or `PARTIAL_SUCCESS`.
+  3. **Exception-safe `on_draining` in `MaintenanceCoordinator`:** If `on_draining()` fails or client/shutdown cancels between reservation and `DRAINING` handoff, `MaintenanceCoordinator` catches `BaseException` and calls `await lease.abort()` so `MaintenanceLease` is **never** stranded in `DRAINING`; reservation rolls back and HTTP returns `503`/`500` (never a bogus `202`).
+  4. Once `on_draining` succeeds (`TaskKind.MAINTENANCE` registered + `RuntimeGate` in `DRAINING`), transition `OperationRecord` to `RUNNING` and return `202 Accepted`.
+- **Disconnect resilience & terminal states:** HTTP/CLI client disconnect after `202` never cancels `op_task`. `OperationStatusResponse` reports **both** `sync_outcome` (`SyncOutcome`) and `serving_safety` (`ServingSafety`) plus `runtime_mode`, `unsafe_reasons`, and `blocked_code` — never inferring a safe runtime from `SUCCESS` or `PARTIAL_SUCCESS`.
 - **Backup/Restore:** Deferred to Stage 14 (`§90–91`).
 
 ---
 
-### D11-09 — Health, Status, and Stable Error Translation
+### D11-09 — Health, Status, and Complete Error Translation
 
 - `/api/v1/health/live`: Event loop + `gate.mode` (`200` in `SERVING`, `BLOCKED`, `DRAINING`, `MAINTENANCE`, `SHUTTING_DOWN`). Zero DB/Milvus/Redis/SearXNG/DeepSeek calls.
 - `/api/v1/health/ready`: `await coordinator.readiness()` (`200` iff `SERVING` and `hard_healthy`; else `503`). Soft outage (`redis`, `searxng`, `reranker`) preserves `200`.
 - `/api/v1/status`:
   - Default `?refresh=false` uses `HealthRegistry.refresh_if_stale()` (`health_refresh_interval_seconds`).
-  - Explicit `?refresh=true` shares `HealthRegistry._refresh_lock` (single-flight) and enforces a server-side manual refresh cooldown (`min_manual_refresh_interval_seconds = 1.0s`) to bound concurrency and rate.
-  - Stale snapshots cannot claim readiness (`lifecycle_generation` mismatch forces refresh / `ready=False`) or active Query Cache (`query_cache` reads live `CacheFreshnessBarrier.state` + `redis` health).
-- **Error mapping:** Reuses all 15 `ErrorCode`s (`src/atlasrag/domain/errors.py`) + minimal non-duplicative transport codes (`INVALID_REQUEST`, `PAYLOAD_TOO_LARGE`, `UNAUTHORIZED`, `FORBIDDEN`, `SESSION_NOT_FOUND`, `OPERATION_NOT_FOUND`, `REQUEST_CANCELLED`, `INTERNAL_ERROR`). Zero stack traces, DSNs, secrets, or private host paths in public payloads.
+  - Explicit `?refresh=true` shares `HealthRegistry._refresh_lock` (single-flight) and enforces a server-side manual refresh cooldown (`min_manual_refresh_interval_seconds = 1.0s`).
+  - Stale snapshots cannot claim readiness (`lifecycle_generation` check) or active Query Cache (`query_cache` reads live `CacheFreshnessBarrier.state` + `redis` health).
+
+#### Complete Error Translation Table
+
+Reuses all 15 `ErrorCode` values (`src/atlasrag/domain/errors.py`) plus minimal non-duplicative transport codes without exposing stack traces, DSNs, secrets, or private paths:
+
+| Error Code | Source | HTTP Status | Safe Public Message Policy |
+|---|---|---|---|
+| `RUNTIME_NOT_READY` | `RuntimeNotReadyError` | `503` | Fixed `safe_message` |
+| `RUNTIME_SHUTTING_DOWN` | `RuntimeShuttingDownError` | `503` | Fixed `safe_message` |
+| `MAINTENANCE_BUSY` | `MaintenanceBusyError` | `409` | Fixed `safe_message` |
+| `MAINTENANCE_DRAIN_TIMEOUT` | `MaintenanceDrainTimeoutError` | `409` | Fixed `safe_message` (or operation status) |
+| `RUNTIME_OWNERSHIP_CONFLICT` | `RuntimeOwnershipConflictError` | `409` | Startup exit `3`; fixed `safe_message` |
+| `RUNTIME_BOOTSTRAP_FAILED` | `RuntimeBootstrapFailedError` | `500` | Startup exit `4`; never serves HTTP |
+| `RUNTIME_SHUTDOWN_FAILED` | `RuntimeShutdownFailedError` | `500` | Shutdown exit `4`; lock retained, no clean receipt |
+| `DEPENDENCY_TIMEOUT` | `DependencyTimeoutError` / query timeout | `504` | Fixed `safe_message` |
+| `DEPENDENCY_UNAVAILABLE` | `DependencyUnavailableError` | `503` | Fixed `safe_message` |
+| `INVALID_PROVIDER_RESPONSE` | `ProviderResponseError` | `502` | Fixed `safe_message` |
+| `CANONICAL_DATA_INCONSISTENT` | `CanonicalDataError` | `500` | Fixed `safe_message` |
+| `INVARIANT_VIOLATION` | `InvariantViolationError` / `max_response_bytes` | `500` | Fixed `safe_message` |
+| `RESOURCE_EXHAUSTED` | `ResourceExhaustedError` / pool / session / backpressure | `503` | Fixed `safe_message` |
+| `INVALID_CONFIGURATION` | `ConfigurationError` | `500` | Startup exit `2`; redacted |
+| `SOURCE_MUTATED` | `SourceMutationError` | `409` | Fixed `safe_message` |
+| `INVALID_REQUEST` *(transport)* | Pydantic `ValidationError` / malformed JSON | `422` (`400` malformed JSON) | Field location + safe validation summary |
+| `PAYLOAD_TOO_LARGE` *(transport)* | Request body `> 64 KiB` | `413` | `"Request payload exceeds allowed size limit."` |
+| `UNAUTHORIZED` *(transport)* | Missing/invalid Bearer token on `/control/*` | `401` | `"Valid local control authorization is required."` |
+| `FORBIDDEN` *(transport)* | Invalid `Host`, cross-origin `Origin`, missing `X-AtlasRAG-Client` | `403` | `"Request rejected by local transport security policy."` |
+| `SESSION_NOT_FOUND` *(transport)* | Unknown/expired/closed `session_id` | `404` | `"Session was not found or has expired."` |
+| `OPERATION_NOT_FOUND` *(transport)* | Unknown/evicted `operation_id` | `404` | `"Maintenance operation was not found."` |
+| `REQUEST_CANCELLED` *(transport)* | Disconnect / cancellation mid-stream | `499` / SSE `error` | `"Request was cancelled before completion."` |
+| `INTERNAL_ERROR` *(transport)* | Unhandled unexpected exception | `500` | `"An internal server error occurred."` |
 
 ---
 
 ### D11-10 — Local Transport Security
 
-- **Local single-user trust assumption:** AtlasRAG v1 runs for a single local OS user on a loopback workstation (`127.0.0.1`). Any process running under that same OS UID can read `0o600` user state files; cross-origin browser pages and network peers are untrusted.
+- **Local single-user trust assumption:** AtlasRAG v1 runs for a single local OS user on loopback (`127.0.0.1`). Same-UID local processes share access to `0o600` user state files; cross-origin browser pages and network peers are untrusted.
 - **Server protections:**
   1. `ServerConfig.host` enforces loopback-only (`127.0.0.1`, `::1`, `localhost`).
-  2. Strict `Host` header allowlist (`127.0.0.1:<port>`, `localhost:<port>`, `[::1]:<port>`) prevents DNS rebinding (`403 FORBIDDEN`).
+  2. Strict `Host` allowlist (`127.0.0.1:<port>`, `localhost:<port>`, `[::1]:<port>`) prevents DNS rebinding (`403 FORBIDDEN`).
   3. No wildcard CORS (`CORSMiddleware` omitted); `POST`/`DELETE`/`PUT`/`PATCH` with non-matching `Origin`/`Referer` fail `403 FORBIDDEN`.
-  4. `X-AtlasRAG-Client` (`"web"` | `"cli"`) is explicitly a **request-classification and browser simple-form CSRF guard** (forcing CORS preflight on browser fetch rather than `<form>` submission), **not** an authentication credential.
-  5. Independent privileged Control Plane authorization: `/api/v1/control/*` requires `Authorization: Bearer <token>` verified via `hmac.compare_digest` against `~/.local/state/atlasrag/control.token` (`0o600`, written only after authoritative lock ownership). Never exposed to Knowledge Plane or Stage 12 static Web assets.
+  4. `X-AtlasRAG-Client` (`"web"` | `"cli"`) is explicitly a **request-classification and browser simple-form CSRF guard**, **not** an authentication credential.
+  5. Independent privileged Control Plane authorization: `/api/v1/control/*` requires `Authorization: Bearer <token>` verified via `hmac.compare_digest` against `~/.local/state/atlasrag/control.token` (`0o600`, written and cleaned up strictly under `RuntimeOwnershipLock`). Never exposed to Knowledge Plane or Stage 12 static Web assets.
   6. `64 KiB` (`65_536` bytes) request body limit (`413 PAYLOAD_TOO_LARGE`).
 - **CLI client protections:**
   1. Validate target `--server-url` / `ATLASRAG_SERVER_URL` / `server.json` URL is strict `http://` (or `https://`) loopback (`127.0.0.1`, `localhost`, `::1` only, no userinfo) **before** reading or attaching `control.token`. Refuse sending `control.token` to any non-loopback target.
-  2. Configure `httpx.Client` / `AsyncClient` with `follow_redirects=False` and `trust_env=False` (preventing credential leakage via HTTP redirects or `HTTP_PROXY`/`HTTPS_PROXY` env vars).
-  3. Read `control.token`, `server.json`, and `cli_session.json` safely with `os.O_NOFOLLOW`, `stat.S_ISREG`, `st_uid == os.getuid()`, and `(st_mode & 0o077) == 0`, failing closed on symlink/permission tampering.
+  2. Configure `httpx.Client` / `AsyncClient` with `follow_redirects=False` and `trust_env=False` (preventing credential leakage via redirects or `HTTP_PROXY`/`HTTPS_PROXY` env vars).
+  3. Read `control.token`, `server.json`, `shutdown-*.json`, and `cli_session.json` safely with `os.O_NOFOLLOW`, `stat.S_ISREG`, `st_uid == os.getuid()`, and `(st_mode & 0o077) == 0`.
 
 ---
 
-### D11-11 — Operational CLI and Verified Process Launcher (`S11-DESIGN-F04`)
+### D11-11 — Operational CLI, Pre-Shutdown Identity Capture & Verified Process Termination
 
-Implemented with `argparse` + `httpx` (`src/atlasrag/cli/main.py`, `src/atlasrag/server/launcher.py`):
+Implemented with `argparse` + `httpx` in `src/atlasrag/cli/main.py` and `src/atlasrag/server/launcher.py`:
 
-- Commands: `serve`, `ask`, `health`, `status`, `sync`, `recover`, `stop`.
-- Thin-client rule: Only `serve` imports/runs `ApplicationComposition`.
-- **`atlasrag stop --force` verified escalation (never signalling reused/unrelated PIDs):**
-  1. Send `POST /api/v1/control/shutdown` (with `control.token` over validated loopback, `follow_redirects=False`, `trust_env=False`) and wait up to `--timeout` (default `2 * shutdown_timeout_seconds + 5.0`).
-  2. If server exits cleanly -> verify `server.json` removed / process exited cleanly -> exit `0`.
-  3. Only if `--force` is passed AND server remains running past timeout:
-     - Read `server.json` safely (`O_NOFOLLOW`, regular file, UID match, `0o600`).
-     - Verify `boot_id` matches `/proc/sys/kernel/random/boot_id`.
-     - Open Linux `pidfd = os.pidfd_open(pid, 0)`.
-     - **Re-verify** `/proc/{pid}/stat` `starttime == process_start_ticks` and `uid == os.getuid()` **after** opening `pidfd` (eliminating PID-reuse TOCTOU), and check `runtime.lock` is actively `flock`-held (`EWOULDBLOCK` probe without unlinking/truncating).
-     - If `pidfd` is unsupported OR any identity check fails -> **refuse escalation** and exit `4` without signalling any PID.
-     - Otherwise send `SIGTERM` via `signal.pidfd_send_signal(pidfd, signal.SIGTERM)`, wait bounded grace on `pidfd`, then `SIGKILL` via `signal.pidfd_send_signal(pidfd, signal.SIGKILL)` if still alive -> exit `4` (unclean/forced termination; never exit `0`).
-- **Unified Exit Codes (Consistent Across Design, CLI, and Acceptance):**
-  - `0`: Success / clean graceful shutdown
-  - `1`: Operational/remote error (`4xx`/`5xx`, `sync`/`recover` returned `FAILED` or `UNSAFE_TO_SERVE`, `stop` timed out without `--force`)
-  - `2`: CLI argument error or `ConfigurationError`
-  - `3`: `RuntimeOwnershipConflictError` (`serve`) or server unreachable (`ConnectionError` in client commands)
-  - `4`: Server bootstrap failure, socket-bind failure, `RuntimeShutdownFailedError`, forced `SIGKILL` termination, or refused unverified process escalation
-  - `130` / `143`: Thin CLI client interrupted by `SIGINT` / `SIGTERM` (`serve` handles `SIGINT`/`SIGTERM` gracefully, exiting `0` on clean shutdown and `4` on `RuntimeShutdownFailedError`)
+#### Complete CLI Command, Argument, Timeout & Discovery Contract
+
+| Command | Arguments | HTTP Timeout Policy | Auth / Session / Output |
+|---|---|---|---|
+| `atlasrag serve` | `--host 127.0.0.1`, `--port 8000`, `--config PATH`, `--server-config PATH`, `--json` | N/A (foreground server) | Acquires `RuntimeOwnershipLock`; writes `control.token` post-lock, `server.json` post-bind, `shutdown-<id>.json` pre-release. |
+| `atlasrag ask <query>` | `--session-id ID`, `--new-session`, `--file-name`, `--source-type`, `--sheet-name`, `--stream`, `--timeout 120.0`, `--json`, `--server-url` | `3.0s` connect; `120.0s` (or `--timeout`) read/stream | Reuses `cli_session.json` (`0o600`) or `--session-id`; `X-AtlasRAG-Client: cli`; prints answer + citations + `[cache=..., trace=..., elapsed=...ms]` or `--json`. |
+| `atlasrag health` | `--live` \| `--ready` (default `--ready`), `--json`, `--server-url` | `3.0s` connect; `10.0s` read | Knowledge/Host; exit `0` if live/ready, `1` if `503`/unhealthy, `3` unreachable. |
+| `atlasrag status` | `--refresh`, `--json`, `--server-url` | `3.0s` connect; `10.0s` read | Knowledge/Host; safe status table or JSON; exit `0`, `1`, `3`. |
+| `atlasrag sync` | `--wait` / `--no-wait` (default `--wait`), `--poll-interval 1.0`, `--json`, `--server-url` | `3.0s` connect; `10.0s` per request | Control (`control.token` on validated loopback); exit `0` only if terminal AND `serving_safety == SAFE_TO_SERVE`, `1` otherwise. |
+| `atlasrag recover` | `--wait` / `--no-wait` (default `--wait`), `--poll-interval 1.0`, `--json`, `--server-url` | `3.0s` connect; `10.0s` per request | Control (`control.token`); exit `0` only if terminal AND `serving_safety == SAFE_TO_SERVE`, `1` otherwise. |
+| `atlasrag stop` | `--timeout <seconds>`, `--force`, `--json`, `--server-url` | `3.0s` connect; `10.0s` HTTP trigger | Control (`control.token`); pre-shutdown identity & `pidfd` capture, clean-receipt verification, verified `pidfd` escalation. |
+
+- **Discovery precedence:** `--server-url` > `ATLASRAG_SERVER_URL` > `~/.local/state/atlasrag/server.json` (`url`) > `http://127.0.0.1:8000`.
+- **Thin-client rule:** Only `serve` imports/runs `ApplicationComposition`.
+
+#### Exact `atlasrag stop` & Pre-Shutdown `pidfd` Verification Sequence
+
+1. **Before sending `POST /api/v1/control/shutdown`:**
+   - Read `server.json` safely (`O_NOFOLLOW`, regular file, UID match, `0o600`) and validate loopback target URL (`follow_redirects=False`, `trust_env=False`).
+   - Capture immutable `TargetServerIdentity(server_instance_id, pid, process_start_ticks, boot_id, url)`.
+   - Verify `boot_id == /proc/sys/kernel/random/boot_id`.
+   - Open `pidfd = os.pidfd_open(pid, 0)`, then **re-verify** `/proc/{pid}/stat` `starttime == process_start_ticks` and `uid == os.getuid()` **after** opening `pidfd`, and verify `runtime.lock` is actively `flock`-held.
+   - If `--force` is requested and `server.json` is missing/unsafe, `pidfd` is unsupported, or process-start verification fails -> **refuse `--force` operation immediately** (exit `4`) without signalling any process!
+   - Retain this verified `pidfd` handle and `TargetServerIdentity` in memory for the **entire** `stop` command. **Never re-read `server.json` after sending the shutdown request.**
+2. **Send `POST /api/v1/control/shutdown`** (carrying `control.token` captured before shutdown; ignore subsequent `server.json` removal or replacement by a new server).
+3. **Wait for retained `pidfd` exit** up to `--timeout` (`2 * shutdown_timeout_seconds + 5.0` default):
+   - When `pidfd` becomes readable (original process exited): check for `shutdown-<target.server_instance_id>.json` (`O_NOFOLLOW`, UID, `0o600`) with matching `server_instance_id`, `pid`, and `status == "CLEAN_SHUTDOWN"`:
+     - **Receipt valid:** unlink consumed receipt, exit `0` (**Clean Runtime Shutdown**).
+     - **Receipt missing/invalid:** exit `4` (**Unverified Process Exit** — never exit `0`!).
+   - If `pidfd` is still alive when `--timeout` expires:
+     - Without `--force`: exit `1` (shutdown timed out; server still alive).
+     - With `--force`: send `SIGTERM` via `signal.pidfd_send_signal(pidfd, signal.SIGTERM)`, wait bounded grace on `pidfd`, then `SIGKILL` via `signal.pidfd_send_signal(pidfd, signal.SIGKILL)` if still alive -> exit `4` (**Forced Process Termination** — never exit `0`!).
+   - Close `pidfd` in `finally`.
+
+#### Unified Exit Codes
+
+- `0`: Success / verified clean graceful shutdown
+- `1`: Operational/remote error (`4xx`/`5xx`, `sync`/`recover` returned `FAILED` or `UNSAFE_TO_SERVE`, `stop` timed out without `--force`)
+- `2`: CLI argument error or `ConfigurationError`
+- `3`: `RuntimeOwnershipConflictError` (`serve`) or server unreachable (`ConnectionError` in client commands)
+- `4`: Server hard bootstrap failure, socket-bind failure, `RuntimeShutdownFailedError`, unverified process exit, forced `SIGKILL` termination, or refused unverified `--force` escalation
+- `130` / `143`: Thin CLI client interrupted by `SIGINT` / `SIGTERM` (`serve` handles `SIGINT`/`SIGTERM` gracefully, exiting `0` on clean shutdown and `4` on `RuntimeShutdownFailedError`)
 
 ---
 
 ### D11-12 — Stage 12 Web Demo Handoff & Real-Pipeline Acceptance Boundary
 
-- **Frontend direction:** Lightweight same-origin static `HTML/CSS/JS` + Fetch + safe HTML-escaped Markdown + POST SSE served from `app.py` (`GET /`); maintenance remains CLI-only (`control.token` never exposed to browser).
+- **Frontend direction:** Lightweight same-origin static `HTML/CSS/JS` + Fetch + safe minimal Markdown + POST SSE served from `app.py` (`GET /`); maintenance remains CLI-only (`control.token` never exposed to browser).
+- **Safe Markdown rendering rule (preserved explicitly):** Stage 12 must escape raw HTML (`<`, `>`, `&`, `"`, `'`) in answer text and citations, restrict clickable links strictly to `http:` / `https:` URLs (blocking `javascript:`, `data:`, and inline `<script>` / event-handler injection), and treat all retrieved content and Web titles/URLs as untrusted data.
 - **Stage 12 Real-Pipeline Acceptance Boundary (`ADR-002`):**
   Stage 12 Web Demo acceptance **must include a bounded real-model, real-knowledge-base end-to-end demonstration** (fake-only transport mocks are insufficient to claim real RAG usability):
-  - Real Qwen embedding, real selected BGE reranker, real DeepSeek answer generation, reviewed `FinalResponse`, resolved Local/Web citations, existing Redis cache behavior (same-session exact-request cache hit + cross-session isolation), and basic runtime/resource observations.
+  - Real Qwen embedding, real selected BGE reranker, real answer generation, reviewed `FinalResponse`, resolved Local/Web citations, existing Redis cache behavior (same-session exact-request cache hit + cross-session isolation), and basic runtime/resource observations.
   - Exact real API budgets, bounded KB fixtures, and execution approval belong to Stage 12 planning (not executed in Stage 11).
 
 ---
@@ -499,10 +569,10 @@ Implemented with `argparse` + `httpx` (`src/atlasrag/cli/main.py`, `src/atlasrag
 - **Stage 13 MCP Deferrals:** `search_domain_docs`, `search_external_evidence`, `atlasrag_ask`/`search`/`list_sources`/`status`, MCP SDK/FastMCP, domain metadata/ACLs, Evidence Mode, Evidence Cache, Domain Epoch, SQL/doc conflict detection, cloud embeddings/rerankers, 16GB multi-domain budgets.
 - **Stage 14 Preserved Obligations:** Coordinated backup/restore (`§90–91`), full RTX 3070 VRAM/OOM validation, MinerU subprocess settlement, Web+MCP concurrency/isolation, transferred Stage 9 `S9-17`/`S9-21` performance, Final Part IV Acceptance (`§94`).
 
-### Accepted Owner Decisions
+### Approved Owner Decisions
 
 | Decision ID | Chosen Option | Summary |
 |---|---|---|
-| `OD11-01` | **B (OWNER_APPROVED)** | Minimal backward-compatible runtime extensions (`QueryCacheStatus` on `QueryResponseEnvelope`, `on_admitted` & `on_draining` hooks, `InvocationObserverMux` wiring, `HealthRegistry.query_cache`, `ApplicationCoordinator.status(refresh=...)`). |
+| `OD11-01` | **B (OWNER_APPROVED)** | Minimal backward-compatible runtime extensions (`QueryCacheStatus` on `QueryResponseEnvelope`, `on_admitted` & exception-safe `on_draining` hooks, `on_shutdown_settled` pre-release hook, `InvocationObserverMux` wiring, `HealthRegistry.query_cache`, `ApplicationCoordinator.status(refresh=...)`). |
 | `OD11-02` | **B (OWNER_APPROVED)** | `GET /api/v1/status` defaults to freshness-bounded `refresh_if_stale()`; `?refresh=true` enforces single-flight lock + server cooldown. |
 | `OD11-03` | **B (OWNER_APPROVED)** | Mandatory server-issued sessions via `POST /api/v1/sessions`; unknown/expired sessions fail `404 SESSION_NOT_FOUND`. |
