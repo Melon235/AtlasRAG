@@ -19,6 +19,7 @@ from atlasrag.config.models import (
     PartIConfig,
     RetrievalConfig,
     RuntimeConfig,
+    RuntimeOperationalConfig,
 )
 
 
@@ -251,6 +252,23 @@ def runtime_config(**changes: object) -> RuntimeConfig:
                 "cache",
                 "maintenance",
                 "observability",
+                "runtime",
+            },
+        ),
+        (
+            RuntimeOperationalConfig,
+            {
+                "startup_attempts",
+                "startup_retry_delay_seconds",
+                "health_probe_timeout_seconds",
+                "health_refresh_interval_seconds",
+                "gpu_concurrency",
+                "cache_recovery_interval_seconds",
+                "redis_connect_timeout_seconds",
+                "redis_socket_timeout_seconds",
+                "redis_health_check_interval_seconds",
+                "postgres_pool_min_size",
+                "postgres_pool_max_size",
             },
         ),
     ],
@@ -679,3 +697,42 @@ def test_config_contracts_are_available_from_the_public_package() -> None:
     assert set(public_config.__all__) == set(expected_exports)
     for name, expected in expected_exports.items():
         assert getattr(public_config, name) is expected
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"redis_connect_timeout_seconds": 0.0},
+        {"redis_connect_timeout_seconds": -1.0},
+        {"redis_connect_timeout_seconds": 30.1},
+        {"redis_socket_timeout_seconds": 0.0},
+        {"redis_socket_timeout_seconds": -0.5},
+        {"redis_socket_timeout_seconds": 30.1},
+        {"redis_health_check_interval_seconds": -0.1},
+        {"redis_health_check_interval_seconds": 300.1},
+    ],
+)
+def test_runtime_operational_redis_transport_bounds(
+    changes: dict[str, float],
+) -> None:
+    with pytest.raises(ValidationError):
+        runtime_config(runtime=RuntimeOperationalConfig.model_validate(changes))
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"redis_connect_timeout_seconds": 5.0},
+        {"redis_socket_timeout_seconds": 7.5},
+        {"redis_health_check_interval_seconds": 0.0},
+        {"redis_health_check_interval_seconds": 45.0},
+    ],
+)
+def test_runtime_operational_redis_transport_excluded_from_fingerprints(
+    changes: dict[str, float],
+) -> None:
+    original = runtime_config()
+    changed = runtime_config(runtime=RuntimeOperationalConfig.model_validate(changes))
+
+    assert pipeline_fingerprint(changed) == pipeline_fingerprint(original)
+    assert runtime_fingerprint(changed) == runtime_fingerprint(original)

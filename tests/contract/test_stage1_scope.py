@@ -345,6 +345,23 @@ EXPECTED_PRODUCTION_FILES = frozenset(
         "services/__init__.py",
     }
 )
+STAGE10_PRODUCTION_FILES = frozenset(
+    {
+        "runtime/cache_freshness.py",
+        "runtime/composition.py",
+        "runtime/config.py",
+        "runtime/coordinator.py",
+        "runtime/gate.py",
+        "runtime/health.py",
+        "runtime/maintenance.py",
+        "runtime/modes.py",
+        "runtime/ownership.py",
+        "runtime/production.py",
+        "runtime/resources.py",
+        "runtime/tasks.py",
+        "services/sync/source_safety.py",
+    }
+)
 STAGE2_PRODUCTION_FILES = frozenset(
     {
         "providers/cache/__init__.py",
@@ -529,11 +546,13 @@ STUB_ONLY_PACKAGES = (
     "observability",
     "providers",
     "repositories",
-    "runtime",
     "services",
 )
 ALLOWED_BOUNDARY_INITIALIZERS = frozenset(
-    f"{package}/__init__.py" for package in STUB_ONLY_PACKAGES
+    {
+        *(f"{package}/__init__.py" for package in STUB_ONLY_PACKAGES),
+        "runtime/__init__.py",
+    }
 )
 FORBIDDEN_IMPLEMENTATION_PATH_PARTS = frozenset(
     {"backend", "backends", "business", "client", "clients", "provider", "providers"}
@@ -687,6 +706,7 @@ def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
             else {
                 "src/atlasrag/providers/web/searxng.py",
                 "src/atlasrag/providers/generation/deepseek.py",
+                "src/atlasrag/runtime/composition.py",
             }
         )
         return relative_path.as_posix() not in allowed
@@ -710,7 +730,10 @@ def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
             if "atlasrag" in parts
             else path.as_posix()
         )
-        return not relative.startswith(driver_layers[root])
+        return not (
+            relative.startswith(driver_layers[root])
+            or relative == "runtime/composition.py"
+        )
     explicitly_forbidden = (
         root in FORBIDDEN_IMPORT_ROOTS
         or root.startswith(FORBIDDEN_IMPORT_PREFIXES)
@@ -854,6 +877,7 @@ def _production_manifest_violations(production_root: Path) -> tuple[str, ...]:
         | STAGE6_PRODUCTION_FILES
         | STAGE7_PRODUCTION_FILES
         | STAGE8_PRODUCTION_FILES
+        | STAGE10_PRODUCTION_FILES
     )
     if unexpected := sorted(actual_files - allowed_files):
         violations.append(f"unexpected production files: {unexpected}")
@@ -991,6 +1015,7 @@ def _stub_package_violations(production_root: Path) -> tuple[str, ...]:
             | STAGE6_PRODUCTION_FILES
             | STAGE7_PRODUCTION_FILES
             | STAGE8_PRODUCTION_FILES
+            | STAGE10_PRODUCTION_FILES
             if path.startswith(f"{package_name}/")
         }
         if unexpected := actual_files - allowed_files:
@@ -1132,6 +1157,7 @@ def test_no_backend_client_provider_or_business_modules_exist() -> None:
             | STAGE6_PRODUCTION_FILES
             | STAGE7_PRODUCTION_FILES
             | STAGE8_PRODUCTION_FILES
+            | STAGE10_PRODUCTION_FILES
         ):
             continue
         tokens = {
@@ -1335,10 +1361,10 @@ def _write_stub_initializers(production_root: Path) -> None:
     [
         ("providers", "def provide() -> None:\n    pass"),
         ("repositories", "class Repository:\n    pass"),
-        ("runtime", "configure()"),
+        ("services", "configure()"),
         ("observability", "import logging"),
     ],
-    ids=["function", "class", "call", "import"],
+    ids=["function", "class", "services-call", "import"],
 )
 def test_stub_initializers_reject_executable_or_imported_content(
     tmp_path: Path,

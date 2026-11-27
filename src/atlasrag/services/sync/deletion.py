@@ -21,12 +21,14 @@ from atlasrag.services.sync.models import (
     DeletionOutcome,
     DeletionSummary,
     ScanSnapshot,
+    SourceAvailability,
     SyncAction,
 )
 from atlasrag.services.sync.ports import (
     DocumentLeaseManager,
     SyncUnitOfWorkFactory,
 )
+from atlasrag.services.sync.reconciliation import classify_source
 
 Clock = Callable[[], datetime]
 
@@ -48,11 +50,6 @@ class MissingSourceDeletionService:
         self._leases = leases
         self._knowledge_directory = knowledge_directory
         self._clock = clock
-
-    def _source_exists(self, relative_source_path: str) -> bool:
-        return self._knowledge_directory.joinpath(
-            *relative_source_path.split("/")
-        ).exists()
 
     async def _acquire(self, document_id: str) -> object | None:
         acquisition = asyncio.create_task(self._leases.acquire(document_id))
@@ -126,12 +123,19 @@ class MissingSourceDeletionService:
                 continue
             try:
                 await self._probe(lease)
-                if self._source_exists(action.relative_source_path):
+                availability, _ = classify_source(
+                    self._knowledge_directory, action.relative_source_path
+                )
+                if availability is not SourceAvailability.MISSING:
                     items.append(
                         DeletionItem(
                             document_id=action.document_id,
                             outcome=DeletionOutcome.FAILED,
-                            failure_code="SOURCE_REAPPEARED",
+                            failure_code=(
+                                "SOURCE_REAPPEARED"
+                                if availability is SourceAvailability.AVAILABLE
+                                else "SOURCE_UNAVAILABLE"
+                            ),
                         )
                     )
                     continue

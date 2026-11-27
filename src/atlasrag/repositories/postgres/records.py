@@ -256,6 +256,21 @@ class StoredElement(FrozenModel):
     created_at: AwareDatetime
 
 
+def validate_chunk_parent_consistency(
+    chunk_id: str,
+    chunk_type: StoredChunkType,
+    parent_id: str | None,
+) -> None:
+    """Enforce stored parent/child hierarchy invariants shared across chunk projections."""
+
+    if chunk_type == StoredChunkType.TEXT_CHILD and parent_id is None:
+        raise ValueError("TEXT_CHILD requires parent_id")
+    if chunk_type == StoredChunkType.TEXT_PARENT and parent_id is not None:
+        raise ValueError("TEXT_PARENT must not have parent_id")
+    if parent_id == chunk_id:
+        raise ValueError("a chunk cannot be its own parent")
+
+
 class StoredChunk(FrozenModel):
     """Canonical full chunk content, including nonretrievable text parents."""
 
@@ -276,15 +291,9 @@ class StoredChunk(FrozenModel):
 
     @model_validator(mode="after")
     def _parent_consistency(self) -> Self:
-        if self.chunk_type == StoredChunkType.TEXT_CHILD and self.parent_id is None:
-            raise ValueError("TEXT_CHILD requires parent_id")
-        if (
-            self.chunk_type == StoredChunkType.TEXT_PARENT
-            and self.parent_id is not None
-        ):
-            raise ValueError("TEXT_PARENT must not have parent_id")
-        if self.parent_id == self.chunk_id:
-            raise ValueError("a chunk cannot be its own parent")
+        validate_chunk_parent_consistency(
+            self.chunk_id, self.chunk_type, self.parent_id
+        )
         return self
 
 

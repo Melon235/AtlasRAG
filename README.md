@@ -6,9 +6,9 @@ incrementally through independently verified implementation stages.
 The authoritative design is
 [`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md).
 
-**Current implementation stage: Stage 9 — Part III: Benchmark**
+**Current implementation stage: Stage 10 — Part IV: Application Runtime Foundation (`stage/10-part-iv-application-runtime`)**
 
-**Status: Stage 9 PARTIAL — harness implemented; formal benchmark BLOCKED**
+**Status: Stage 10 `ACCEPTED / PENDING_MERGE` — Stage 10-A (`COMPLETE`), Stage 10-B (`COMPLETE`), Stage 10-C (`COMPLETE / PASS` via Stage 10-C3-R1 on `be5a2876`), and Stage 10-C4 (`COMPLETE`); `23/23` requirements SATISFIED, `6/6` blocking findings CLOSED, `10/10` gaps CLOSED; `PR #11` OPEN/UNMERGED (`READY — OWNER_AUTHORIZATION_REQUIRED`); Stage 11 `NOT_STARTED`**
 
 Stage 9 adds an external benchmark harness under `benchmarks/`, with frozen
 dataset snapshot validation, modality-filtered Open RAGBench metadata, corpus
@@ -17,10 +17,25 @@ manifests/validity, and static isolation checks. Formal FULL_CORPUS acceptance i
 blocked by the verified 396/604 document-profile conflict and resource limits;
 no benchmark quality/latency score is claimed.
 
-The Stage 9 report is
-[`docs/stages/stage-09-part-iii-benchmark.md`](docs/stages/stage-09-part-iii-benchmark.md).
-Stage 8 remains closed at `bda75fe`; Stage 9 is partial and its PR is open and
-unmerged.
+The Stage 10 report is
+[`docs/stages/stage-10-part-iv-application-runtime.md`](docs/stages/stage-10-part-iv-application-runtime.md),
+with Stage 10-A offline completion in
+[`docs/stages/stage-10a-completion.md`](docs/stages/stage-10a-completion.md),
+acceptance matrix in
+[`docs/stages/stage-10-acceptance.md`](docs/stages/stage-10-acceptance.md),
+and Stage 10-B handoff in
+[`docs/stages/stage-10b-handoff.md`](docs/stages/stage-10b-handoff.md).
+Stage 9 is closed under its amended acceptance scope (`12/12` preserved raw
+artifacts verified); Stage 10-A (`A-R1`–`A-R6`), Stage 10-B (`12/12` isolated
+real PG/Milvus/Redis integration), Stage 10-C1 (`FAIL`), Stage 10-C2, Stage 10-C3
+(`5/6` closed), Stage 10-C2-R1, Stage 10-C3-R1 final independent targeted
+re-review (`PASS` on `be5a2876`), and Stage 10-C4 closeout
+([`docs/stages/stage-10-closeout/CLOSEOUT_REPORT.md`](docs/stages/stage-10-closeout/CLOSEOUT_REPORT.md),
+[`docs/stages/stage-10-closeout/ACCEPTANCE_AUDIT.md`](docs/stages/stage-10-closeout/ACCEPTANCE_AUDIT.md),
+[`docs/stages/stage-10-closeout/STAGE_11_HANDOFF.md`](docs/stages/stage-10-closeout/STAGE_11_HANDOFF.md))
+are complete. Stage 10 technical acceptance is `PASS` (`23/23` requirements,
+`6/6` findings, `10/10` gaps closed within approved scope); `PR #11` remains
+OPEN/UNMERGED awaiting owner merge authorization, and Stage 11 is `NOT_STARTED`.
 
 ## Setup
 
@@ -145,6 +160,31 @@ make stage7-provider-smoke
 HTTP transport contracts without Docker or external services;
 `make stage7-verify` composes both; `make stage7-provider-smoke` is the explicit
 live SearXNG/DeepSeek check and requires external credentials/network.
+
+Stage 8 provides:
+
+```bash
+make test-stage8
+make test-stage8-integration
+make stage8-verify
+make stage8-provider-smoke
+```
+
+Stage 10 provides:
+
+```bash
+make test-stage10
+make test-stage10-integration
+make stage10-verify
+```
+
+`make test-stage10` is offline and deterministic (`352` Stage 10 tests covering
+`A-R1`–`A-R6` and Stage 10-C2/C2-R1 regressions); `make test-stage10-integration`
+runs the `12` Stage 10-B real isolated PostgreSQL/Milvus/Redis tests via
+`scripts/stage10_verify.sh --integration-only`; `make stage10-verify` runs
+offline verification followed by real isolated Stage 10-B integration; Stage 10-C3-R1
+independent targeted re-review (`PASS` on `be5a2876`) and Stage 10-C4 closeout
+are complete (`PR #11` open/unmerged awaiting owner authorization).
 
 Ordinary `make verify` remains network-free, Docker-free, parser-SDK-free,
 model-free, and independent of PostgreSQL, Redis, Milvus, and SearXNG.

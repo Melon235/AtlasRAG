@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Self
 
 from psycopg import AsyncConnection
 from psycopg.rows import DictRow
 from psycopg.types.json import Jsonb
+from pydantic import model_validator
 
+from atlasrag.domain.base import FrozenModel
 from atlasrag.domain.errors import CanonicalDataError, InvariantViolationError
 from atlasrag.repositories.postgres.errors import (
     marks_uow_failed,
@@ -18,7 +21,64 @@ from atlasrag.repositories.postgres.errors import (
     validate_identity_rows,
     validate_rowcount,
 )
-from atlasrag.repositories.postgres.records import StoredChunk, StoredChunkType
+from atlasrag.repositories.postgres.records import (
+    CanonicalId,
+    StoredChunk,
+    StoredChunkType,
+    StructuredMetadata,
+    _NonblankString,
+    _SectionPath,
+    _SourceAnchor,
+    _StoredChunkType,
+    validate_chunk_parent_consistency,
+)
+
+
+class CanonicalChunkHeader(FrozenModel):
+    """Identity/type/provenance metadata without canonical content."""
+
+    chunk_id: CanonicalId
+    document_id: CanonicalId
+    revision_id: CanonicalId
+    chunk_type: _StoredChunkType
+    parent_id: CanonicalId | None = None
+    section_path: _SectionPath = ()
+    source_anchor: _SourceAnchor = None
+    sheet_name: _NonblankString | None = None
+    metadata: StructuredMetadata | None = None
+    strategy_metadata: StructuredMetadata | None = None
+
+    @model_validator(mode="after")
+    def _parent_consistency(self) -> Self:
+        validate_chunk_parent_consistency(
+            self.chunk_id, self.chunk_type, self.parent_id
+        )
+        return self
+
+
+_HEADER_COLUMNS = """
+    chunk_id,
+    document_id,
+    revision_id,
+    chunk_type,
+    parent_id,
+    section_path,
+    source_anchor,
+    sheet_name,
+    metadata,
+    strategy_metadata
+"""
+
+
+def _validate_header_row(row: object) -> CanonicalChunkHeader:
+    if (
+        not isinstance(row, Mapping)
+        or row.get("metadata") is None
+        or row.get("strategy_metadata") is None
+    ):
+        raise CanonicalDataError
+    return validate_canonical_row(CanonicalChunkHeader, row)
+
 
 _COLUMNS = """
     chunk_id,
@@ -227,6 +287,58 @@ class ChunkRepository:
         if row is None:
             return None
         return validate_canonical_row(StoredChunk, row)
+
+    @marks_uow_failed
+    async def get_canonical_context_header(
+        self, document_id: str, revision_id: str, chunk_id: str
+    ) -> CanonicalChunkHeader | None:
+        self._guard()
+        scope = (
+            require_canonical_id(document_id),
+            require_canonical_id(revision_id),
+            require_canonical_id(chunk_id),
+        )
+        with postgres_error_boundary():
+            cursor = await self._connection.execute(
+                f"""
+                SELECT {_HEADER_COLUMNS}
+                FROM chunks
+                WHERE document_id = %s AND revision_id = %s AND chunk_id = %s
+                """,
+                scope,
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        return _validate_header_row(row)
+
+    @marks_uow_failed
+    async def list_canonical_context_headers(
+        self, chunk_ids: Sequence[str]
+    ) -> tuple[CanonicalChunkHeader, ...]:
+        """Batch-read canonical context headers without full chunk content."""
+        self._guard()
+        if isinstance(chunk_ids, (str, bytes, bytearray)) or not isinstance(
+            chunk_ids, Sequence
+        ):
+            raise InvariantViolationError
+        if not chunk_ids:
+            return ()
+        canonical = tuple(require_canonical_id(chunk_id) for chunk_id in chunk_ids)
+        if len(set(canonical)) != len(canonical):
+            raise InvariantViolationError
+        with postgres_error_boundary():
+            cursor = await self._connection.execute(
+                f"""
+                SELECT {_HEADER_COLUMNS}
+                FROM chunks
+                WHERE chunk_id = ANY(%s)
+                ORDER BY chunk_id
+                """,
+                (list(canonical),),
+            )
+            rows = await cursor.fetchall()
+        return tuple(_validate_header_row(row) for row in rows)
 
     @marks_uow_failed
     async def get_canonical_context(

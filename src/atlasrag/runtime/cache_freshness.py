@@ -1,0 +1,127 @@
+"""Persisted Query Cache freshness barrier and throttled recovery."""
+
+from __future__ import annotations
+
+import asyncio
+from enum import StrEnum
+from time import monotonic
+
+from atlasrag.domain.errors import (
+    CanonicalDataError,
+    DependencyError,
+    ProviderResponseError,
+)
+from atlasrag.providers.cache.redis import RedisCacheProvider
+from atlasrag.services.sync.ports import SyncUnitOfWorkFactory
+
+
+class CacheFreshnessState(StrEnum):
+    TRUSTED = "TRUSTED"
+    BYPASSED = "BYPASSED"
+
+
+class CacheFreshnessBarrier:
+    def __init__(
+        self,
+        *,
+        redis: RedisCacheProvider,
+        uow_factory: SyncUnitOfWorkFactory,
+        retry_interval_seconds: float = 10.0,
+    ) -> None:
+        self._redis = redis
+        self._uow_factory = uow_factory
+        self._retry_interval = retry_interval_seconds
+        self._lock = asyncio.Lock()
+        self._last_attempt = 0.0
+        self._fence_reset_completed = False
+        self._state = CacheFreshnessState.BYPASSED
+        self._active_write_fence: str | None = None
+
+    @property
+    def state(self) -> CacheFreshnessState:
+        return self._state
+
+    @property
+    def active_write_fence(self) -> str | None:
+        if self._state is not CacheFreshnessState.TRUSTED:
+            return None
+        return self._active_write_fence
+
+    async def _marker_required(self) -> bool:
+        async with self._uow_factory() as unit:
+            metadata = await unit.runtime_metadata.get()
+        return metadata.query_cache_invalidation_required
+
+    async def enforce(self) -> CacheFreshnessState:
+        async with self._lock:
+            return await self._enforce_locked(rotate_fence=True)
+
+    async def _enforce_locked(self, *, rotate_fence: bool) -> CacheFreshnessState:
+        self._last_attempt = monotonic()
+        self._state = CacheFreshnessState.BYPASSED
+        self._active_write_fence = None
+        try:
+            required = await self._marker_required()
+        except CanonicalDataError:
+            raise
+        except DependencyError:
+            return CacheFreshnessState.BYPASSED
+        if required:
+            new_fence: str | None = None
+            try:
+                if hasattr(self._redis, "revoke_query_write_fence"):
+                    await self._redis.revoke_query_write_fence()
+                await self._redis.invalidate_queries()
+                if hasattr(self._redis, "establish_query_write_fence"):
+                    new_fence = await self._redis.establish_query_write_fence()
+            except (DependencyError, ProviderResponseError):
+                return CacheFreshnessState.BYPASSED
+            try:
+                async with self._uow_factory() as unit:
+                    metadata = await unit.runtime_metadata.set_query_cache_invalidation_required(
+                        False
+                    )
+                    if metadata.query_cache_invalidation_required:
+                        raise CanonicalDataError
+                    await unit.commit()
+                if await self._marker_required():
+                    return CacheFreshnessState.BYPASSED
+            except CanonicalDataError:
+                raise
+            except (DependencyError, ProviderResponseError):
+                return CacheFreshnessState.BYPASSED
+            self._fence_reset_completed = True
+            self._active_write_fence = new_fence
+            self._state = CacheFreshnessState.TRUSTED
+            return CacheFreshnessState.TRUSTED
+        if rotate_fence:
+            new_fence = None
+            if hasattr(self._redis, "establish_query_write_fence"):
+                try:
+                    new_fence = await self._redis.establish_query_write_fence()
+                except (DependencyError, ProviderResponseError):
+                    return CacheFreshnessState.BYPASSED
+            self._fence_reset_completed = True
+            self._active_write_fence = new_fence
+            self._state = CacheFreshnessState.TRUSTED
+            return CacheFreshnessState.TRUSTED
+        ensured_fence: str | None = None
+        if hasattr(self._redis, "ensure_query_write_fence"):
+            try:
+                ensured_fence = await self._redis.ensure_query_write_fence()
+            except (DependencyError, ProviderResponseError):
+                return CacheFreshnessState.BYPASSED
+        self._fence_reset_completed = True
+        self._active_write_fence = ensured_fence
+        self._state = CacheFreshnessState.TRUSTED
+        return CacheFreshnessState.TRUSTED
+
+    async def recover_if_due(self) -> CacheFreshnessState | None:
+        # The due check must be inside the same lock as enforcement so several
+        # callers cannot all pass the same stale check and repeat recovery.
+        async with self._lock:
+            if monotonic() - self._last_attempt < self._retry_interval:
+                return None
+            return await self._enforce_locked(
+                rotate_fence=not self._fence_reset_completed
+            )

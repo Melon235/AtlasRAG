@@ -7,6 +7,7 @@ from typing import Protocol
 
 from atlasrag.domain.indexing.models import EmbeddingModelIdentity
 from atlasrag.providers.index.models import MilvusSearchHit
+from atlasrag.repositories.postgres.chunks import CanonicalChunkHeader
 from atlasrag.repositories.postgres.records import StoredChunk
 from atlasrag.services.sync.ports import SyncUnitOfWorkFactory
 
@@ -40,6 +41,12 @@ class ChunkBatchReader(Protocol):
     async def list_by_ids(
         self, chunk_ids: Sequence[str]
     ) -> tuple[StoredChunk, ...]: ...
+
+    async def get_by_id(self, chunk_id: str) -> StoredChunk | None: ...
+
+    async def get_canonical_context_header(
+        self, document_id: str, revision_id: str, chunk_id: str
+    ) -> CanonicalChunkHeader | None: ...
 
 
 LocalEvidenceUnitOfWorkFactory = SyncUnitOfWorkFactory

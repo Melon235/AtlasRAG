@@ -528,7 +528,11 @@ async def _exercise_managed_redis_client_for_test(
 
 
 @pytest_asyncio.fixture
-async def postgres_dsn() -> AsyncIterator[str]:
+async def postgres_dsn(request: pytest.FixtureRequest) -> AsyncIterator[str]:
+    if request.path.name.startswith("test_stage10_"):
+        from scripts.stage10_isolation import verify_stage10_service_ownership
+
+        verify_stage10_service_ownership()
     base_dsn = _required_environment(POSTGRES_DSN_ENV)
     database_name = f"atlasrag_test_{uuid4().hex}"
     async with _isolated_postgres_database(
@@ -577,7 +581,11 @@ async def redis_client() -> AsyncIterator[Redis]:
 
 
 @pytest.fixture
-def milvus_uri() -> str:
+def milvus_uri(request: pytest.FixtureRequest) -> str:
+    if request.path.name.startswith("test_stage10_"):
+        from scripts.stage10_isolation import verify_stage10_service_ownership
+
+        verify_stage10_service_ownership()
     return _validate_milvus_uri(_required_environment(MILVUS_URI_ENV))
 
 

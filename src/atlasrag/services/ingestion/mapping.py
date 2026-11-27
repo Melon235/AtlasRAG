@@ -19,6 +19,7 @@ from pydantic import (
 
 from atlasrag.domain.base import FrozenModel, validate_string_enum_input
 from atlasrag.domain.errors import CanonicalDataError
+from atlasrag.domain.evidence import SourceAnchor
 from atlasrag.domain.ingestion.chunks import (
     ChunkingStrategy,
     ChunkProvenance,
@@ -29,6 +30,7 @@ from atlasrag.domain.ingestion.chunks import (
     TableSlice,
     TextChildProvenance,
     TextParentProvenance,
+    validate_text_parent_invariants,
 )
 from atlasrag.domain.ingestion.document import (
     DocumentContainer,
@@ -39,6 +41,7 @@ from atlasrag.domain.ingestion.elements import (
     CanonicalElement,
     CanonicalElementMetadata,
     TableData,
+    normalize_section_path,
     normalize_single_line,
 )
 from atlasrag.domain.ingestion.enums import ParseOutcome
@@ -47,6 +50,7 @@ from atlasrag.domain.ingestion.source import (
     validate_revision_id,
     validate_sha256_hex,
 )
+from atlasrag.repositories.postgres.chunks import CanonicalChunkHeader
 from atlasrag.repositories.postgres.records import (
     FailedStage,
     IngestionStatus,
@@ -639,6 +643,52 @@ def map_chunks_to_stored(
     )
 
 
+def _validate_stored_table_columns(
+    source_anchor: SourceAnchor | None,
+    sheet_name: str | None,
+    table_slice: TableSlice | None,
+) -> None:
+    expected_source_anchor = None if table_slice is None else table_slice.source_anchor
+    expected_sheet_name = None if table_slice is None else table_slice.sheet_name
+    if source_anchor != expected_source_anchor or sheet_name != expected_sheet_name:
+        raise _canonical_data_error()
+
+
+def validate_text_parent_chunk_header(
+    header: CanonicalChunkHeader,
+) -> tuple[str, ...]:
+    """Validate lightweight TEXT_PARENT metadata equivalently to ``map_chunk_from_stored``."""
+    try:
+        validated = CanonicalChunkHeader.model_validate(header)
+        if validated.metadata is None or validated.strategy_metadata is None:
+            raise _canonical_data_error()
+        metadata = ChunkPersistenceMetadataV1.model_validate(validated.metadata)
+        strategy_metadata = ChunkStrategyMetadataV1.model_validate(
+            validated.strategy_metadata
+        )
+        section_path = normalize_section_path(validated.section_path)
+        validate_text_parent_invariants(
+            document_id=validated.document_id,
+            revision_id=validated.revision_id,
+            chunk_id=validated.chunk_id,
+            chunk_type=ChunkType(validated.chunk_type.value),
+            retrieval_role=metadata.retrieval_role,
+            chunking_strategy=strategy_metadata.chunking_strategy,
+            parent_id=validated.parent_id,
+            provenance=metadata.provenance,
+            table_slice=metadata.table_slice,
+            content_hash=metadata.content_hash,
+        )
+    except (RecursionError, ValidationError, ValueError, TypeError):
+        raise _canonical_data_error() from None
+    _validate_stored_table_columns(
+        validated.source_anchor,
+        validated.sheet_name,
+        metadata.table_slice,
+    )
+    return section_path
+
+
 def map_chunk_from_stored(chunk: StoredChunk) -> ChunkRecord:
     """Revalidate one stored chunk and reconstruct its canonical meaning."""
     try:
@@ -667,17 +717,11 @@ def map_chunk_from_stored(chunk: StoredChunk) -> ChunkRecord:
     except (RecursionError, ValidationError):
         raise _canonical_data_error() from None
 
-    expected_source_anchor = (
-        None if canonical.table_slice is None else canonical.table_slice.source_anchor
+    _validate_stored_table_columns(
+        stored.source_anchor,
+        stored.sheet_name,
+        canonical.table_slice,
     )
-    expected_sheet_name = (
-        None if canonical.table_slice is None else canonical.table_slice.sheet_name
-    )
-    if (
-        stored.source_anchor != expected_source_anchor
-        or stored.sheet_name != expected_sheet_name
-    ):
-        raise _canonical_data_error()
     return canonical
 
 

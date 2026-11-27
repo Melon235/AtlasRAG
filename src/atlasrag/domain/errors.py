@@ -12,6 +12,13 @@ class ErrorCode(StrEnum):
     RESOURCE_EXHAUSTED = "RESOURCE_EXHAUSTED"
     INVALID_CONFIGURATION = "INVALID_CONFIGURATION"
     SOURCE_MUTATED = "SOURCE_MUTATED"
+    RUNTIME_OWNERSHIP_CONFLICT = "RUNTIME_OWNERSHIP_CONFLICT"
+    RUNTIME_NOT_READY = "RUNTIME_NOT_READY"
+    RUNTIME_SHUTTING_DOWN = "RUNTIME_SHUTTING_DOWN"
+    MAINTENANCE_BUSY = "MAINTENANCE_BUSY"
+    MAINTENANCE_DRAIN_TIMEOUT = "MAINTENANCE_DRAIN_TIMEOUT"
+    RUNTIME_BOOTSTRAP_FAILED = "RUNTIME_BOOTSTRAP_FAILED"
+    RUNTIME_SHUTDOWN_FAILED = "RUNTIME_SHUTDOWN_FAILED"
 
 
 class AtlasRAGError(Exception):
@@ -102,3 +109,38 @@ class ConfigurationError(_FixedAtlasRAGError):
 class SourceMutationError(_FixedAtlasRAGError):
     code = ErrorCode.SOURCE_MUTATED
     safe_message = "The source changed during processing."
+
+
+class RuntimeOwnershipConflictError(_FixedAtlasRAGError):
+    code = ErrorCode.RUNTIME_OWNERSHIP_CONFLICT
+    safe_message = "Another AtlasRAG runtime owns this deployment."
+
+
+class RuntimeNotReadyError(_FixedAtlasRAGError):
+    code = ErrorCode.RUNTIME_NOT_READY
+    safe_message = "The AtlasRAG runtime is not ready to accept work."
+
+
+class RuntimeShuttingDownError(_FixedAtlasRAGError):
+    code = ErrorCode.RUNTIME_SHUTTING_DOWN
+    safe_message = "The AtlasRAG runtime is shutting down."
+
+
+class MaintenanceBusyError(_FixedAtlasRAGError):
+    code = ErrorCode.MAINTENANCE_BUSY
+    safe_message = "Another maintenance operation owns the runtime."
+
+
+class MaintenanceDrainTimeoutError(_FixedAtlasRAGError):
+    code = ErrorCode.MAINTENANCE_DRAIN_TIMEOUT
+    safe_message = "Maintenance drain timed out before work could begin."
+
+
+class RuntimeBootstrapFailedError(_FixedAtlasRAGError):
+    code = ErrorCode.RUNTIME_BOOTSTRAP_FAILED
+    safe_message = "The AtlasRAG runtime failed to start."
+
+
+class RuntimeShutdownFailedError(_FixedAtlasRAGError):
+    code = ErrorCode.RUNTIME_SHUTDOWN_FAILED
+    safe_message = "The AtlasRAG runtime could not settle all work during shutdown."

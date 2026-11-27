@@ -1505,3 +1505,67 @@ async def test_chunk_batch_identity_lookup_is_ordered_and_typed() -> None:
     assert connection.execute_calls[0][1] == (["parent-1", "table-1"],)
     assert await repository.list_by_ids(()) == ()
     assert connection.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_chunk_header_lookup_projects_metadata_without_content_and_normalizes() -> (
+    None
+):
+    from atlasrag.repositories.postgres.chunks import (
+        CanonicalChunkHeader,
+        ChunkRepository,
+    )
+
+    connection = FakeConnection()
+    repository = ChunkRepository(cast(Any, connection))
+    parent = stored_chunk().model_copy(update={"sheet_name": "SheetA"})
+    header_row = {
+        "chunk_id": parent.chunk_id,
+        "document_id": parent.document_id,
+        "revision_id": parent.revision_id,
+        "chunk_type": parent.chunk_type.value,
+        "parent_id": parent.parent_id,
+        "section_path": ["Chapter 1"],
+        "source_anchor": None,
+        "sheet_name": "SheetA",
+        "metadata": dict(parent.metadata),
+        "strategy_metadata": dict(parent.strategy_metadata),
+    }
+    connection.queue_rows(header_row)
+    connection.queue_rows()
+    connection.queue_rows(header_row)
+
+    single = await repository.get_canonical_context_header("doc-1", "rev-1", "parent-1")
+    assert isinstance(single, CanonicalChunkHeader)
+    assert single.sheet_name == "SheetA"
+    assert single.metadata == parent.metadata
+    assert single.strategy_metadata == parent.strategy_metadata
+    assert "content" not in normalized_sql(connection.execute_calls[0][0]).lower()
+    assert (
+        await repository.get_canonical_context_header("doc-1", "rev-1", "missing")
+        is None
+    )
+
+    batch = await repository.list_canonical_context_headers(("parent-1",))
+    assert batch == (single,)
+    batch_sql = normalized_sql(connection.execute_calls[2][0])
+    assert "WHERE chunk_id = ANY(%s)" in batch_sql
+    assert "ORDER BY chunk_id" in batch_sql
+    assert "content" not in batch_sql.lower()
+    assert await repository.list_canonical_context_headers(()) == ()
+
+    with pytest.raises(InvariantViolationError):
+        await repository.list_canonical_context_headers(("parent-1", "parent-1"))
+
+    corrupt = FakeConnection()
+    corrupt.queue_rows({"chunk_id": "broken"})
+    corrupt_repo = ChunkRepository(cast(Any, corrupt))
+    with pytest.raises(CanonicalDataError):
+        await corrupt_repo.get_canonical_context_header("doc-1", "rev-1", "broken")
+
+    null_metadata = FakeConnection()
+    null_metadata.queue_rows({**header_row, "metadata": None})
+    with pytest.raises(CanonicalDataError):
+        await ChunkRepository(cast(Any, null_metadata)).list_canonical_context_headers(
+            ("parent-1",)
+        )

@@ -4,6 +4,7 @@ COMPOSE_FILE := deploy/local/compose.yaml
 .PHONY: setup format format-check lint typecheck test architecture-check verify \
 	infra-up infra-wait infra-status infra-logs infra-down migrate migration-check \
 	test-integration stage2-verify test-stage3 test-stage3-integration \
+	test-stage10 test-stage10-integration stage10-verify \
 	stage3-parser-smoke stage3-verify test-stage4 test-stage4-integration \
 	stage4-model-smoke stage4-verify stage5-verify test-stage5 test-stage5-integration 	stage6-verify test-stage6 test-stage6-integration stage6-model-smoke
 
@@ -67,6 +68,15 @@ test-integration:
 
 stage2-verify:
 	ATLASRAG_ENV_FILE="$(ATLASRAG_ENV_FILE)" scripts/stage2_verify.sh
+
+test-stage10:
+	uv run --frozen pytest tests/stage10 -q
+
+test-stage10-integration:
+	scripts/stage10_verify.sh --integration-only
+
+stage10-verify:
+	scripts/stage10_verify.sh
 
 test-stage3:
 	uv run --frozen pytest tests/stage3 -q

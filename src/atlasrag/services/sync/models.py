@@ -343,6 +343,12 @@ class RecoveryTarget(FrozenModel):
         return self
 
 
+class SourceAvailability(StrEnum):
+    AVAILABLE = "AVAILABLE"
+    MISSING = "MISSING"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
 class ReconciliationOutcome(StrEnum):
     CLEAN = "CLEAN"
     REPAIRED = "REPAIRED"
