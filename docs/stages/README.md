@@ -13,11 +13,11 @@ Local implementation does not make a stage complete. Completion additionally
 requires its report, commit, successful GitHub publication, and—when available—a
 green remote CI result.
 
-## Current stage
+## Current stage & Part IV roadmap
 
-- **Stage:** Stage 10 — Part IV: Application Runtime Foundation (`stage/10-part-iv-application-runtime`, `PR #11` OPEN/UNMERGED)
-- **Status:** Stage 10 `ACCEPTED / PENDING_MERGE` (`Stage 10-A` COMPLETE, `Stage 10-B` COMPLETE, `Stage 10-C` COMPLETE / PASS via Stage 10-C3-R1 on `be5a2876`, `Stage 10-C4` COMPLETE; `23/23` requirements SATISFIED, `6/6` blocking findings CLOSED, `10/10` gaps CLOSED within approved scope; `AR4-T01` `OFFLINE_AND_REAL_INFRA_VERIFIED`; `PR #11` READY — `OWNER_AUTHORIZATION_REQUIRED`)
-- **Report, Closeout & Matrices:**
+- **Accepted `main` Baseline:** `833d1150d3cc508971f2dc92b6d625718be2fe78` (`PR #11` **MERGED**)
+- **Part IV Architecture Authority:** [AtlasRAG_Complete_Final_Architecture_Design_Manual.md](../architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md) & [ADR-001-part-iv-web-mcp-architecture.md](../architecture/ADR-001-part-iv-web-mcp-architecture.md) (`One RAG Engine, One Runtime Owner, Two Application Entrypoints`)
+- **Stage 10 Closeout & Acceptance Records:**
   - [stage-10-part-iv-application-runtime.md](stage-10-part-iv-application-runtime.md)
   - [stage-10a-completion.md](stage-10a-completion.md)
   - [stage-10a-verification-ledger.md](stage-10a-verification-ledger.md)
@@ -28,12 +28,15 @@ green remote CI result.
   - [stage-10-closeout/CLOSEOUT_REPORT.md](stage-10-closeout/CLOSEOUT_REPORT.md)
   - [stage-10-closeout/ACCEPTANCE_AUDIT.md](stage-10-closeout/ACCEPTANCE_AUDIT.md)
   - [stage-10-closeout/STAGE_11_HANDOFF.md](stage-10-closeout/STAGE_11_HANDOFF.md)
-- **Next:** Await owner authorization to merge `PR #11`; next planned stage is Stage 11 — Local Server and Operational CLI (`NOT_STARTED`; see [stage-10-closeout/STAGE_11_HANDOFF.md](stage-10-closeout/STAGE_11_HANDOFF.md))
 
-Stage 9 remains closed under its amended acceptance scope (`12/12` closeout raw
-artifacts preserved and verified). Within Stage 10, offline application runtime
-verification (`352` Stage 10 tests, `3660` repository offline tests), real
-isolated PostgreSQL/Milvus/Redis integration (`12` Stage 10-B integration tests),
-and final independent re-review (`Stage 10-C3-R1` PASS on `be5a2876`) are
-complete. Explicit Stage 11 and real GPU/system hardware execution items remain
-deferred beyond Stage 10 (`NOT_STARTED`).
+### Revised Stage 10–14 Allocation
+
+| Stage | Title | Status | Scope Summary |
+|---|---|---|---|
+| `10` | Application Runtime Foundation | **COMPLETE / ACCEPTED / MERGED** | In-process `ApplicationComposition`, `ApplicationCoordinator`, ownership lock, gate, freshness barrier, caches (`PR #11` merged at `833d1150`) |
+| `11` | Shared Application Server | `NOT_STARTED` | Long-lived loopback runtime-owning server, thin Web HTTP/SSE adapter, inbound MCP extension boundary, thin CLI/control boundary, health/readiness, OS signals & launcher termination |
+| `12` | Web Application | `NOT_STARTED` | Human-facing browser QA app (sessions, multi-turn display, Markdown/code/tables/math, citations, authorized source view, SSE status streaming, filters, controlled maintenance) |
+| `13` | MCP Server | `NOT_STARTED` | Inbound agent-facing MCP adapter (`atlasrag_ask` + proposed `atlasrag_search`, `atlasrag_list_sources`, `atlasrag_status`, read-only default, Answer Mode + detailed design of Evidence Mode) |
+| `14` | Deployment and Final Validation | `NOT_STARTED` | Coordinated backup/restore, Windows/WSL2/RTX 3070 8GB validation, real Qwen/BGE CUDA & MinerU subprocess settlement, dual-entrypoint Web+MCP tests, transferred Stage 9 `S9-17`/`S9-21` performance |
+
+Operational CLI remains a thin control/user client, never a third independent runtime. Stage 9 remains closed under its amended acceptance scope (`12/12` raw artifacts preserved and verified), and Stage 11 has **not** started.
