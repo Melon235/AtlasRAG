@@ -1,6 +1,6 @@
 # ADR-001: Part IV Architecture Amendment — Web Application and MCP Server
 
-- **Status:** Owner-Approved Architecture Amendment (Documentation Candidate on `docs/part-iv-web-mcp-architecture`)
+- **Status:** Owner-Approved Part IV Direction / Documentation Candidate (`READY_FOR_OWNER_APPROVAL` on `docs/part-iv-web-mcp-architecture`)
 - **Baseline (`origin/main`):** `833d1150d3cc508971f2dc92b6d625718be2fe78` (`PR #11` merged)
 - **Stage 10 Reviewed Implementation / Closeout:** `be5a287601ea988fe3b79dd4fed2c7aaafc4a7a8` / `ad96d23fbe8a4539352fd70a83aac713a89d63b8`
 - **Primary Authority Updated:** [`AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](AtlasRAG_Complete_Final_Architecture_Design_Manual.md)
@@ -49,20 +49,19 @@ Both entrypoints share one `ApplicationComposition`, one `ApplicationCoordinator
 
 ## 3. Previous vs Revised Part IV Stage Allocation
 
-| Stage | Previous Allocation | Revised Approved Roadmap |
+| Stage | Previous Allocation | Revised Allocation |
 |---|---|---|
-| `10` | Part IV: Application Runtime Foundation | **Application Runtime Foundation — COMPLETE / ACCEPTED / MERGED** (`833d1150d3cc508971f2dc92b6d625718be2fe78`) |
-| `11` | Local Server and Operational CLI | **Shared Application Server** (`NOT_STARTED`) |
-| `12` | *(Combined/later Web UI & streaming)* | **Web Application** |
-| `13` | *(Not previously allocated as inbound MCP)* | **MCP Server** |
-| `14` | *(Backup/deployment/validation distributed)* | **Deployment and Final Validation** |
+| `10` | Application Runtime Foundation | Application Runtime Foundation |
+| `11` | Local Server and Operational CLI | Shared Application Server |
+| `12` | Backup and Restore | Web Application |
+| `13` | Web UI and Safe Streaming | MCP Server |
+| `14` | Final Integration and Performance | Deployment and Final Validation |
 
-- **Stage 11 (Shared Application Server):** Long-lived runtime-owning loopback HTTP server, thin Web HTTP/SSE adapter boundary, inbound MCP protocol adapter extension boundary, thin operational CLI/control interface, request validation, error translation, session identity ownership, cancellation/disconnect handling, health/liveness/readiness endpoints, and OS signal/launcher termination boundary. Operational CLI remains a thin control/user client, never a third runtime.
-- **Stage 12 (Web Application):** Browser-based human QA application (sessions, multi-turn display, Markdown/code/table/math rendering, Local/Web citation display, authorized source inspection, SSE stage/status streaming, reviewed `FinalResponse` publication, query options/metadata filters, safe cache/trace summaries, runtime health/readiness view, controlled maintenance triggers).
-- **Stage 13 (MCP Server):** Inbound agent-facing MCP adapter (`atlasrag_ask` primary full-RAG tool plus proposed read-only `atlasrag_search`, `atlasrag_list_sources`, `atlasrag_status`), Answer Mode reuse, and detailed design/isolation of proposed Evidence Mode without bypassing `RuntimeGate`.
-- **Stage 14 (Deployment and Final Validation):** Coordinated backup and restore, Windows Host + WSL2 Ubuntu + native CUDA/RTX 3070 8GB local deployment, real Qwen/BGE CUDA weight verification, MinerU SDK subprocess settlement verification, Web + MCP combined-entrypoint concurrency/isolation/maintenance-exclusion validation, and transferred Stage 9 performance verification (`S9-17`, `S9-21`).
-
-Historical Stage 10 acceptance requirements (`S10-01`–`S10-20`) and independent review records remain unmodified.
+- **Stage 10 (Application Runtime Foundation — `COMPLETE / ACCEPTED / MERGED` at `833d1150d3cc508971f2dc92b6d625718be2fe78`):** Preserved completely without changing historical Stage 10 acceptance requirements (`S10-01`–`S10-20`) or independent review records.
+- **Stage 11 (Shared Application Server — `NOT_STARTED`):** Long-lived runtime-owning local server (`atlasrag serve` conceptual entrypoint, with Web/MCP adapters never instantiating `ApplicationComposition`), thin Web HTTP/SSE adapter boundary, inbound MCP protocol adapter extension boundary, thin operational CLI/control interface, request validation, error translation, session identity ownership, cancellation/disconnect handling, health/liveness/readiness endpoints, Local Transport Authorization (Host/Origin/DNS-rebinding, explicit local control auth, browser state-changing protections), and OS signal/launcher termination boundary. Exact CLI flags, routes, and schemas belong to Stage 11 design.
+- **Stage 12 (Web Application — `NOT_STARTED`):** Browser-based human QA application (sessions, multi-turn display, Markdown/code/table/math rendering, Local/Web citation resolution and presentation, authorized source inspection, SSE stage/status streaming, reviewed `FinalResponse` publication, query options/metadata filters, safe cache/trace summaries, runtime health/readiness view, controlled maintenance triggers).
+- **Stage 13 (MCP Server — `NOT_STARTED`):** Inbound agent-facing MCP adapter (`atlasrag_ask` primary full-RAG tool preserving `FinalResponse` / citation resolution plus proposed read-only `atlasrag_search`, `atlasrag_list_sources`, `atlasrag_status`), Answer Mode reuse, and detailed design of proposed Evidence Mode with its dedicated Evidence Publication Boundary and `RuntimeGate` enforcement.
+- **Stage 14 (Deployment and Final Validation — `NOT_STARTED`):** Backup and Restore remain mandatory Stage 14 scope (never removed), alongside Windows Host + WSL2 Ubuntu + native CUDA/RTX 3070 8GB local deployment, real Qwen/BGE CUDA weight verification, MinerU SDK subprocess settlement verification, Web + MCP combined-entrypoint concurrency/isolation/maintenance-exclusion validation, and transferred Stage 9 performance verification (`S9-17`, `S9-21`).
 
 ---
 
@@ -70,10 +69,10 @@ Historical Stage 10 acceptance requirements (`S10-01`–`S10-20`) and independen
 
 Reconciled in [`AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](AtlasRAG_Complete_Final_Architecture_Design_Manual.md) with existing section numbers `§1`–`§102` preserved:
 
-- **Document Header & `§73–76`:** Updated Part IV topology and ownership rules for the Shared Application Server serving Web and inbound MCP over one `ApplicationComposition` / `ApplicationCoordinator`; fixed pool sizing erratum wording.
-- **Added Subsections `§76.1–76.5`:** Defined Shared Application Server (`§76.1`), AtlasRAG Web (`§76.2`), Inbound AtlasRAG MCP Server (`§76.3`), Answer Mode vs proposed Evidence Mode (`§76.4`), and Security, Session/Cache Isolation, Safe Streaming & Proposed Technology Direction (`§76.5`).
+- **Document Header & `§73–76`:** Updated Part IV topology and ownership rules for the Shared Application Server serving Web and inbound MCP over one `ApplicationComposition` / `ApplicationCoordinator`; preserved `atlasrag serve` conceptual startup entrypoint (adapters never instantiate `ApplicationComposition`), preserved the `langgraph dev` development-only constraint (`§75`), and fixed PG pool sizing erratum wording.
+- **Added Subsections `§76.1–76.5`:** Defined Shared Application Server including Stage 11 Local Transport Authorization constraints (`§76.1`), AtlasRAG Web (`§76.2`), Inbound AtlasRAG MCP Server (`§76.3`), Answer Mode vs proposed Evidence Mode & its Stage 13 Evidence Publication Boundary (`§76.4`), and Proposed Technology Direction (`§76.5`).
 - **`§84–85`:** Preserved `atlasrag:query:{session_id}:{runtime_fingerprint}:{request_hash}`, PG freshness marker, Lua write fencing, and `TEXT_PARENT` Parent Context Cache; mandated disjoint Web/MCP application-session identities and excluded Evidence Mode outputs from the `FinalResponse` Query Cache.
-- **`§88–92`:** Reconciled `QueryResponseEnvelope` vs Evidence Mode boundary (`§88`), Web SSE + MCP safe progress notifications (`§89`), Stage 14 allocation for coordinated backup/restore (`§90–91`), and private-trace non-exposure rules (`§92`).
+- **`§88–92` & `§94`:** Reconciled `QueryResponseEnvelope` vs Evidence Mode boundary (`§88`), Web SSE + MCP safe progress notifications (`§89`), Stage 14 allocation for coordinated backup/restore (`§90–91`), private-trace non-exposure rules (`§92`), and restored/extended `§94` Local/Web citation resolution acceptance across both Answer Mode entrypoints alongside proposed Evidence Mode provenance.
 - **`§99–102`:** Reconciled v1 out-of-scope boundaries (including read-only MCP default, no automatic transcript injection into RAG semantics, no multi-tenant RBAC/LAN hosting), Part IV status (`§100`), deferred design items (`§101`), and Final Architecture Statement (`§102`).
 
 ---
@@ -102,13 +101,13 @@ Reconciled in [`AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](AtlasRAG
 | MCP Compatibility | Optional stdio thin adapter (to existing server/runtime owner only) |
 | Application Runtime | Existing Python / LangGraph implementation |
 
-No dependencies or lockfiles (`pyproject.toml`, `uv.lock`) are modified by this amendment.
+No dependencies or lockfiles (`pyproject.toml`, `uv.lock`) are modified by this amendment. The existing `langgraph dev` development/local-dev boundary remains intact and is not invalidated by the proposed FastAPI + Uvicorn server direction.
 
 ---
 
 ## 7. Decisions Explicitly Deferred to Stage 11–14 Detailed Designs
 
-- **Stage 11:** Exact HTTP routes/payloads, loopback host/Origin/DNS-rebinding policy, launcher lifecycle/PID/OS signal handling, disconnect cancellation propagation, and Web/CLI session/control transport schemas.
+- **Stage 11:** Exact `atlasrag serve`/CLI arguments and launcher/PID/OS signal lifecycle, HTTP routes/payloads, Local Transport Authorization rules (beyond loopback binding: Host/Origin validation, DNS rebinding protection, explicit local caller authorization for privileged control operations, separation of knowledge vs control authority, and browser protections for state-changing requests), disconnect cancellation propagation, and Web/CLI session/control transport schemas.
 - **Stage 12:** Frontend UI architecture, React/shadcn component layout, Web multi-turn session storage/persistence model, source-viewer formatting, and maintenance UX.
-- **Stage 13:** MCP protocol-to-application `session_id` mapping, exact schemas for `atlasrag_ask` / `atlasrag_search` / `atlasrag_list_sources` / `atlasrag_status`, and Evidence Mode specification (service reuse, stop point, result schema, Local/Web behavior, Query Construction rules, provenance, token/size limits, cancellation/degradation, cache policy, privacy/source constraints).
-- **Stage 14:** Backup archive/container mechanics, real Qwen/BGE CUDA + MinerU subprocess RTX 3070 8GB validation, Web+MCP concurrency/isolation/maintenance-exclusion integration tests, and Stage 9 `S9-17` / `S9-21` performance verification.
+- **Stage 13:** MCP protocol-to-application `session_id` mapping, exact schemas for `atlasrag_ask` / `atlasrag_search` / `atlasrag_list_sources` / `atlasrag_status`, and Evidence Mode + dedicated Evidence Publication Boundary specification (authorized source access, canonical evidence/provenance validation, bounded result sizes, safe serialization, private trace/internal exclusion, untrusted retrieved-content handling, service reuse, stop point, Local/Web behavior, Query Construction rules, cancellation/degradation, and cache policy without bypassing `RuntimeGate` or using the `FinalResponse` Session Query Cache).
+- **Stage 14:** Backup/restore implementation mechanics, real Qwen/BGE CUDA + MinerU subprocess RTX 3070 8GB validation, Web+MCP concurrency/isolation/maintenance-exclusion integration tests, and Stage 9 `S9-17` / `S9-21` performance verification.

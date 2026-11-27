@@ -4097,6 +4097,8 @@ with validated defaults `postgres_pool_min_size = 2` and `postgres_pool_max_size
 
 GPU-heavy operations are bounded by the shared `ResourceGuard`. Initial concurrency may be conservative (for example effectively serialized) and is a tunable runtime configuration rather than a graph semantic.
 
+The exact LangGraph launcher/CLI command is an implementation concern. `langgraph dev` must only be described as a development/local-dev mode, not as cloud/production deployment terminology. The proposed FastAPI/Uvicorn Shared Application Server direction does not invalidate this existing constraint (and server dependencies are not pinned here).
+
 ---
 
 # 76. Single-Runtime Ownership and Control Boundary — AMENDED
@@ -4117,8 +4119,12 @@ Loopback port binding may provide additional protection but is never the sole co
 User/Web requests, inbound MCP tool calls, and operational CLI commands all converge on the single running runtime:
 
 ```text
+atlasrag serve
+→ starts and owns the single runtime-owning local Shared Application Server
+  (ApplicationComposition + ApplicationCoordinator)
+
 Shared Application Server
-├── owns ApplicationComposition + ApplicationCoordinator
+├── owns ApplicationComposition + ApplicationCoordinator (not instantiated by adapters)
 ├── exposes Web HTTP API / SSE (Stage 11/12)
 ├── exposes inbound MCP Adapter (Stage 11/13)
 └── exposes local control endpoint for thin CLI (Stage 11)
@@ -4126,6 +4132,8 @@ Shared Application Server
 Operational CLI (atlasrag ask / sync / recover / health / status / backup)
 └── thin client to running Shared Application Server; never builds a second runtime
 ```
+
+Web and MCP adapters must never independently instantiate `ApplicationComposition`. Exact `atlasrag serve` / CLI arguments, launcher behavior, and process lifecycle belong to the Stage 11 detailed design.
 
 Logical planes remain strictly separated:
 
@@ -4144,8 +4152,8 @@ Only one maintenance or recovery operation may own `MaintenanceCoordinator` at a
 
 The Shared Application Server is the single long-lived local server process owning `ApplicationComposition` and `ApplicationCoordinator`. Architectural responsibilities:
 
-- Startup, fail-closed bootstrap/reconciliation, and graceful single-flight `shutdown()` lifecycle.
-- Loopback-only binding by default (`127.0.0.1` / `localhost`) with Host/Origin validation and DNS rebinding protections.
+- Startup, fail-closed bootstrap/reconciliation, and graceful single-flight `shutdown()` lifecycle initiated via the single runtime entrypoint (`atlasrag serve`).
+- Local Transport Authorization (Stage 11 detailed-design contract): loopback binding alone (`127.0.0.1` / `localhost`) is insufficient as an authorization boundary. Stage 11 must explicitly specify Host/Origin validation and DNS rebinding protection, explicit local caller authorization for privileged control operations, separation between knowledge requests and maintenance/control authority, and appropriate browser request protections for state-changing operations — without introducing mandatory public deployment, multi-tenant RBAC, or complex authentication infrastructure.
 - Thin Web HTTP/SSE API adapter and inbound MCP protocol adapter extension boundary sharing one coordinator.
 - Thin local operational control interface (supporting CLI health, readiness, maintenance, recovery, and Stage 14 backup coordination).
 - Safe request validation, payload/response size bounds, and stable error translation without exposing stack traces or secrets.
@@ -4189,8 +4197,8 @@ MCP defaults strictly to read-only knowledge and status operations. Destructive 
 
 Part IV defines two application-level query capabilities over the shared runtime:
 
-- **Answer Mode:** Executes the complete existing Part II pipeline (`Query Cache -> Query Construction -> Retrieval / Rerank / Evidence -> Generation -> Output Review -> Citation Resolution -> FinalResponse`) and returns `QueryResponseEnvelope(trace_id, response: FinalResponse)`. Both Web and MCP (`atlasrag_ask`) may consume Answer Mode without altering Part II or `FinalResponse` semantics.
-- **Evidence Mode (Proposed Stage 13 Boundary):** Provides bounded, authorized retrieval evidence so an external calling agent can synthesize using its own model, without executing final answer generation. Evidence Mode must acquire a runtime `QueryLease`, participate in `InFlightTaskRegistry` / `RuntimeGate` shutdown settlement, never bypass `RuntimeGate` directly to PostgreSQL or Milvus, and never store Evidence Mode outputs in the existing `FinalResponse` Session Query Cache. Exact reuse of retrieval services, stop point, evidence schema, Local/Web behavior, Query Construction rules, provenance, size/token limits, cancellation/degradation semantics, cache policy, and privacy constraints are deferred to Stage 13 design.
+- **Answer Mode:** Executes the complete existing Part II pipeline (`Query Cache -> Query Construction -> Retrieval / Rerank / Evidence -> Generation -> Output Review -> Citation Resolution -> FinalResponse`) and returns `QueryResponseEnvelope(trace_id, response: FinalResponse)`. Both Web and MCP (`atlasrag_ask`) consume Answer Mode through the existing Output Review and Citation Resolver answer publication boundaries without altering Part II or `FinalResponse` semantics.
+- **Evidence Mode (Proposed Stage 13 Boundary):** Provides bounded, authorized retrieval evidence so an external calling agent can synthesize using its own model, without executing final answer generation. Evidence Mode must acquire a runtime `QueryLease`, participate in `InFlightTaskRegistry` / `RuntimeGate` shutdown settlement, never bypass `RuntimeGate` directly to PostgreSQL or Milvus, and never store Evidence Mode outputs in the existing `FinalResponse` Session Query Cache. Stage 13 detailed design must define a dedicated Evidence Publication Boundary covering authorized source access, canonical evidence/provenance validation, bounded result sizes, safe serialization, private trace and internal data exclusion, and untrusted retrieved-content handling, alongside exact retrieval reuse, stop point, result schema, Local/Web behavior, Query Construction rules, cancellation/degradation semantics, and cache policy.
 
 ## 76.5 Proposed Part IV Technology Direction (Unpinned)
 
@@ -4670,7 +4678,7 @@ runtime status
 transport timing
 ```
 
-belongs outside `FinalResponse`. Proposed Stage 13 Evidence Mode defines its own bounded evidence result schema separately without storing into the `FinalResponse` Query Cache or executing answer generation.
+belongs outside `FinalResponse`. Proposed Stage 13 Evidence Mode defines its own Evidence Publication Boundary (authorized source access, canonical evidence/provenance validation, bounded result sizes, safe serialization, private trace/internal data exclusion, and untrusted retrieved-content handling) separately without storing into the `FinalResponse` Query Cache, bypassing `RuntimeGate`, or executing answer generation.
 
 A query-cache hit also receives a fresh trace identity.
 
@@ -4925,6 +4933,9 @@ safe persisted-state inconsistency enters BLOCKED
 Startup Reconciliation runs before readiness
 liveness/readiness semantics are distinct
 Web, MCP, and thin CLI queries succeed through the single running Shared Application Server
+Local/Web citations resolve correctly
+Local/Web citations resolve correctly across Web Answer Mode and MCP Answer Mode (`atlasrag_ask`)
+Proposed Evidence Mode preserves authorized evidence provenance according to its own Stage 13 result contract
 MCP defaults to read-only knowledge operations and cannot trigger destructive maintenance
 Web and MCP sessions remain isolated and concurrent dual-entrypoint usage respects ResourceGuard and Maintenance exclusion
 transport returns a trace_id outside FinalResponse
