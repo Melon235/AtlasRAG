@@ -1,10 +1,10 @@
 # AtlasRAG — Complete Final Architecture Design Manual
 
 > **Project:** AtlasRAG — A Production-Oriented Multi-Source RAG System  
-> **Document status:** Final frozen architecture baseline for AtlasRAG v1 (Part I–IV)  
-> **Scope:** Architecture and contracts only; Stage breakdown and implementation details are intentionally deferred to a separate implementation-design conversation.  
-> **Primary stack direction:** Python, LangGraph, PostgreSQL, Milvus, Redis, DeepSeek API, SearXNG MCP, MinerU, Docling, FlagEmbedding, Qwen3-Embedding, pytest, Vectara Open RAGBench, optional pinned secondary evaluation tooling  
-> **Local deployment target:** Windows + WSL2 Ubuntu, RTX 3070 8GB, LangGraph local server, Docker Compose for infrastructure  
+> **Document status:** Frozen architectural baseline for Part I–III and Stage 10 Application Runtime Foundation; **Part IV amended for Shared Application Server, Web Application, and Inbound MCP Server** via [`ADR-001-part-iv-web-mcp-architecture.md`](ADR-001-part-iv-web-mcp-architecture.md)
+> **Scope:** Architecture and contracts only; detailed Stage 11–14 implementation designs remain intentionally deferred to stage plans.
+> **Primary stack direction:** Python, LangGraph, PostgreSQL, Milvus, Redis, DeepSeek API, outbound SearXNG MCP, MinerU, Docling, FlagEmbedding, Qwen3-Embedding, pytest, Vectara Open RAGBench; **Part IV application direction (proposed, unpinned):** FastAPI + Uvicorn, React + TypeScript + Vite + Tailwind CSS + shadcn/ui (SSE), Official Python MCP SDK / FastMCP (Streamable HTTP + optional thin stdio adapter)
+> **Local deployment target:** Windows + WSL2 Ubuntu, RTX 3070 8GB, shared local Python/LangGraph Application Server (Web + MCP), Docker Compose for infrastructure  
 > **Core project emphasis:** Part I and Part II are the technical core. Part III proves correctness/quality. Part IV proves the system can be run and used locally.
 
 ---
@@ -3988,30 +3988,34 @@ Part I/Part II end-to-end reproducibility
 
 # PART IV — Local Deployment & Operations
 
-# 73. Part IV Responsibility — FROZEN
+# 73. Part IV Responsibility — AMENDED
 
-Part IV defines the reference local deployment and operational lifecycle for AtlasRAG v1.
+Part IV defines the reference local deployment, shared application server, human-facing Web QA entrypoint, agent-facing inbound MCP Server entrypoint, and operational lifecycle for AtlasRAG v1.
 
-It is intentionally a **local single-machine deployment**, not a claim of Kubernetes/cloud-scale production operation.
+Its governing architectural principle is:
+
+> **One RAG Engine, One Runtime Owner, Two Application Entrypoints**
+
+It is intentionally a **local single-machine deployment**, not a claim of Kubernetes/cloud-scale multi-tenant operation.
 
 Reference environment:
 
 ```text
 Windows Host
 └── WSL2 Ubuntu
-    ├── native AtlasRAG Python runtime
+    ├── native AtlasRAG Python runtime + Shared Application Server (Web + MCP)
     ├── native CUDA/PyTorch access to RTX 3070 8GB
     ├── local Knowledge Directory / model cache / logs
     └── Docker Compose infrastructure
 ```
 
-Part IV must preserve all Part I/II ownership and consistency rules rather than introducing deployment shortcuts that weaken them.
+Part IV must preserve all Part I/II ownership and consistency rules rather than introducing Web, MCP, or CLI shortcuts that weaken them. Operational CLI remains a thin client, not a third independent application runtime.
 
 ---
 
-# 74. Local Deployment Topology — FROZEN
+# 74. Local Deployment Topology — AMENDED
 
-AtlasRAG application/GPU execution runs natively inside WSL2.
+AtlasRAG application/GPU execution runs natively inside WSL2 inside one long-lived Shared Application Server process owning the single business runtime.
 
 Docker Compose runs stateful/supporting infrastructure:
 
@@ -4021,7 +4025,7 @@ Redis
 Milvus standalone
   ├── etcd
   └── MinIO
-SearXNG
+SearXNG (outbound Web evidence integration)
 ```
 
 Conceptual topology:
@@ -4029,110 +4033,175 @@ Conceptual topology:
 ```text
 Windows Host
 │
-├── Browser / local clients
-│
-└── WSL2 Ubuntu
-    │
-    ├── AtlasRAG Application Runtime
-    │   ├── Composition Root
-    │   ├── Runtime Ownership Lock
-    │   ├── RuntimeGate
-    │   ├── MaintenanceCoordinator
-    │   ├── HealthRegistry
-    │   ├── ResourceGuard
-    │   ├── index_graph
-    │   ├── retrieval_graph
-    │   ├── embedding model
-    │   └── selected reranker
-    │          ↓
-    │       RTX 3070
-    │
-    ├── Knowledge Directory
-    ├── model cache
-    ├── logs/traces
-    │
-    └── Docker Compose
-        ├── PostgreSQL
-        ├── Redis
-        ├── Milvus + etcd + MinIO
-        └── SearXNG
+├── AtlasRAG Web (Browser / Web HTTP API + SSE) ──┐
+├── MCP Clients (Streamable HTTP / thin stdio)  ──┼── Shared Application Server (WSL2 native)
+└── Operational CLI (thin control/user client)  ──┘        │
+                                                    ApplicationCoordinator
+                                                           │
+                                                 Single Application Runtime
+                                              (ApplicationComposition, Ownership Lock,
+                                               RuntimeGate, InFlightTaskRegistry,
+                                               HealthRegistry, ResourceGuard)
+                                                           │
+                                                   Part I / Part II Services
+                                               (index_graph, retrieval_graph,
+                                                Qwen embedding, selected BGE reranker)
+                                                           │
+                                                          RTX 3070
+                                                           │
+                                             ┌─────────────┴─────────────┐
+                                     Knowledge Directory         Docker Compose
+                                      model cache / logs     (PostgreSQL, Redis,
+                                                            Milvus+etcd+MinIO, SearXNG)
 ```
 
 v1 deliberately does not containerize the GPU-heavy AtlasRAG application process. This avoids unnecessary NVIDIA-container/GPU-passthrough/model-cache complexity in the reference environment.
 
-Default service exposure is localhost-only. PostgreSQL, Redis, Milvus and SearXNG are not intended to be LAN-exposed by default.
+Default service exposure is localhost/loopback-only. PostgreSQL, Redis, Milvus, SearXNG, the Shared Application Server, Web UI, and MCP Server are not intended to be LAN- or public-exposed by default.
 
-No reverse proxy, Kubernetes, GPU cluster, distributed model service or micro-batching platform is required in v1.
+No reverse proxy, Kubernetes, GPU cluster, distributed model service, multi-tenant RBAC, or micro-batching platform is required in v1.
 
 ---
 
-# 75. Single Application Runtime — FROZEN
+# 75. Single Application Runtime — AMENDED
 
-Part I and Part II share **one AtlasRAG application runtime**:
+Part I, Part II, AtlasRAG Web, and the inbound AtlasRAG MCP Server share **one AtlasRAG application runtime**:
 
 ```text
-ONE composition root
-ONE set of shared clients/pools
+ONE production ApplicationComposition
+ONE ApplicationCoordinator
+ONE RuntimeOwnershipLock
+ONE RuntimeGate
+ONE InFlightTaskRegistry
+ONE PostgreSQL pool
+ONE MilvusIndexProvider
+ONE RedisCacheProvider
 ONE set of loaded GPU models
 ONE ResourceGuard
-ONE RuntimeGate
+ONE canonical knowledge base
+ONE maintenance and recovery lifecycle
 ```
 
-Do not create independent indexing and serving Python services in v1.
+Do not create independent Web and MCP business runtimes, or independent indexing and serving Python services, in v1.
 
-Part II supports concurrent requests/sessions, while Part I maintenance and Part II serving remain mutually exclusive.
+Both Web and MCP requests may run concurrently inside Part II under explicit query leases, while Part I maintenance and Part II serving (across both entrypoints) remain mutually exclusive through `RuntimeGate`.
 
-GPU-heavy operations are bounded by a shared `ResourceGuard`. Initial concurrency may be conservative (for example effectively serialized) and is a tunable runtime configuration rather than a graph semantic.
+PostgreSQL pool sizing follows the validated runtime contract (`src/atlasrag/config/models.py`):
 
-The exact LangGraph launcher/CLI command is an implementation concern. `langgraph dev` must only be described as a development/local-dev mode, not as cloud/production deployment terminology.
+```text
+postgres_pool_max_size >= 2 * max_document_concurrency + 2
+postgres_pool_min_size <= postgres_pool_max_size
+```
+
+with validated defaults `postgres_pool_min_size = 2` and `postgres_pool_max_size = 16` (`2*C` covers document-build advisory lease + UoW and `2` covers reconciliation/verification/health/metadata headroom).
+
+GPU-heavy operations are bounded by the shared `ResourceGuard`. Initial concurrency may be conservative (for example effectively serialized) and is a tunable runtime configuration rather than a graph semantic.
 
 ---
 
-# 76. Single-Runtime Ownership and Control Boundary — FROZEN
+# 76. Single-Runtime Ownership and Control Boundary — AMENDED
 
-A machine-local ownership mechanism prevents a second AtlasRAG business runtime from starting concurrently against the same local deployment.
+A machine-local ownership mechanism (`RuntimeOwnershipLock`) prevents a second AtlasRAG business runtime from starting concurrently against the same local deployment.
 
 Conceptually:
 
 ```text
-Runtime A acquires ownership lock
-Runtime B startup
+Shared Application Server acquires ownership lock
+Second runtime startup (Web/MCP/CLI)
 → ownership conflict
 → fail startup
 ```
 
-Port binding may provide additional protection but is not the sole correctness mechanism.
+Loopback port binding may provide additional protection but is never the sole correctness mechanism.
 
-User and maintenance CLI commands are **thin clients** to the already-running AtlasRAG runtime.
-
-```text
-atlasrag serve
-→ owns business runtime
-
-atlasrag ask
-atlasrag sync
-atlasrag health/status
-atlasrag backup
-→ client/control requests to running runtime
-```
-
-A maintenance CLI must never create a second composition root and invoke `index_graph` independently, because that would bypass the Part I/Part II mutual-exclusion barrier.
-
-Logical planes remain separate:
+User/Web requests, inbound MCP tool calls, and operational CLI commands all converge on the single running runtime:
 
 ```text
-User Plane
-→ ask / Web UI
-→ retrieval_graph
+Shared Application Server
+├── owns ApplicationComposition + ApplicationCoordinator
+├── exposes Web HTTP API / SSE (Stage 11/12)
+├── exposes inbound MCP Adapter (Stage 11/13)
+└── exposes local control endpoint for thin CLI (Stage 11)
 
-Control Plane
-→ sync / backup / operational status
-→ application coordinator
+Operational CLI (atlasrag ask / sync / recover / health / status / backup)
+└── thin client to running Shared Application Server; never builds a second runtime
 ```
 
-The exact localhost HTTP/Unix-socket transport is deferred to the Implementation Guide.
+Logical planes remain strictly separated:
 
-Only one maintenance operation may own the maintenance coordinator at a time.
+```text
+Knowledge / User Plane
+├── AtlasRAG Web (sessions, queries, citations, safe status streaming)
+└── AtlasRAG MCP Server (read-only knowledge tools by default)
+
+Control Plane (Privileged)
+└── Operational CLI / authorized control operations (sync, recover, backup, shutdown)
+```
+
+Only one maintenance or recovery operation may own `MaintenanceCoordinator` at a time. Operational CLI or an optional MCP `stdio` compatibility adapter (if later provided) must remain thin clients to the runtime owner rather than instantiating a second composition root.
+
+## 76.1 Shared Application Server (Stage 11 Scope)
+
+The Shared Application Server is the single long-lived local server process owning `ApplicationComposition` and `ApplicationCoordinator`. Architectural responsibilities:
+
+- Startup, fail-closed bootstrap/reconciliation, and graceful single-flight `shutdown()` lifecycle.
+- Loopback-only binding by default (`127.0.0.1` / `localhost`) with Host/Origin validation and DNS rebinding protections.
+- Thin Web HTTP/SSE API adapter and inbound MCP protocol adapter extension boundary sharing one coordinator.
+- Thin local operational control interface (supporting CLI health, readiness, maintenance, recovery, and Stage 14 backup coordination).
+- Safe request validation, payload/response size bounds, and stable error translation without exposing stack traces or secrets.
+- Explicit application session identity ownership and separation across Web and MCP.
+- Request cancellation and client-disconnect propagation into `InFlightTaskRegistry` and `QueryLease` settlement.
+- Distinct health, liveness, and readiness exposure via `HealthRegistry`.
+- OS signal (`SIGINT`/`SIGTERM`) handling and launcher-level termination/unresolved-ownership recovery boundaries.
+- Zero duplication of Part I/Part II RAG business logic; exact routes, transport schemas, and dependency pins belong to Stage 11 design.
+
+## 76.2 AtlasRAG Web Application (Stage 12 Scope)
+
+AtlasRAG Web is the browser-based human QA application served through the Shared Application Server. Approved v1 capability scope:
+
+- Multiple independent sessions and multiple display turns within a session.
+- Rendering of Markdown, fenced code, structured tables, and mathematical formulas.
+- Local and Web citation presentation plus authorized source inspection without arbitrary host filesystem traversal.
+- Safe stage/status streaming (`§89`) alongside publication of the reviewed `FinalResponse`.
+- Supported query options and metadata filters, plus safe cache and `trace_id` summaries.
+- Runtime health and readiness display and explicitly controlled maintenance/recovery entrypoints.
+
+Conversation display is strictly separated from retrieval semantics: a displayed multi-turn UI transcript must not automatically become history-aware RAG input, and private `Trace` internals or unauthorized raw evidence must not be surfaced merely because they appear in a trace. Existing `UserTurnRequest`, `FinalResponse`, and citation contracts remain unchanged. Exact UI layout and session storage design are deferred to Stage 12.
+
+## 76.3 Inbound AtlasRAG MCP Server (Stage 13 Scope)
+
+AtlasRAG MCP Server is an **inbound** agent-facing protocol adapter integrated with the Shared Application Server. It is architecturally distinct from the existing **outbound** SearXNG MCP/Web search provider used during corrective retrieval.
+
+Candidate Stage 13 MCP tool surface:
+
+```text
+atlasrag_ask           # Primary full-RAG QA tool (Answer Mode)
+atlasrag_search        # Proposed bounded evidence retrieval (Evidence Mode)
+atlasrag_list_sources  # Proposed authorized knowledge source listing (read-only)
+atlasrag_status        # Proposed safe runtime health/readiness summary (read-only)
+```
+
+`atlasrag_ask` is the primary full-RAG tool. `atlasrag_search`, `atlasrag_list_sources`, and `atlasrag_status` are proposed Stage 13 capabilities whose exact schemas require Stage 13 design.
+
+MCP defaults strictly to read-only knowledge and status operations. Destructive document deletion, arbitrary filesystem reads/writes, unrestricted shell execution, cache clearing, server termination, or privileged backup/maintenance control must **not** be exposed as ordinary agent tools.
+
+## 76.4 Answer Mode and Evidence Mode
+
+Part IV defines two application-level query capabilities over the shared runtime:
+
+- **Answer Mode:** Executes the complete existing Part II pipeline (`Query Cache -> Query Construction -> Retrieval / Rerank / Evidence -> Generation -> Output Review -> Citation Resolution -> FinalResponse`) and returns `QueryResponseEnvelope(trace_id, response: FinalResponse)`. Both Web and MCP (`atlasrag_ask`) may consume Answer Mode without altering Part II or `FinalResponse` semantics.
+- **Evidence Mode (Proposed Stage 13 Boundary):** Provides bounded, authorized retrieval evidence so an external calling agent can synthesize using its own model, without executing final answer generation. Evidence Mode must acquire a runtime `QueryLease`, participate in `InFlightTaskRegistry` / `RuntimeGate` shutdown settlement, never bypass `RuntimeGate` directly to PostgreSQL or Milvus, and never store Evidence Mode outputs in the existing `FinalResponse` Session Query Cache. Exact reuse of retrieval services, stop point, evidence schema, Local/Web behavior, Query Construction rules, provenance, size/token limits, cancellation/degradation semantics, cache policy, and privacy constraints are deferred to Stage 13 design.
+
+## 76.5 Proposed Part IV Technology Direction (Unpinned)
+
+| Component | Proposed Direction (Subject to Stage 11–14 Design) |
+|---|---|
+| Shared Application Server | FastAPI + Uvicorn |
+| Web Frontend & Streaming | React + TypeScript, Vite, Tailwind CSS + shadcn/ui, SSE |
+| Inbound MCP Server | Official Python MCP SDK / FastMCP (Streamable HTTP primary; optional thin stdio adapter) |
+| Application Runtime | Existing Python / LangGraph implementation |
+
+No package versions are frozen here, and no MCP-specific composition root is permitted.
 
 ---
 
@@ -4448,6 +4517,8 @@ No whole-KB revision identifier appears in the key.
 
 Knowledge freshness is protected by the Part I/Part II maintenance barrier and the persisted cache freshness mechanism below.
 
+Web and MCP must maintain **independent application-session identities**: Web sessions and MCP sessions must never accidentally collide on `session_id` or share Session Query Cache entries, and an MCP protocol session ID is not automatically an AtlasRAG application `session_id` (exact session mapping and lifecycle belong to Stage 11/13 design). Proposed Evidence Mode results must **not** be stored in the existing `FinalResponse` Session Query Cache.
+
 A cache hit returns a fully validated/resolved `FinalResponse` while receiving a new request/trace identity.
 
 Cache eligibility remains policy-derived from completed `RagCoreResult`; partial/canceled/invalid/error results are never cached.
@@ -4578,11 +4649,11 @@ Knowledge change is **not** represented by putting a whole-KB revision into the 
 
 ---
 
-# 88. Client/API Response Boundary — FROZEN
+# 88. Client/API Response Boundary — AMENDED
 
 Part IV does not modify the Part II `FinalResponse` domain contract merely to attach transport/observability metadata.
 
-Conceptually:
+Both Web Answer Mode and MCP Answer Mode (`atlasrag_ask`) preserve the envelope boundary conceptually:
 
 ```text
 QueryResponseEnvelope
@@ -4599,15 +4670,15 @@ runtime status
 transport timing
 ```
 
-belongs outside `FinalResponse`.
+belongs outside `FinalResponse`. Proposed Stage 13 Evidence Mode defines its own bounded evidence result schema separately without storing into the `FinalResponse` Query Cache or executing answer generation.
 
 A query-cache hit also receives a fresh trace identity.
 
 ---
 
-# 89. Safe Streaming Policy — FROZEN
+# 89. Safe Streaming Policy — AMENDED
 
-v1 supports **stage/status streaming**, not raw unreviewed LLM answer-token streaming.
+v1 supports **stage/status streaming**, not raw unreviewed LLM answer-token streaming. Web delivers safe stage/status events over SSE; MCP may expose compatible safe progress notifications where supported.
 
 Safe events may include conceptually:
 
@@ -4624,7 +4695,7 @@ completed
 error/safe failure status
 ```
 
-Do not stream:
+Neither Web nor MCP may publish or stream:
 
 ```text
 raw model answer tokens before review
@@ -4644,13 +4715,15 @@ GenerationResult
 → FinalResponse
 ```
 
+Retrieved documents and tool outputs are treated as untrusted data, never executable instructions.
+
 This preserves Output Review/Citation Resolver as the authoritative publication boundary.
 
 Future buffered/uncommitted token streaming may be designed separately; it is out of scope for v1.
 
 ---
 
-# 90. Persistence Ownership and Backup — FROZEN
+# 90. Persistence Ownership and Backup — FROZEN (Stage 14 Allocation)
 
 Storage ownership remains:
 
@@ -4687,9 +4760,9 @@ Model identity must be sufficient to determine whether the original published in
 
 ---
 
-# 91. Coordinated Backup and Restore — FROZEN
+# 91. Coordinated Backup and Restore — FROZEN (Stage 14 Allocation)
 
-Formal v1 backup uses the same operational exclusion machinery rather than inventing online snapshot complexity.
+Formal v1 backup uses the same operational exclusion machinery rather than inventing online snapshot complexity. Backup/restore implementation is allocated to Stage 14 without weakening any canonical consistency or fail-closed restore invariant.
 
 Conceptually:
 
@@ -4757,6 +4830,8 @@ cache hit/miss/bypass
 ```
 
 Trace does not persist hidden Chain-of-Thought.
+
+Web responses, MCP tool results, and safe trace summaries must never expose private evidence or internal debugging details merely because they are recorded inside a `Trace`.
 
 Benchmark runs may use a complete Trace sink, but production Trace schemas do not contain benchmark gold/qrels.
 
@@ -4849,12 +4924,13 @@ hard bootstrap failure exits/fails cleanly
 safe persisted-state inconsistency enters BLOCKED
 Startup Reconciliation runs before readiness
 liveness/readiness semantics are distinct
-CLI/Web query succeeds through the running runtime
-Local/Web citations resolve correctly
+Web, MCP, and thin CLI queries succeed through the single running Shared Application Server
+MCP defaults to read-only knowledge operations and cannot trigger destructive maintenance
+Web and MCP sessions remain isolated and concurrent dual-entrypoint usage respects ResourceGuard and Maintenance exclusion
 transport returns a trace_id outside FinalResponse
 two sessions can issue concurrent Part II requests without state leakage
 same-session exact request can hit Session Query Cache
-different sessions do not share Session Query Cache
+different sessions (including Web vs MCP) do not share Session Query Cache
 Parent Context Cache may be shared across sessions
 Redis unavailable → serving continues with caches bypassed/fallback
 knowledge change + Redis unavailable → stale Query Cache cannot reappear
@@ -5120,21 +5196,23 @@ Performance mode is separate and explicitly declares warm/cold/cache/hardware co
 
 ---
 
-# 99. Out of Scope — AtlasRAG v1
+# 99. Out of Scope — AtlasRAG v1 (AMENDED)
 
 Explicitly deferred:
 
 ```text
-multi-tenant / RBAC
+multi-tenant / RBAC / complex auth platform
 Kubernetes/cloud autoscaling
 GPU cluster/distributed model serving
 complex micro-batching
 GraphRAG / Knowledge Graph
 Semantic Query Cache
-cross-session Query Cache sharing
+cross-session Query Cache sharing (including across Web and MCP)
 hot reindex / online blue-green serving
 concurrent Part I + Part II
-history-aware conversational retrieval / pronoun resolution
+independent Web and MCP business runtimes
+privileged/destructive document deletion or control tools in ordinary MCP tool surface
+automatic UI transcript injection / history-aware conversational retrieval / pronoun resolution
 claim-level citation UI
 complex Local/Web conflict-resolution agent
 SQL/enterprise source connectors beyond current source scope
@@ -5142,15 +5220,15 @@ multimodal/image RAG
 live production benchmark/evaluator dependencies
 custom benchmark dashboard/platform
 raw pre-review answer token streaming
-LAN/public deployment/auth/reverse proxy
+LAN/public deployment/reverse proxy by default
 fully automatic BLOCKED→SERVING recovery controller
 ```
 
-A session may contain multiple turns, but v1 does not inject prior transcript into RAG semantics.
+AtlasRAG Web supports multiple turns in one display session, but conversation presentation is strictly separated from retrieval semantics: v1 does not inject prior transcript into RAG input.
 
 ---
 
-# 100. Architecture Status — FINAL
+# 100. Architecture Status — AMENDED
 
 ```text
 Part I   Knowledge Preparation & Index Construction
@@ -5162,8 +5240,10 @@ Part II  Retrieval-Augmented Generation
 Part III External Verification & Benchmark Harness
          FROZEN
 
-Part IV  Local Deployment & Operations
-         FROZEN
+Part IV  Local Deployment, Shared Server, Web & Inbound MCP
+         AMENDED via ADR-001 (Stage 10 Runtime Foundation FROZEN/ACCEPTED;
+         Stages 11-14 updated for Shared Application Server, Web Application,
+         MCP Server, and Deployment/Final Validation)
 ```
 
 All later implementation work must implement these contracts rather than silently redefining them.
@@ -5174,14 +5254,18 @@ If implementation discovers an architectural contradiction, the change must be h
 
 # 101. Intentionally Deferred to the Implementation Guide
 
-The architecture fixes responsibilities, invariants, boundaries and lifecycle semantics. The following belong to the implementation guide / stage plans unless already fixed above:
+The architecture fixes responsibilities, invariants, boundaries and lifecycle semantics. The following belong to the Stage 11–14 detailed designs / implementation guides unless already fixed above:
 
 ```text
 exact repository/package tree
 exact class/module/file names
 exact Protocol/ABC class names
 exact DI/composition-root implementation
-exact localhost control transport
+exact HTTP/SSE endpoints, MCP tool schemas, and localhost control transport
+exact Web frontend component layout and Web session persistence model
+exact MCP protocol-to-application session_id mapping
+exact Stage 13 Evidence Mode stop-point, schema, limits, and cache/privacy policy
+exact unpinned library versions (FastAPI, React, Vite, shadcn/ui, MCP SDK)
 exact Docker Compose YAML/ports/volume names
 exact SQL DDL and migration framework
 exact Runtime ownership-lock mechanism
@@ -5202,7 +5286,7 @@ These decisions may tune implementation but must preserve the frozen architectur
 
 ---
 
-# 102. Final Architecture Statement
+# 102. Final Architecture Statement — AMENDED
 
 AtlasRAG v1 is a production-oriented local RAG system whose core architecture is:
 
@@ -5244,15 +5328,17 @@ External isolated Open RAGBench harness
 + baseline-driven regression gates
 
 Part IV
-WSL2-native single AtlasRAG runtime
+One RAG Engine, One Runtime Owner, Two Application Entrypoints:
+WSL2-native single AtlasRAG Application Runtime (Stage 10)
++ Shared Application Server (Web HTTP/SSE + Inbound MCP + Thin Control CLI)
++ AtlasRAG Web human QA application & read-only Inbound MCP Server (Answer + proposed Evidence Mode)
 + Dockerized infrastructure
 + atomic serving/maintenance admission barrier
 + startup/crash reconciliation
-+ persisted Query Cache freshness barrier
-+ local CLI/Web thin clients
-+ safe stage streaming
++ persisted Query Cache freshness barrier & Web/MCP session isolation
++ safe stage/status streaming & reviewed FinalResponse publication
 + config/secrets/fingerprint discipline
-+ canonical backup/restore semantics
++ Stage 14 coordinated backup/restore & dual-entrypoint RTX 3070 validation
 + health/readiness/observability separation
 + bounded RTX 3070 GPU concurrency
 ```

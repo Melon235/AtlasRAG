@@ -1,6 +1,11 @@
 # Stage 11 Handoff: Local Server and Operational CLI
 
-- **Predecessor Stage:** Stage 10 — Part IV: Application Runtime Foundation (`ACCEPTED / PENDING_MERGE`)
+> **Superseding Roadmap & Pool-Sizing Erratum Note (Part IV Architecture Amendment):**
+> This document is preserved intact as the historical Stage 10 closeout handoff snapshot (baseline prior to merge). Stage 10 subsequently merged into `main` at **`833d1150d3cc508971f2dc92b6d625718be2fe78`** (`PR #11` **MERGED**). Under the owner-approved Part IV architecture amendment ([`ADR-001-part-iv-web-mcp-architecture.md`](../../architecture/ADR-001-part-iv-web-mcp-architecture.md)), the future-stage roadmap is superseded by: **Stage 11 — Shared Application Server (`NOT_STARTED`)**, **Stage 12 — Web Application**, **Stage 13 — MCP Server**, and **Stage 14 — Deployment and Final Validation** (with operational CLI remaining a thin client).
+>
+> **Documentation Erratum (§15):** Line 15 below previously referred to `2 * max_document_concurrency + 2` as `min size`. The actual validated runtime contract (`src/atlasrag/config/models.py`) is `postgres_pool_max_size >= 2 * max_document_concurrency + 2` and `postgres_pool_min_size <= postgres_pool_max_size` (defaults `postgres_pool_min_size = 2`, `postgres_pool_max_size = 16`).
+
+- **Predecessor Stage:** Stage 10 — Part IV: Application Runtime Foundation (`ACCEPTED / PENDING_MERGE` in historical closeout; now `COMPLETE / ACCEPTED / MERGED` at `833d1150d3cc508971f2dc92b6d625718be2fe78`)
 - **Reviewed Implementation HEAD:** `be5a287601ea988fe3b79dd4fed2c7aaafc4a7a8`
 - **Next Planned Stage:** Stage 11 — Local Server and Operational CLI (`NOT_STARTED`)
 - **Authorization Notice:** This document defines the completed Stage 10 runtime contracts consumed by Stage 11 and preserves deferred scope boundaries. It does **not** authorize starting Stage 11 implementation, creating a Stage 11 branch/worktree, or adding server/CLI/launcher/transport code.

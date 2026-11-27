@@ -2,15 +2,17 @@
 
 ## Status
 
-**ACCEPTED / PENDING_MERGE (`PASS`) — Stage 10-A (`A-R1`–`A-R6` offline,
+**COMPLETE / ACCEPTED / MERGED (`PASS`) — Stage 10-A (`A-R1`–`A-R6` offline,
 `352` tests), Stage 10-B (`12/12` isolated real PostgreSQL/Milvus/Redis
 integration), historical Stage 10-C1 (`FAIL` on `3a9de079`), Stage 10-C2,
 historical Stage 10-C3 (`FAIL` on `5f74b201`, `5/6` closed), Stage 10-C2-R1
 (`be5a2876`), Stage 10-C3-R1 final independent targeted re-review (`PASS`), and
-Stage 10-C4 closeout COMPLETE. Original acceptance requirements: `23/23`
-SATISFIED (`6/6` blocking findings CLOSED, `10/10` gaps CLOSED within approved
-scope). `PR #11` remains `OPEN / UNMERGED` (`READY — OWNER_AUTHORIZATION_REQUIRED`);
-Stage 11 is `NOT_STARTED`.**
+Stage 10-C4 closeout (`ad96d23f`) COMPLETE; `PR #11` merged into `main` at
+`833d1150d3cc508971f2dc92b6d625718be2fe78` (`10/10` post-merge CI/Integration
+jobs PASS). Original acceptance requirements: `23/23` SATISFIED (`6/6`
+blocking findings CLOSED, `10/10` gaps CLOSED within approved scope).
+Under [`ADR-001-part-iv-web-mcp-architecture.md`](../architecture/ADR-001-part-iv-web-mcp-architecture.md), Stage 11 is
+`Shared Application Server` (`NOT_STARTED`).**
 
 Stage 9 remains closed under its amended acceptance scope (12/12 artifacts
 verified). Stage 10 does not merge automatically.
@@ -89,15 +91,17 @@ Path(pwd.getpwuid(os.getuid()).pw_dir) / ".local/state/atlasrag/runtime.lock"
 No path override. Scope is one runtime per OS user per supported WSL instance.
 Lock file is never unlinked on normal release; fd held for process lifetime.
 
-Pool minimum:
+PostgreSQL pool sizing contract (`src/atlasrag/config/models.py`):
 
 ```text
-2 * max_document_concurrency + 2
+postgres_pool_max_size >= 2 * max_document_concurrency + 2
+postgres_pool_min_size <= postgres_pool_max_size
 ```
 
 The `2*C` terms are the existing document-build advisory lease and UoW. Two
 additional connections cover reconciliation/verification/health/runtime
-metadata headroom. Default maximum is `max(16, minimum)`. Query UoWs are short
+metadata headroom. Validated defaults are `postgres_pool_min_size = 2` and
+`postgres_pool_max_size = 16`. Query UoWs are short
 and at most one per query; the pool provides bounded backpressure. GPU
 concurrency is not treated as database demand.
 
@@ -160,5 +164,8 @@ local disposable-cache assumption is explicit.
   see also [`stage-10-review/REVIEW_SUMMARY.md`](stage-10-review/REVIEW_SUMMARY.md)).
 - Real Qwen/BGE GPU initialization, MinerU guarded boundary measurement, RTX
   3070 VRAM/OOM and SDK subprocess settlement, OS signal delivery, launcher
-  termination, and Stage 11+ server/CLI/streaming/backup/performance work remain
-  explicitly deferred beyond Stage 10 (`Stage 11: NOT_STARTED`).
+  termination, and Stage 11–14 Part IV deliverables (**Stage 11** Shared
+  Application Server, **Stage 12** Web Application, **Stage 13** Inbound MCP
+  Server, **Stage 14** Deployment, Backup/Restore & Final Validation — see
+  [`ADR-001-part-iv-web-mcp-architecture.md`](../architecture/ADR-001-part-iv-web-mcp-architecture.md))
+  remain explicitly deferred beyond Stage 10 (`Stage 11: NOT_STARTED`).

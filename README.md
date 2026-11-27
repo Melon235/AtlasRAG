@@ -4,11 +4,13 @@ AtlasRAG is an architecture-governed retrieval-augmented generation system built
 incrementally through independently verified implementation stages.
 
 The authoritative design is
-[`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md).
+[`docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](docs/architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md),
+as amended for Part IV (Web Application & Inbound MCP Server) by
+[`docs/architecture/ADR-001-part-iv-web-mcp-architecture.md`](docs/architecture/ADR-001-part-iv-web-mcp-architecture.md).
 
-**Current implementation stage: Stage 10 — Part IV: Application Runtime Foundation (`stage/10-part-iv-application-runtime`)**
+**Accepted `main` baseline: `833d1150d3cc508971f2dc92b6d625718be2fe78` (`PR #11` MERGED)**
 
-**Status: Stage 10 `ACCEPTED / PENDING_MERGE` — Stage 10-A (`COMPLETE`), Stage 10-B (`COMPLETE`), Stage 10-C (`COMPLETE / PASS` via Stage 10-C3-R1 on `be5a2876`), and Stage 10-C4 (`COMPLETE`); `23/23` requirements SATISFIED, `6/6` blocking findings CLOSED, `10/10` gaps CLOSED; `PR #11` OPEN/UNMERGED (`READY — OWNER_AUTHORIZATION_REQUIRED`); Stage 11 `NOT_STARTED`**
+**Status: Stage 10 (`Application Runtime Foundation`) is `COMPLETE / ACCEPTED / MERGED`; Part IV architecture amended on `docs/part-iv-web-mcp-architecture` for the Dual-Entrypoint Roadmap (`Stage 11: Shared Application Server` `NOT_STARTED`, `Stage 12: Web Application`, `Stage 13: MCP Server`, `Stage 14: Deployment and Final Validation`)**
 
 Stage 9 adds an external benchmark harness under `benchmarks/`, with frozen
 dataset snapshot validation, modality-filtered Open RAGBench metadata, corpus
@@ -26,16 +28,17 @@ acceptance matrix in
 and Stage 10-B handoff in
 [`docs/stages/stage-10b-handoff.md`](docs/stages/stage-10b-handoff.md).
 Stage 9 is closed under its amended acceptance scope (`12/12` preserved raw
-artifacts verified); Stage 10-A (`A-R1`–`A-R6`), Stage 10-B (`12/12` isolated
-real PG/Milvus/Redis integration), Stage 10-C1 (`FAIL`), Stage 10-C2, Stage 10-C3
-(`5/6` closed), Stage 10-C2-R1, Stage 10-C3-R1 final independent targeted
-re-review (`PASS` on `be5a2876`), and Stage 10-C4 closeout
-([`docs/stages/stage-10-closeout/CLOSEOUT_REPORT.md`](docs/stages/stage-10-closeout/CLOSEOUT_REPORT.md),
-[`docs/stages/stage-10-closeout/ACCEPTANCE_AUDIT.md`](docs/stages/stage-10-closeout/ACCEPTANCE_AUDIT.md),
-[`docs/stages/stage-10-closeout/STAGE_11_HANDOFF.md`](docs/stages/stage-10-closeout/STAGE_11_HANDOFF.md))
-are complete. Stage 10 technical acceptance is `PASS` (`23/23` requirements,
-`6/6` findings, `10/10` gaps closed within approved scope); `PR #11` remains
-OPEN/UNMERGED awaiting owner merge authorization, and Stage 11 is `NOT_STARTED`.
+artifacts verified); Stage 10 (`Application Runtime Foundation`) is `COMPLETE /
+ACCEPTED / MERGED` (`833d1150d3cc508971f2dc92b6d625718be2fe78`, `PR #11` merged,
+`23/23` requirements, `6/6` findings, `10/10` gaps closed within approved scope,
+`10/10` post-merge CI/Integration jobs PASS — see
+[`docs/stages/stage-10-closeout/CLOSEOUT_REPORT.md`](docs/stages/stage-10-closeout/CLOSEOUT_REPORT.md)
+and [`docs/stages/stage-10-closeout/ACCEPTANCE_AUDIT.md`](docs/stages/stage-10-closeout/ACCEPTANCE_AUDIT.md)).
+The revised owner-approved Part IV architecture
+([`docs/architecture/ADR-001-part-iv-web-mcp-architecture.md`](docs/architecture/ADR-001-part-iv-web-mcp-architecture.md))
+allocates `Stage 11` (**Shared Application Server**, `NOT_STARTED`), `Stage 12`
+(**Web Application**), `Stage 13` (**MCP Server**), and `Stage 14`
+(**Deployment and Final Validation**).
 
 ## Setup
 
@@ -182,9 +185,9 @@ make stage10-verify
 `A-R1`–`A-R6` and Stage 10-C2/C2-R1 regressions); `make test-stage10-integration`
 runs the `12` Stage 10-B real isolated PostgreSQL/Milvus/Redis tests via
 `scripts/stage10_verify.sh --integration-only`; `make stage10-verify` runs
-offline verification followed by real isolated Stage 10-B integration; Stage 10-C3-R1
-independent targeted re-review (`PASS` on `be5a2876`) and Stage 10-C4 closeout
-are complete (`PR #11` open/unmerged awaiting owner authorization).
+offline verification followed by real isolated Stage 10-B integration; Stage 10
+(`PR #11`) is independently accepted and merged into `main`
+(`833d1150d3cc508971f2dc92b6d625718be2fe78`).
 
 Ordinary `make verify` remains network-free, Docker-free, parser-SDK-free,
 model-free, and independent of PostgreSQL, Redis, Milvus, and SearXNG.
