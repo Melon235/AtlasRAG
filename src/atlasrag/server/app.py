@@ -32,20 +32,27 @@ from atlasrag.server.errors import (
     TransportErrorCode,
     translate_exception,
 )
+from atlasrag.server.events import InvocationEventBus
 from atlasrag.server.schemas import (
     ApiErrorResponse,
     ClientKind,
+    ControlEmptyRequest,
     CreateSessionRequest,
     LivenessResponse,
+    OperationAcceptedResponse,
+    OperationStatusResponse,
     QueryRequest,
     QueryResponse,
     ReadinessResponse,
     RuntimeStatusResponse,
     SessionResponse,
+    ShutdownAcceptedResponse,
 )
 from atlasrag.server.service import (
     ApplicationServerService,
     DisconnectSignal,
+    ShutdownOwner,
+    StreamHandle,
     serialize_bounded_response,
 )
 from atlasrag.server.sessions import SessionRegistry
@@ -208,6 +215,151 @@ async def _watch_http_disconnect(
         signal.trigger("receive_error")
 
 
+class SseStreamResponse(Response):
+    """Minimal custom ASGI SSE response with no duplicate receive consumer."""
+
+    def __init__(
+        self,
+        *,
+        handle: StreamHandle,
+        server_config: ServerConfig,
+    ) -> None:
+        self._handle = handle
+        self._heartbeat_seconds = server_config.sse_heartbeat_seconds
+        self._send_timeout_seconds = server_config.sse_send_timeout_seconds
+        super().__init__(
+            content=None,
+            status_code=200,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    async def _send_with_timeout(self, send: Send, message: Message) -> None:
+        await asyncio.wait_for(
+            send(message),
+            timeout=self._send_timeout_seconds,
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        del scope, receive
+        channel = self._handle.channel
+        signal = self._handle.disconnect_signal
+        accepted_frame = channel.accepted_frame
+        if accepted_frame is None:
+            await self._handle.close_and_settle()
+            return
+        send_failed = False
+        try:
+            try:
+                await self._send_with_timeout(
+                    send,
+                    {
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": self.raw_headers,
+                    },
+                )
+                await self._send_with_timeout(
+                    send,
+                    {
+                        "type": "http.response.body",
+                        "body": accepted_frame,
+                        "more_body": True,
+                    },
+                )
+                while not signal.event.is_set():
+                    progress_frame = channel.pop_progress_nowait()
+                    if progress_frame is not None:
+                        await self._send_with_timeout(
+                            send,
+                            {
+                                "type": "http.response.body",
+                                "body": progress_frame,
+                                "more_body": True,
+                            },
+                        )
+                        continue
+                    terminal_frame = channel.terminal_frame
+                    if terminal_frame is not None:
+                        await self._send_with_timeout(
+                            send,
+                            {
+                                "type": "http.response.body",
+                                "body": terminal_frame,
+                                "more_body": True,
+                            },
+                        )
+                        await self._send_with_timeout(
+                            send,
+                            {
+                                "type": "http.response.body",
+                                "body": b"",
+                                "more_body": False,
+                            },
+                        )
+                        break
+
+                    channel.clear_wakeup()
+                    if (
+                        channel.has_pending_progress()
+                        or channel.terminal_frame is not None
+                        or signal.event.is_set()
+                    ):
+                        continue
+
+                    wakeup_task = asyncio.create_task(channel.wait_wakeup())
+                    disconnect_task = asyncio.create_task(signal.event.wait())
+                    try:
+                        done, _ = await asyncio.wait(
+                            {wakeup_task, disconnect_task},
+                            timeout=self._heartbeat_seconds,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    finally:
+                        for helper in (wakeup_task, disconnect_task):
+                            if not helper.done():
+                                helper.cancel()
+                            while not helper.done():
+                                try:
+                                    await asyncio.wait((helper,))
+                                except asyncio.CancelledError:
+                                    pass
+                            if not helper.cancelled():
+                                try:
+                                    helper.exception()
+                                except BaseException:
+                                    pass
+
+                    if signal.event.is_set():
+                        break
+                    if not done:
+                        await self._send_with_timeout(
+                            send,
+                            {
+                                "type": "http.response.body",
+                                "body": b": heartbeat\n\n",
+                                "more_body": True,
+                            },
+                        )
+            except TimeoutError:
+                send_failed = True
+                signal.trigger("send_timeout")
+            except Exception:
+                send_failed = True
+                signal.trigger("send_error")
+        finally:
+            if (
+                not send_failed
+                and not self._handle.supervisor_task.done()
+                and not signal.event.is_set()
+            ):
+                signal.trigger("stream_closed")
+            await self._handle.close_and_settle()
+
+
 def _json_error_response(status_code: int, payload: ApiErrorResponse) -> JSONResponse:
     return JSONResponse(
         status_code=status_code, content=payload.model_dump(mode="json")
@@ -240,6 +392,8 @@ def create_app(
     coordinator_factory: CoordinatorFactory | None = None,
     coordinator: ApplicationCoordinator | None = None,
     control_token_provider: Callable[[], str | None] | None = None,
+    event_bus: InvocationEventBus | None = None,
+    shutdown_owner: ShutdownOwner | None = None,
 ) -> FastAPI:
     """Create the thin FastAPI application wrapping one ApplicationCoordinator."""
 
@@ -251,6 +405,7 @@ def create_app(
     token_provider: Callable[[], str | None] = (
         (lambda: None) if control_token_provider is None else control_token_provider
     )
+    active_event_bus = InvocationEventBus() if event_bus is None else event_bus
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -261,24 +416,29 @@ def create_app(
             if coordinator_factory is not None:
                 active_coordinator = await coordinator_factory(runtime_config)
             else:
-                active_coordinator = await ApplicationComposition(
-                    runtime_config
-                ).start()
+                active_coordinator = await ApplicationComposition(runtime_config).start(
+                    observer=active_event_bus
+                )
         sessions = SessionRegistry(server_config)
-        app.state.coordinator = active_coordinator
-        app.state.control_token_provider = token_provider
-        app.state.sessions = sessions
-        app.state.server_service = ApplicationServerService(
+        service = ApplicationServerService(
             coordinator=active_coordinator,
             runtime_config=runtime_config,
             server_config=server_config,
             sessions=sessions,
+            event_bus=active_event_bus,
+            shutdown_owner=shutdown_owner,
         )
+        app.state.coordinator = active_coordinator
+        app.state.control_token_provider = token_provider
+        app.state.event_bus = active_event_bus
+        app.state.sessions = sessions
+        app.state.server_service = service
         try:
             yield
         finally:
             if owns_shutdown and active_coordinator is not None:
                 await active_coordinator.shutdown()
+            await service.operations.wait_active()
 
     app = FastAPI(
         title="AtlasRAG Local Application Server",
@@ -449,5 +609,91 @@ def create_app(
             payload, max_bytes=service.server_config.max_response_bytes
         )
         return Response(content=raw, status_code=200, media_type="application/json")
+
+    @app.post("/api/v1/query/stream")
+    async def stream_query_endpoint(
+        request: Request,
+        client_kind: ClientKind = Depends(require_knowledge_client),
+    ) -> Response:
+        service = _service_from_request(request)
+        raw_body = await request.body()
+        dto = QueryRequest.model_validate_json(raw_body)
+
+        def _spawn_monitor(signal: DisconnectSignal) -> asyncio.Task[None]:
+            return asyncio.create_task(_watch_http_disconnect(request.receive, signal))
+
+        handle = await service.start_stream_query(
+            dto,
+            header_client_kind=client_kind,
+            monitor_factory=_spawn_monitor,
+        )
+        return SseStreamResponse(handle=handle, server_config=service.server_config)
+
+    @app.post(
+        "/api/v1/control/sync",
+        response_model=OperationAcceptedResponse,
+        status_code=202,
+        dependencies=[Depends(require_control_bearer)],
+    )
+    async def control_sync_endpoint(request: Request) -> Response:
+        service = _service_from_request(request)
+        raw_body = await request.body()
+        if raw_body.strip():
+            ControlEmptyRequest.model_validate_json(raw_body)
+        payload = await service.start_sync()
+        raw = serialize_bounded_response(
+            payload, max_bytes=service.server_config.max_response_bytes
+        )
+        return Response(content=raw, status_code=202, media_type="application/json")
+
+    @app.post(
+        "/api/v1/control/recover",
+        response_model=OperationAcceptedResponse,
+        status_code=202,
+        dependencies=[Depends(require_control_bearer)],
+    )
+    async def control_recover_endpoint(request: Request) -> Response:
+        service = _service_from_request(request)
+        raw_body = await request.body()
+        if raw_body.strip():
+            ControlEmptyRequest.model_validate_json(raw_body)
+        payload = await service.start_recover()
+        raw = serialize_bounded_response(
+            payload, max_bytes=service.server_config.max_response_bytes
+        )
+        return Response(content=raw, status_code=202, media_type="application/json")
+
+    @app.get(
+        "/api/v1/control/operations/{operation_id}",
+        response_model=OperationStatusResponse,
+        dependencies=[Depends(require_control_bearer)],
+    )
+    async def control_operation_status_endpoint(
+        request: Request,
+        operation_id: str,
+    ) -> Response:
+        service = _service_from_request(request)
+        payload = await service.get_operation(operation_id)
+        raw = serialize_bounded_response(
+            payload, max_bytes=service.server_config.max_response_bytes
+        )
+        return Response(content=raw, status_code=200, media_type="application/json")
+
+    @app.post(
+        "/api/v1/control/shutdown",
+        response_model=ShutdownAcceptedResponse,
+        status_code=202,
+        dependencies=[Depends(require_control_bearer)],
+    )
+    async def control_shutdown_endpoint(request: Request) -> Response:
+        service = _service_from_request(request)
+        raw_body = await request.body()
+        if raw_body.strip():
+            ControlEmptyRequest.model_validate_json(raw_body)
+        payload = await service.request_shutdown()
+        raw = serialize_bounded_response(
+            payload, max_bytes=service.server_config.max_response_bytes
+        )
+        return Response(content=raw, status_code=202, media_type="application/json")
 
     return app

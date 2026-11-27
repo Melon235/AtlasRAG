@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
@@ -21,17 +23,23 @@ from atlasrag.runtime.coordinator import ApplicationCoordinator, QueryResponseEn
 from atlasrag.runtime.modes import RuntimeMode
 from atlasrag.server.config import ServerConfig
 from atlasrag.server.errors import ServerHttpError, TransportErrorCode
+from atlasrag.server.events import InvocationEventBus, StreamChannel
+from atlasrag.server.operations import MaintenanceOperationRegistry
 from atlasrag.server.schemas import (
     ClientKind,
     CreateSessionRequest,
     DependencyStatusMap,
     LivenessResponse,
     LivenessStatus,
+    OperationAcceptedResponse,
+    OperationKind,
+    OperationStatusResponse,
     QueryRequest,
     QueryResponse,
     ReadinessResponse,
     RuntimeStatusResponse,
     SessionResponse,
+    ShutdownAcceptedResponse,
 )
 from atlasrag.server.sessions import SessionLease, SessionRegistry
 
@@ -125,6 +133,66 @@ async def _release_session_shielded(
     return outer_cancelled
 
 
+@dataclass(frozen=True)
+class ShutdownOwner:
+    """Process-owner shutdown boundary injected by the WP-D launcher."""
+
+    pid: int
+    server_instance_id: str
+    request_shutdown: Callable[[], Awaitable[None] | None]
+
+
+class _StreamSlot:
+    """Single-use bounded stream-admission reservation tied to QuerySupervisor."""
+
+    def __init__(
+        self, release_fn: Callable[[], None], acquire_fn: Callable[[], None]
+    ) -> None:
+        self._acquire_fn = acquire_fn
+        self._release_fn = release_fn
+        self.acquired = False
+        self.released = False
+
+    def acquire(self) -> None:
+        if not self.acquired:
+            self._acquire_fn()
+            self.acquired = True
+
+    def release(self) -> None:
+        if self.acquired and not self.released:
+            self.released = True
+            self._release_fn()
+
+
+@dataclass
+class StreamHandle:
+    """Authoritative ownership handle bridging admitted SSE execution to SseStreamResponse."""
+
+    channel: StreamChannel
+    disconnect_signal: DisconnectSignal
+    supervisor_task: asyncio.Task[None]
+    event_bus: InvocationEventBus
+    _stream_slot: _StreamSlot
+    _closed: bool = False
+
+    async def close_and_settle(self) -> None:
+        """Close the channel, settle query execution if unfinished, and free stream slot."""
+
+        if self._closed:
+            return
+        self._closed = True
+        self.channel.close()
+        if not self.supervisor_task.done():
+            self.disconnect_signal.trigger("stream_closed")
+        outer_cancelled, _ = await _settle_task_no_raise(
+            self.supervisor_task, cancel=False
+        )
+        self.event_bus.unbind(self.channel.trace_id)
+        self._stream_slot.release()
+        if outer_cancelled:
+            raise asyncio.CancelledError
+
+
 class QuerySupervisor:
     """Framework-independent query task supervisor shared across HTTP and SSE."""
 
@@ -139,10 +207,29 @@ class QuerySupervisor:
         self._sessions = sessions
         self._server_config = server_config
         self._in_flight_queries = 0
+        self._in_flight_streams = 0
 
     @property
     def in_flight_queries(self) -> int:
         return self._in_flight_queries
+
+    @property
+    def in_flight_streams(self) -> int:
+        return self._in_flight_streams
+
+    def _acquire_stream_slot_count(self) -> None:
+        if self._in_flight_streams >= self._server_config.max_concurrent_streams:
+            raise ResourceExhaustedError
+        self._in_flight_streams += 1
+
+    def _release_stream_slot_count(self) -> None:
+        self._in_flight_streams = max(0, self._in_flight_streams - 1)
+
+    def reserve_stream_slot(self) -> _StreamSlot:
+        return _StreamSlot(
+            release_fn=self._release_stream_slot_count,
+            acquire_fn=self._acquire_stream_slot_count,
+        )
 
     async def execute(
         self,
@@ -152,6 +239,7 @@ class QuerySupervisor:
         on_admitted: Callable[[str], None] | None = None,
         monitor_factory: MonitorFactory | None = None,
         disconnect_signal: DisconnectSignal | None = None,
+        stream_slot: _StreamSlot | None = None,
     ) -> QueryResponseEnvelope:
         if len(request.query) > self._server_config.max_query_chars:
             raise ServerHttpError(
@@ -183,6 +271,8 @@ class QuerySupervisor:
             )
             if self._in_flight_queries >= self._server_config.max_concurrent_queries:
                 raise ResourceExhaustedError
+            if stream_slot is not None:
+                stream_slot.acquire()
             self._in_flight_queries += 1
             slot_acquired = True
 
@@ -301,6 +391,9 @@ class ApplicationServerService:
         runtime_config: RuntimeConfig,
         server_config: ServerConfig,
         sessions: SessionRegistry | None = None,
+        event_bus: InvocationEventBus | None = None,
+        operations: MaintenanceOperationRegistry | None = None,
+        shutdown_owner: ShutdownOwner | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._runtime_config = runtime_config
@@ -308,6 +401,16 @@ class ApplicationServerService:
         self._sessions = (
             SessionRegistry(server_config) if sessions is None else sessions
         )
+        self._event_bus = InvocationEventBus() if event_bus is None else event_bus
+        self._operations = (
+            MaintenanceOperationRegistry(
+                coordinator=coordinator,
+                server_config=server_config,
+            )
+            if operations is None
+            else operations
+        )
+        self._shutdown_owner = shutdown_owner
         self._supervisor = QuerySupervisor(
             coordinator=coordinator,
             sessions=self._sessions,
@@ -327,6 +430,14 @@ class ApplicationServerService:
     @property
     def sessions(self) -> SessionRegistry:
         return self._sessions
+
+    @property
+    def event_bus(self) -> InvocationEventBus:
+        return self._event_bus
+
+    @property
+    def operations(self) -> MaintenanceOperationRegistry:
+        return self._operations
 
     @property
     def supervisor(self) -> QuerySupervisor:
@@ -452,4 +563,161 @@ class ApplicationServerService:
             cache_status=envelope.cache_status,
             elapsed_ms=0.0 if envelope.elapsed_ms is None else envelope.elapsed_ms,
             response=envelope.response,
+        )
+
+    async def start_stream_query(
+        self,
+        request: QueryRequest,
+        *,
+        header_client_kind: ClientKind,
+        monitor_factory: MonitorFactory | None = None,
+        disconnect_signal: DisconnectSignal | None = None,
+    ) -> StreamHandle:
+        """Admit a streaming query via coordinator.on_admitted before committing SSE headers."""
+
+        if len(request.query) > self._server_config.max_query_chars:
+            raise ServerHttpError(
+                TransportErrorCode.INVALID_REQUEST,
+                "Query exceeds configured maximum character length.",
+                details=("query: max_length",),
+            )
+        if self._coordinator.gate.mode is RuntimeMode.SHUTTING_DOWN:
+            raise RuntimeShuttingDownError
+
+        signal = DisconnectSignal() if disconnect_signal is None else disconnect_signal
+        channel = StreamChannel(
+            session_id=request.session_id,
+            server_config=self._server_config,
+        )
+        stream_slot = self._supervisor.reserve_stream_slot()
+        pre_admission_error: BaseException | None = None
+
+        def _on_admitted(trace_id: str) -> None:
+            channel.mark_admitted(trace_id)
+            self._event_bus.bind(trace_id, channel)
+
+        async def _drive_stream_query() -> None:
+            nonlocal pre_admission_error
+            try:
+                envelope = await self._supervisor.execute(
+                    request,
+                    client_kind=header_client_kind,
+                    on_admitted=_on_admitted,
+                    monitor_factory=monitor_factory,
+                    disconnect_signal=signal,
+                    stream_slot=stream_slot,
+                )
+            except BaseException as exc:
+                if not channel.accepted_event.is_set():
+                    pre_admission_error = exc
+                    return
+                channel.publish_error(exc)
+            else:
+                channel.publish_final(
+                    QueryResponse(
+                        trace_id=envelope.trace_id,
+                        session_id=request.session_id,
+                        cache_status=envelope.cache_status,
+                        elapsed_ms=(
+                            0.0 if envelope.elapsed_ms is None else envelope.elapsed_ms
+                        ),
+                        response=envelope.response,
+                    )
+                )
+            finally:
+                self._event_bus.unbind(channel.trace_id)
+
+        supervisor_task: asyncio.Task[None] = asyncio.create_task(_drive_stream_query())
+        accepted_wait: asyncio.Task[bool] = asyncio.create_task(
+            channel.accepted_event.wait()
+        )
+        disconnect_wait: asyncio.Task[bool] = asyncio.create_task(signal.event.wait())
+        try:
+            await asyncio.wait(
+                {accepted_wait, supervisor_task, disconnect_wait},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        except asyncio.CancelledError:
+            await _settle_task_no_raise(accepted_wait, cancel=True)
+            await _settle_task_no_raise(disconnect_wait, cancel=True)
+            signal.trigger("pre_admission_cancelled")
+            await _settle_task_no_raise(supervisor_task, cancel=False)
+            self._event_bus.unbind(channel.trace_id)
+            channel.close()
+            stream_slot.release()
+            raise
+        finally:
+            await _settle_task_no_raise(accepted_wait, cancel=True)
+            await _settle_task_no_raise(disconnect_wait, cancel=True)
+
+        if not channel.accepted_event.is_set():
+            if signal.event.is_set():
+                signal.trigger("client_disconnect")
+            await _settle_task_no_raise(supervisor_task, cancel=False)
+            channel.close()
+            stream_slot.release()
+            if pre_admission_error is not None:
+                raise pre_admission_error
+            if signal.event.is_set():
+                raise ServerHttpError(TransportErrorCode.REQUEST_CANCELLED)
+            raise RuntimeShuttingDownError
+
+        if signal.event.is_set():
+            channel.close()
+            await _settle_task_no_raise(supervisor_task, cancel=False)
+            self._event_bus.unbind(channel.trace_id)
+            stream_slot.release()
+            raise ServerHttpError(TransportErrorCode.REQUEST_CANCELLED)
+
+        return StreamHandle(
+            channel=channel,
+            disconnect_signal=signal,
+            supervisor_task=supervisor_task,
+            event_bus=self._event_bus,
+            _stream_slot=stream_slot,
+        )
+
+    async def start_sync(
+        self,
+        *,
+        on_draining_hook: Callable[[], None] | None = None,
+    ) -> OperationAcceptedResponse:
+        return await self._operations.start_operation(
+            OperationKind.SYNC,
+            on_draining_hook=on_draining_hook,
+        )
+
+    async def start_recover(
+        self,
+        *,
+        on_draining_hook: Callable[[], None] | None = None,
+    ) -> OperationAcceptedResponse:
+        return await self._operations.start_operation(
+            OperationKind.RECOVER,
+            on_draining_hook=on_draining_hook,
+        )
+
+    async def get_operation(self, operation_id: str) -> OperationStatusResponse:
+        return await self._operations.get_operation(operation_id)
+
+    async def request_shutdown(self) -> ShutdownAcceptedResponse:
+        owner = self._shutdown_owner
+        if owner is None:
+            raise ServerHttpError(
+                ErrorCode.RUNTIME_NOT_READY,
+                "Server shutdown owner is not configured for this runtime.",
+            )
+        if owner.pid < 1 or not owner.server_instance_id.strip():
+            raise ServerHttpError(
+                ErrorCode.INVARIANT_VIOLATION,
+                "Invalid server shutdown owner identity.",
+            )
+        await self._coordinator.gate.begin_shutdown()
+        outcome = owner.request_shutdown()
+        if inspect.isawaitable(outcome):
+            await outcome
+        return ShutdownAcceptedResponse(
+            status=LivenessStatus.SHUTTING_DOWN,
+            pid=owner.pid,
+            server_instance_id=owner.server_instance_id,
         )

@@ -495,6 +495,8 @@ def test_core_layers_reject_server_and_cli_imports(
         "errors.py",
         "auth.py",
         "sessions.py",
+        "events.py",
+        "operations.py",
         "service.py",
     ],
 )
