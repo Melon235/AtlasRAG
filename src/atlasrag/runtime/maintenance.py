@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable
 
-from atlasrag.domain.errors import MaintenanceDrainTimeoutError
 from atlasrag.runtime.cache_freshness import CacheFreshnessBarrier
 from atlasrag.runtime.gate import MaintenanceLease, RuntimeGate
 from atlasrag.services.sync.models import ServingSafety, SyncResult
@@ -37,11 +35,17 @@ class MaintenanceCoordinator:
         await lease.complete(safe=True)
         return result
 
-    async def run(self) -> SyncResult:
-        lease = await self._gate.begin_maintenance()
+    async def _execute_with_lease(
+        self,
+        lease: MaintenanceLease,
+        *,
+        on_draining: Callable[[], None] | None,
+    ) -> SyncResult:
         try:
+            if on_draining is not None:
+                on_draining()
             await lease.wait_for_drain(timeout=self._drain_timeout)
-        except (MaintenanceDrainTimeoutError, asyncio.CancelledError):
+        except BaseException:
             await lease.abort()
             raise
         await lease.enter()
@@ -53,18 +57,12 @@ class MaintenanceCoordinator:
             raise
         return await self._finish(lease, result)
 
-    async def recover_blocked(self) -> SyncResult:
+    async def run(self, *, on_draining: Callable[[], None] | None = None) -> SyncResult:
+        lease = await self._gate.begin_maintenance()
+        return await self._execute_with_lease(lease, on_draining=on_draining)
+
+    async def recover_blocked(
+        self, *, on_draining: Callable[[], None] | None = None
+    ) -> SyncResult:
         lease = await self._gate.begin_recovery()
-        try:
-            await lease.wait_for_drain(timeout=self._drain_timeout)
-        except (MaintenanceDrainTimeoutError, asyncio.CancelledError):
-            await lease.abort()
-            raise
-        await lease.enter()
-        try:
-            result = await self._run_sync()
-        except BaseException:
-            if not lease._closed:
-                await lease.block()
-            raise
-        return await self._finish(lease, result)
+        return await self._execute_with_lease(lease, on_draining=on_draining)

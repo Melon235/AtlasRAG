@@ -13,7 +13,12 @@ dependencies = [
     "pymilvus>=2.6.16,<2.7.0",
     "langgraph==1.2.15",
     "httpx==0.28.1",
+    "fastapi>=0.143.0,<0.144.0",
+    "uvicorn>=0.54.0,<0.55.0",
 ]
+
+[project.scripts]
+atlasrag = "atlasrag.cli.main:main"
 
 [dependency-groups]
 dev = [

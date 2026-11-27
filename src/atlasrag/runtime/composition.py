@@ -15,6 +15,7 @@ from pymilvus import MilvusClient  # type: ignore[import-untyped]
 from redis.backoff import NoBackoff
 from redis.retry import Retry
 
+from atlasrag.application.retrieval import RetrievalExecution
 from atlasrag.config.models import RuntimeConfig
 from atlasrag.domain.errors import (
     ConfigurationError,
@@ -26,6 +27,7 @@ from atlasrag.domain.indexing.models import (
     EmbeddingModelIdentity,
     RepresentationProfileV1,
 )
+from atlasrag.domain.observation import NULL_OBSERVER, ProductionObserver
 from atlasrag.domain.requests import UserTurnRequest
 from atlasrag.domain.results import FinalResponse
 from atlasrag.providers.cache.redis import RedisCacheProvider
@@ -46,13 +48,16 @@ from atlasrag.providers.reranker.bge import (
 )
 from atlasrag.repositories.postgres.pool import PostgresPool
 from atlasrag.repositories.postgres.uow import PostgresUnitOfWork
-from atlasrag.runtime.cache_freshness import CacheFreshnessBarrier
+from atlasrag.runtime.cache_freshness import (
+    CacheFreshnessBarrier,
+    CacheFreshnessState,
+)
 from atlasrag.runtime.coordinator import (
     ApplicationCoordinator,
     CoordinatorDependencies,
 )
 from atlasrag.runtime.gate import RuntimeGate
-from atlasrag.runtime.health import HealthRegistry
+from atlasrag.runtime.health import DependencyHealth, HealthRegistry
 from atlasrag.runtime.maintenance import MaintenanceCoordinator
 from atlasrag.runtime.ownership import RuntimeOwnershipLock
 from atlasrag.runtime.resources import (
@@ -94,6 +99,7 @@ class SharedResources:
     deepseek_http: httpx.AsyncClient
     web_http: httpx.AsyncClient
     cache_freshness: CacheFreshnessBarrier | None = None
+    observer: ProductionObserver = NULL_OBSERVER
 
 
 @dataclass(frozen=True)
@@ -106,6 +112,9 @@ class BusinessBundle:
     source_safety: Callable[[], Awaitable[SourceSafetyResult]]
     verify: Callable[[], Awaitable[GlobalSafetyResult]]
     close: Callable[[], Awaitable[None]]
+    retrieval_with_facts: (
+        Callable[[UserTurnRequest], Awaitable[RetrievalExecution]] | None
+    ) = None
 
 
 BusinessBuilder = Callable[[SharedResources], Awaitable[BusinessBundle]]
@@ -252,7 +261,11 @@ class ApplicationComposition:
         self._cleanup_error: BaseException | None = None
 
     async def start(
-        self, build_business: BusinessBuilder | None = None
+        self,
+        build_business: BusinessBuilder | None = None,
+        *,
+        observer: ProductionObserver | None = None,
+        on_shutdown_settled: Callable[[], Awaitable[None] | None] | None = None,
     ) -> ApplicationCoordinator:
         if self._closed:
             raise RuntimeError("composition is closed")
@@ -399,6 +412,7 @@ class ApplicationComposition:
                 deepseek_http=self._deepseek_http,
                 web_http=self._web_http,
                 cache_freshness=freshness,
+                observer=NULL_OBSERVER if observer is None else observer,
             )
             validate_shared_resource_contracts(shared)
             if build_business is None:
@@ -409,6 +423,17 @@ class ApplicationComposition:
             self._business = business
             gate = RuntimeGate()
             tasks = InFlightTaskRegistry()
+
+            def _query_cache_status(redis_health: DependencyHealth) -> str:
+                if not config.cache.query_cache_enabled:
+                    return "DISABLED"
+                if (
+                    freshness.state is CacheFreshnessState.TRUSTED
+                    and redis_health is DependencyHealth.HEALTHY
+                ):
+                    return "ACTIVE"
+                return "BYPASSED"
+
             health = HealthRegistry(
                 mode=lambda: gate.mode,
                 postgres=self._pool.health,
@@ -420,6 +445,7 @@ class ApplicationComposition:
                 probe_timeout=config.runtime.health_probe_timeout_seconds,
                 refresh_interval=config.runtime.health_refresh_interval_seconds,
                 lifecycle_generation=lambda: gate.lifecycle_generation,
+                query_cache_status=_query_cache_status,
             )
             maintenance = MaintenanceCoordinator(
                 gate=gate,
@@ -442,6 +468,8 @@ class ApplicationComposition:
                 begin_guard_shutdown=self._guard.begin_shutdown,
                 shutdown_timeout_seconds=config.maintenance.shutdown_timeout_seconds,
                 ownership_acquired=True,
+                retrieval_with_facts=business.retrieval_with_facts,
+                on_shutdown_settled=on_shutdown_settled,
             )
             coordinator = ApplicationCoordinator(deps)
             await coordinator._start()

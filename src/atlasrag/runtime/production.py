@@ -288,6 +288,7 @@ async def build_default_business(shared: SharedResources) -> BusinessBundle:
             profile=DeterministicSufficiencyProfile()
         ),
         profile=profile,
+        observer=shared.observer,
     )
     local_runner = LocalEvidenceRunner(local_services)
 
@@ -345,6 +346,7 @@ async def build_default_business(shared: SharedResources) -> BusinessBundle:
             answer_input=AnswerInputBuilder(),
             answer=answer,
             completion=CompletionAssessor(),
+            observer=shared.observer,
         )
     )
     cache_freshness = shared.cache_freshness
@@ -375,4 +377,5 @@ async def build_default_business(shared: SharedResources) -> BusinessBundle:
         source_safety=source_safety.check,
         verify=run_verify,
         close=close_business,
+        retrieval_with_facts=retrieval.run_with_facts,
     )

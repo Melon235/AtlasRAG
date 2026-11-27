@@ -19,6 +19,15 @@ from atlasrag.services.cache.policy import QueryCachePolicy
 from atlasrag.services.sync.ports import SyncUnitOfWorkFactory
 
 
+class QueryCacheStatus(StrEnum):
+    """Lookup outcome reported truthfully at the retrieval boundary."""
+
+    HIT = "HIT"
+    MISS = "MISS"
+    BYPASSED = "BYPASSED"
+    UNKNOWN = "UNKNOWN"
+
+
 class CacheCommitOutcome(StrEnum):
     STORED = "STORED"
     BYPASSED = "BYPASSED"
@@ -78,16 +87,20 @@ class SessionQueryCache:
         self._require_write_fence = require_write_fence
         self._expected_write_fence = expected_write_fence
 
-    async def lookup(self, request: UserTurnRequest) -> FinalResponse | None:
+    async def lookup_with_status(
+        self, request: UserTurnRequest
+    ) -> tuple[FinalResponse | None, QueryCacheStatus]:
+        """Look up a cached response and report whether the cache hit, missed, or bypassed."""
+
         if not self._policy.request_is_cacheable(request):
-            return None
+            return None, QueryCacheStatus.BYPASSED
         expected_fence: str | None = None
         if self._expected_write_fence is not None:
             expected_fence = self._expected_write_fence()
             if expected_fence is None:
-                return None
+                return None, QueryCacheStatus.BYPASSED
         if not await self._trusted():
-            return None
+            return None, QueryCacheStatus.BYPASSED
         key_hash = request_hash(request)
         try:
             if hasattr(self._redis, "get_fenced_query"):
@@ -97,9 +110,9 @@ class SessionQueryCache:
                     key_hash,
                 )
                 if self._require_write_fence and fence is None:
-                    return None
+                    return None, QueryCacheStatus.BYPASSED
                 if expected_fence is not None and fence != expected_fence:
-                    return None
+                    return None, QueryCacheStatus.BYPASSED
             else:
                 cached = await self._redis.get_query(
                     request.session_id,
@@ -107,10 +120,14 @@ class SessionQueryCache:
                     key_hash,
                 )
         except (DependencyError, ProviderResponseError):
-            return None
+            return None, QueryCacheStatus.BYPASSED
         if cached is None:
-            return None
-        return cached.final_response
+            return None, QueryCacheStatus.MISS
+        return cached.final_response, QueryCacheStatus.HIT
+
+    async def lookup(self, request: UserTurnRequest) -> FinalResponse | None:
+        response, _ = await self.lookup_with_status(request)
+        return response
 
     async def prepare(
         self,

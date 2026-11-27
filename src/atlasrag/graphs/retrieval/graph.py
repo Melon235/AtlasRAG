@@ -23,12 +23,24 @@ class RetrievalGraphServices:
 
 
 def build_retrieval_graph(
-    services: RetrievalGraphServices, *, execution_facts: dict[str, bool] | None = None
+    services: RetrievalGraphServices,
+    *,
+    execution_facts: dict[str, bool] | None = None,
+    cache_facts: dict[str, str] | None = None,
 ) -> CompiledStateGraph[
     RetrievalGraphState, None, RetrievalGraphInput, RetrievalGraphOutput
 ]:
     async def cache_lookup(state: RetrievalGraphState) -> dict[str, object]:
-        cached = await services.cache.lookup(state["request"])
+        if hasattr(services.cache, "lookup_with_status"):
+            cached, status_value = await services.cache.lookup_with_status(
+                state["request"]
+            )
+            status = str(status_value)
+        else:
+            cached = await services.cache.lookup(state["request"])
+            status = "HIT" if cached is not None else "UNKNOWN"
+        if cache_facts is not None:
+            cache_facts["cache_status"] = status
         if cached is None:
             return {}
         return {"final_response": cached}
