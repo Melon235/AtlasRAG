@@ -5,6 +5,7 @@ COMPOSE_FILE := deploy/local/compose.yaml
 	infra-up infra-wait infra-status infra-logs infra-down migrate migration-check \
 	test-integration stage2-verify test-stage3 test-stage3-integration \
 	test-stage10 test-stage10-integration stage10-verify \
+	test-stage11 test-stage11-integration stage11-verify \
 	stage3-parser-smoke stage3-verify test-stage4 test-stage4-integration \
 	stage4-model-smoke stage4-verify stage5-verify test-stage5 test-stage5-integration 	stage6-verify test-stage6 test-stage6-integration stage6-model-smoke
 
@@ -77,6 +78,15 @@ test-stage10-integration:
 
 stage10-verify:
 	scripts/stage10_verify.sh
+
+test-stage11:
+	uv run --frozen pytest tests/stage11 -q
+
+test-stage11-integration:
+	scripts/stage11_verify.sh --integration-only
+
+stage11-verify:
+	scripts/stage11_verify.sh
 
 test-stage3:
 	uv run --frozen pytest tests/stage3 -q

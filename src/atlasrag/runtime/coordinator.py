@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from time import monotonic
 from uuid import uuid4
 
+from atlasrag.application.retrieval import RetrievalExecution
 from atlasrag.domain.errors import (
     RuntimeBootstrapFailedError,
     RuntimeNotReadyError,
@@ -23,6 +26,7 @@ from atlasrag.runtime.maintenance import MaintenanceCoordinator
 from atlasrag.runtime.modes import RuntimeMode
 from atlasrag.runtime.ownership import RuntimeOwnershipLock
 from atlasrag.runtime.tasks import InFlightTaskRegistry, TaskKind
+from atlasrag.services.cache.session import QueryCacheStatus
 from atlasrag.services.sync.models import (
     GlobalSafetyResult,
     ReconciliationOutcome,
@@ -37,6 +41,8 @@ from atlasrag.services.sync.source_safety import SourceSafetyResult
 class QueryResponseEnvelope:
     trace_id: str
     response: FinalResponse
+    cache_status: QueryCacheStatus = QueryCacheStatus.UNKNOWN
+    elapsed_ms: float | None = None
 
 
 @dataclass
@@ -57,6 +63,11 @@ class CoordinatorDependencies:
     shutdown_timeout_seconds: float = 30.0
     cache_recovery_inside_lease: bool = True
     ownership_acquired: bool = False
+    retrieval_with_facts: (
+        Callable[[UserTurnRequest], Awaitable[RetrievalExecution]] | None
+    ) = None
+    on_shutdown_settled: Callable[[], Awaitable[None] | None] | None = None
+    manual_health_refresh_cooldown_seconds: float = 1.0
 
 
 async def _noop() -> None:
@@ -157,7 +168,12 @@ class ApplicationCoordinator:
                 raise asyncio.CancelledError from error
             raise RuntimeBootstrapFailedError from error
 
-    async def run_query(self, request: UserTurnRequest) -> QueryResponseEnvelope:
+    async def run_query(
+        self,
+        request: UserTurnRequest,
+        *,
+        on_admitted: Callable[[str], None] | None = None,
+    ) -> QueryResponseEnvelope:
         current = self._begin_operation(TaskKind.HEALTH)
         try:
             snapshot = await self._deps.health.refresh_if_stale()
@@ -195,31 +211,52 @@ class ApplicationCoordinator:
             raise
         invocation = uuid4().hex
         try:
+            if on_admitted is not None:
+                on_admitted(invocation)
+            started = monotonic()
             with observation_invocation(invocation):
                 if self._deps.cache_recovery_inside_lease:
                     await self._deps.freshness.recover_if_due()
-                response = await self._deps.retrieval(request)
-                return QueryResponseEnvelope(trace_id=invocation, response=response)
+                if self._deps.retrieval_with_facts is not None:
+                    execution = await self._deps.retrieval_with_facts(request)
+                    response = execution.response
+                    cache_status = execution.cache_status
+                else:
+                    response = await self._deps.retrieval(request)
+                    cache_status = QueryCacheStatus.UNKNOWN
+            elapsed_ms = max(0.0, (monotonic() - started) * 1000.0)
+            return QueryResponseEnvelope(
+                trace_id=invocation,
+                response=response,
+                cache_status=cache_status,
+                elapsed_ms=elapsed_ms,
+            )
         finally:
             try:
                 await lease.release()
             finally:
                 self._deps.tasks.unregister(current)
 
-    async def run_maintenance(self) -> SyncResult:
+    async def run_maintenance(
+        self, *, on_draining: Callable[[], None] | None = None
+    ) -> SyncResult:
         current = self._begin_operation(TaskKind.MAINTENANCE)
         try:
-            result = await self._deps.maintenance.run()
+            result = await self._deps.maintenance.run(on_draining=on_draining)
             self._record_verification_safety(result)
             await self._refresh_admission_after_maintenance()
             return result
         finally:
             self._deps.tasks.unregister(current)
 
-    async def recover(self) -> SyncResult:
+    async def recover(
+        self, *, on_draining: Callable[[], None] | None = None
+    ) -> SyncResult:
         current = self._begin_operation(TaskKind.MAINTENANCE)
         try:
-            result = await self._deps.maintenance.recover_blocked()
+            result = await self._deps.maintenance.recover_blocked(
+                on_draining=on_draining
+            )
             self._record_verification_safety(result)
             await self._refresh_admission_after_maintenance()
             return result
@@ -241,6 +278,31 @@ class ApplicationCoordinator:
                 snapshot.hard_healthy,
                 lifecycle_generation=snapshot.lifecycle_generation,
             )
+
+    async def status(
+        self,
+        *,
+        refresh: bool = False,
+        min_refresh_interval_seconds: float | None = None,
+    ) -> HealthSnapshot:
+        """Return a freshness-bounded or cooldown-bounded health snapshot."""
+
+        cooldown = (
+            self._deps.manual_health_refresh_cooldown_seconds
+            if min_refresh_interval_seconds is None
+            else min_refresh_interval_seconds
+        )
+        current = self._begin_operation(TaskKind.HEALTH)
+        try:
+            if refresh:
+                snapshot = await self._deps.health.manual_refresh(min_interval=cooldown)
+            else:
+                snapshot = await self._deps.health.refresh_if_stale()
+            if snapshot.lifecycle_generation != self._deps.gate.lifecycle_generation:
+                snapshot = await self._deps.health.refresh()
+            return self._deps.health.project_snapshot(snapshot)
+        finally:
+            self._deps.tasks.unregister(current)
 
     async def health(self) -> HealthSnapshot:
         current = self._begin_operation(TaskKind.HEALTH)
@@ -281,5 +343,9 @@ class ApplicationCoordinator:
                 raise RuntimeShutdownFailedError
             await self._deps.begin_guard_shutdown()
             await self._deps.close_resources()
+            if self._deps.on_shutdown_settled is not None:
+                outcome = self._deps.on_shutdown_settled()
+                if inspect.isawaitable(outcome):
+                    await outcome
             self._deps.ownership.release()
             self._shutdown_done = True

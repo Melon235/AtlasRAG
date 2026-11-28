@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from time import monotonic
@@ -39,6 +40,7 @@ class HealthSnapshot:
 
 Probe = Callable[[], Awaitable[None]]
 LifecycleGeneration = Callable[[], int]
+QueryCacheStatusResolver = Callable[[DependencyHealth], str]
 
 
 def _starting_generation() -> int:
@@ -61,6 +63,7 @@ class HealthRegistry:
         probe_timeout: float = 3.0,
         refresh_interval: float = 10.0,
         lifecycle_generation: LifecycleGeneration | None = None,
+        query_cache_status: QueryCacheStatusResolver | None = None,
     ) -> None:
         self._mode = mode
         self._lifecycle_generation = (
@@ -68,6 +71,7 @@ class HealthRegistry:
             if lifecycle_generation is None
             else lifecycle_generation
         )
+        self._query_cache_status = query_cache_status
         self._probes = {
             "postgres": postgres,
             "milvus": milvus,
@@ -100,46 +104,88 @@ class HealthRegistry:
             return DependencyHealth.UNAVAILABLE
         return DependencyHealth.HEALTHY
 
+    async def _refresh_locked(self) -> HealthSnapshot:
+        lifecycle = self._lifecycle_generation()
+        values = await asyncio.gather(*(self._probe(name) for name in self._probes))
+        status = dict(zip(self._probes, values, strict=True))
+        hard = (
+            status["postgres"] is DependencyHealth.HEALTHY
+            and status["milvus"] is DependencyHealth.HEALTHY
+            and status["embedding"] is DependencyHealth.HEALTHY
+            and self._knowledge_verified
+        )
+        query_cache = (
+            self._query_cache_status(status["redis"])
+            if self._query_cache_status is not None
+            else "UNKNOWN"
+        )
+        self._generation += 1
+        snapshot = HealthSnapshot(
+            runtime=self._mode(),
+            hard_healthy=hard,
+            knowledge_verified=self._knowledge_verified,
+            postgres=status["postgres"],
+            milvus=status["milvus"],
+            redis=status["redis"],
+            searxng=status["searxng"],
+            embedding=status["embedding"],
+            reranker=status["reranker"],
+            query_cache=query_cache,
+            generation=self._generation,
+            lifecycle_generation=lifecycle,
+            checked_at=datetime.now(UTC),
+            monotonic_at=monotonic(),
+        )
+        self._snapshot = snapshot
+        return snapshot
+
+    def project_snapshot(self, snapshot: HealthSnapshot) -> HealthSnapshot:
+        """Project current query-cache status onto an existing snapshot without altering probe data."""
+
+        if self._query_cache_status is None:
+            return snapshot
+        projected = self._query_cache_status(snapshot.redis)
+        if projected == snapshot.query_cache:
+            return snapshot
+        return replace(snapshot, query_cache=projected)
+
+    def _is_reusable(self, snapshot: HealthSnapshot | None, max_age: float) -> bool:
+        return (
+            snapshot is not None
+            and max_age > 0.0
+            and snapshot.lifecycle_generation == self._lifecycle_generation()
+            and monotonic() - snapshot.monotonic_at < max_age
+        )
+
     async def refresh(self) -> HealthSnapshot:
         async with self._refresh_lock:
-            lifecycle = self._lifecycle_generation()
-            values = await asyncio.gather(*(self._probe(name) for name in self._probes))
-            status = dict(zip(self._probes, values, strict=True))
-            hard = (
-                status["postgres"] is DependencyHealth.HEALTHY
-                and status["milvus"] is DependencyHealth.HEALTHY
-                and status["embedding"] is DependencyHealth.HEALTHY
-                and self._knowledge_verified
-            )
-            self._generation += 1
-            snapshot = HealthSnapshot(
-                runtime=self._mode(),
-                hard_healthy=hard,
-                knowledge_verified=self._knowledge_verified,
-                postgres=status["postgres"],
-                milvus=status["milvus"],
-                redis=status["redis"],
-                searxng=status["searxng"],
-                embedding=status["embedding"],
-                reranker=status["reranker"],
-                query_cache="UNKNOWN",
-                generation=self._generation,
-                lifecycle_generation=lifecycle,
-                checked_at=datetime.now(UTC),
-                monotonic_at=monotonic(),
-            )
-            self._snapshot = snapshot
-            return snapshot
+            return await self._refresh_locked()
+
+    async def manual_refresh(self, *, min_interval: float = 1.0) -> HealthSnapshot:
+        """Execute a rate- and concurrency-bounded manual health refresh."""
+
+        if min_interval < 0.0 or not math.isfinite(min_interval):
+            raise ValueError("min_interval must be finite and non-negative")
+        async with self._refresh_lock:
+            current = self._snapshot
+            if self._is_reusable(current, min_interval):
+                assert current is not None
+                return self.project_snapshot(current)
+            return await self._refresh_locked()
 
     async def refresh_if_stale(self) -> HealthSnapshot:
+        """Return a fresh snapshot or coalesce concurrent stale refreshes into one probe batch."""
+
         current = self._snapshot
-        if (
-            current is not None
-            and current.lifecycle_generation == self._lifecycle_generation()
-            and monotonic() - current.monotonic_at < self._refresh_interval
-        ):
-            return current
-        return await self.refresh()
+        if self._is_reusable(current, self._refresh_interval):
+            assert current is not None
+            return self.project_snapshot(current)
+        async with self._refresh_lock:
+            current = self._snapshot
+            if self._is_reusable(current, self._refresh_interval):
+                assert current is not None
+                return self.project_snapshot(current)
+            return await self._refresh_locked()
 
     async def readiness(self) -> bool:
         snapshot = await self.refresh_if_stale()

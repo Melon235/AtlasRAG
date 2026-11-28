@@ -4163,18 +4163,18 @@ The Shared Application Server is the single long-lived local server process owni
 - OS signal (`SIGINT`/`SIGTERM`) handling and launcher-level termination/unresolved-ownership recovery boundaries.
 - Zero duplication of Part I/Part II RAG business logic; exact routes, transport schemas, and dependency pins belong to Stage 11 design.
 
-## 76.2 AtlasRAG Web Application (Stage 12 Scope)
+## 76.2 AtlasRAG Web Application (Stage 12 Scope — Refined via ADR-002)
 
-AtlasRAG Web is the browser-based human QA application served through the Shared Application Server. Approved v1 capability scope:
+AtlasRAG Web is refined via [`ADR-002-part-iv-web-demo-and-mcp-milestone-refinement.md`](ADR-002-part-iv-web-demo-and-mcp-milestone-refinement.md) into a **lightweight same-origin Web Demo** served through the Stage 11 Local Application Server to demonstrate and accept the existing complete RAG pipeline (Milestone 1). Approved Stage 12 Web Demo scope:
 
-- Multiple independent sessions and multiple display turns within a session.
-- Rendering of Markdown, fenced code, structured tables, and mathematical formulas.
-- Local and Web citation presentation plus authorized source inspection without arbitrary host filesystem traversal.
+- Multiple independent sessions (ephemeral/process-local, no persistent conversation history) and multiple display turns within a session.
+- Safe minimal Markdown rendering, fenced code, structured tables, and mathematical formulas without executing untrusted answer HTML/scripts.
+- Local and Web citation presentation (`FinalLocalCitation` / `FinalWebCitation`) without requiring a Web knowledge-management console or user account system.
 - Safe stage/status streaming (`§89`) alongside publication of the reviewed `FinalResponse`.
-- Supported query options and metadata filters, plus safe cache and `trace_id` summaries.
-- Runtime health and readiness display and explicitly controlled maintenance/recovery entrypoints.
+- Supported `QueryFilters` (`file_name`, `source_type`, `sheet_name`) and safe `cache_status`, `elapsed_ms`, and `trace_id` summaries.
+- Runtime health and readiness display (with maintenance/recovery remaining operational CLI operations).
 
-Conversation display is strictly separated from retrieval semantics: a displayed multi-turn UI transcript must not automatically become history-aware RAG input, and private `Trace` internals or unauthorized raw evidence must not be surfaced merely because they appear in a trace. Existing `UserTurnRequest`, `FinalResponse`, and citation contracts remain unchanged. Exact UI layout and session storage design are deferred to Stage 12.
+Conversation display is strictly separated from retrieval semantics: a displayed multi-turn UI transcript must not automatically become history-aware RAG input, and private `Trace` internals or unauthorized raw evidence must not be surfaced merely because they appear in a trace. Existing `UserTurnRequest`, `FinalResponse`, and citation contracts remain unchanged. Exact UI layout and browser session retention belong to Stage 12.
 
 ## 76.3 Inbound AtlasRAG MCP Server (Stage 13 Scope)
 
@@ -4200,16 +4200,16 @@ Part IV defines two application-level query capabilities over the shared runtime
 - **Answer Mode:** Executes the complete existing Part II pipeline (`Query Cache -> Query Construction -> Retrieval / Rerank / Evidence -> Generation -> Output Review -> Citation Resolution -> FinalResponse`) and returns `QueryResponseEnvelope(trace_id, response: FinalResponse)`. Both Web and MCP (`atlasrag_ask`) consume Answer Mode through the existing Output Review and Citation Resolver answer publication boundaries without altering Part II or `FinalResponse` semantics.
 - **Evidence Mode (Proposed Stage 13 Boundary):** Provides bounded, authorized retrieval evidence so an external calling agent can synthesize using its own model, without executing final answer generation. Evidence Mode must acquire a runtime `QueryLease`, participate in `InFlightTaskRegistry` / `RuntimeGate` shutdown settlement, never bypass `RuntimeGate` directly to PostgreSQL or Milvus, and never store Evidence Mode outputs in the existing `FinalResponse` Session Query Cache. Stage 13 detailed design must define a dedicated Evidence Publication Boundary covering authorized source access, canonical evidence/provenance validation, bounded result sizes, safe serialization, private trace and internal data exclusion, and untrusted retrieved-content handling, alongside exact retrieval reuse, stop point, result schema, Local/Web behavior, Query Construction rules, cancellation/degradation semantics, and cache policy.
 
-## 76.5 Proposed Part IV Technology Direction (Unpinned)
+## 76.5 Proposed Part IV Technology Direction (Unpinned — Refined via ADR-002)
 
 | Component | Proposed Direction (Subject to Stage 11–14 Design) |
 |---|---|
-| Shared Application Server | FastAPI + Uvicorn |
-| Web Frontend & Streaming | React + TypeScript, Vite, Tailwind CSS + shadcn/ui, SSE |
-| Inbound MCP Server | Official Python MCP SDK / FastMCP (Streamable HTTP primary; optional thin stdio adapter) |
+| Local Application Server (Stage 11) | FastAPI + Uvicorn + Pydantic v2 + HTTPX + `argparse` |
+| Web Demo & Streaming (Stage 12) | Static HTML, CSS, JavaScript, Fetch API, safe minimal Markdown, SSE (no mandatory React/Vite/Tailwind/Node.js toolchain) |
+| Inbound MCP Server (Stage 13) | Separately designed domain-aware MCP retrieval service (deferred beyond Milestone 1) |
 | Application Runtime | Existing Python / LangGraph implementation |
 
-No package versions are frozen here, and no MCP-specific composition root is permitted.
+No MCP-specific composition root is permitted; exact Stage 11 dependency versions and constraints are specified in the Stage 11 detailed design.
 
 ---
 
@@ -5251,10 +5251,11 @@ Part II  Retrieval-Augmented Generation
 Part III External Verification & Benchmark Harness
          FROZEN
 
-Part IV  Local Deployment, Shared Server, Web & Inbound MCP
-         AMENDED via ADR-001 (Stage 10 Runtime Foundation FROZEN/ACCEPTED;
-         Stages 11-14 updated for Shared Application Server, Web Application,
-         MCP Server, and Deployment/Final Validation)
+Part IV  Local Deployment, Local Application Server, Web Demo & Inbound MCP
+         AMENDED via ADR-001 and refined via ADR-002 (Stage 10 Runtime Foundation
+         FROZEN/ACCEPTED; Stages 11-12 deliver Local Application Server + Web Demo
+         RAG acceptance milestone; Stages 13-14 deliver Domain-Aware RAG MCP Server
+         and Deployment/Backup-Restore/GPU/Performance/Final Part IV Acceptance)
 ```
 
 All later implementation work must implement these contracts rather than silently redefining them.

@@ -89,6 +89,41 @@ STAGE3_BOUNDARY_NAMES = {
     ("providers", "parsing"): "parsing provider",
     ("services", "ingestion"): "ingestion service",
 }
+STAGE11_CORE_LAYERS = frozenset(
+    {
+        "application",
+        "config",
+        "domain",
+        "graphs",
+        "observability",
+        "providers",
+        "repositories",
+        "runtime",
+        "services",
+    }
+)
+STAGE11_CORE_FORBIDDEN_PREFIXES = ("atlasrag.server", "atlasrag.cli")
+STAGE11_FRAMEWORK_FREE_SERVER_MODULES = frozenset(
+    {
+        "src/atlasrag/server/__init__.py",
+        "src/atlasrag/server/config.py",
+        "src/atlasrag/server/schemas.py",
+        "src/atlasrag/server/errors.py",
+        "src/atlasrag/server/auth.py",
+        "src/atlasrag/server/cancellation.py",
+        "src/atlasrag/server/sessions.py",
+        "src/atlasrag/server/events.py",
+        "src/atlasrag/server/operations.py",
+        "src/atlasrag/server/service.py",
+    }
+)
+STAGE11_WEB_FRAMEWORK_PREFIXES = ("fastapi", "starlette", "uvicorn")
+STAGE11_CLI_FORBIDDEN_PREFIXES = (
+    "atlasrag.runtime.composition",
+    "fastapi",
+    "starlette",
+    "uvicorn",
+)
 BUILD_GRAPH_PATH = "src/atlasrag/graphs/indexing/document_build.py"
 SYNC_GRAPH_PATH = "src/atlasrag/graphs/indexing/index_graph.py"
 LOCAL_EVIDENCE_GRAPH_PATH = "src/atlasrag/graphs/local_evidence/subgraph.py"
@@ -537,6 +572,103 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
                         f"forbidden import '{global_target}'",
                     )
                 )
+                continue
+            parts = Path(relative_path).parts
+            top_layer = (
+                parts[2]
+                if len(parts) >= 3 and parts[:2] == ("src", "atlasrag")
+                else None
+            )
+            if top_layer in STAGE11_CORE_LAYERS:
+                forbidden_s11 = next(
+                    (
+                        prefix
+                        for target in targets
+                        if (
+                            prefix := _matching_prefix(
+                                STAGE11_CORE_FORBIDDEN_PREFIXES, target
+                            )
+                        )
+                        is not None
+                    ),
+                    None,
+                )
+                if forbidden_s11 is not None:
+                    diagnostics.append(
+                        Diagnostic(
+                            relative_path,
+                            node.lineno,
+                            f"{top_layer} layer may not import '{forbidden_s11}'",
+                        )
+                    )
+                    continue
+            if relative_path in STAGE11_FRAMEWORK_FREE_SERVER_MODULES:
+                forbidden_web = next(
+                    (
+                        prefix
+                        for target in targets
+                        if (
+                            prefix := _matching_prefix(
+                                STAGE11_WEB_FRAMEWORK_PREFIXES, target
+                            )
+                        )
+                        is not None
+                    ),
+                    None,
+                )
+                if forbidden_web is not None:
+                    diagnostics.append(
+                        Diagnostic(
+                            relative_path,
+                            node.lineno,
+                            f"framework-independent server module may not import '{forbidden_web}'",
+                        )
+                    )
+                    continue
+            if relative_path == "src/atlasrag/server/launcher.py":
+                forbidden_asgi_app = next(
+                    (
+                        prefix
+                        for target in targets
+                        if (
+                            prefix := _matching_prefix(("fastapi", "starlette"), target)
+                        )
+                        is not None
+                    ),
+                    None,
+                )
+                if forbidden_asgi_app is not None:
+                    diagnostics.append(
+                        Diagnostic(
+                            relative_path,
+                            node.lineno,
+                            f"server launcher module may not import '{forbidden_asgi_app}'",
+                        )
+                    )
+                    continue
+            if relative_path.startswith("src/atlasrag/cli/"):
+                forbidden_cli = next(
+                    (
+                        prefix
+                        for target in targets
+                        if (
+                            prefix := _matching_prefix(
+                                STAGE11_CLI_FORBIDDEN_PREFIXES, target
+                            )
+                        )
+                        is not None
+                    ),
+                    None,
+                )
+                if forbidden_cli is not None:
+                    diagnostics.append(
+                        Diagnostic(
+                            relative_path,
+                            node.lineno,
+                            f"cli module may not import '{forbidden_cli}'",
+                        )
+                    )
+                    continue
         elif (
             relative_path.startswith("src/atlasrag/graphs/")
             and isinstance(node, ast.Constant)

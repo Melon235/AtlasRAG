@@ -468,3 +468,96 @@ def test_lazy_parser_sdk_import_is_allowed_in_parsing_provider(
     result = run_checker(tmp_path)
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "layer",
+    ["runtime", "graphs", "services", "application", "domain"],
+)
+@pytest.mark.parametrize("forbidden", ["atlasrag.server", "atlasrag.cli"])
+def test_core_layers_reject_server_and_cli_imports(
+    tmp_path: Path, layer: str, forbidden: str
+) -> None:
+    write_layer_module(tmp_path, layer, f"import {forbidden}\n")
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode != 0
+    assert f"{layer} layer may not import '{forbidden}'" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "__init__.py",
+        "config.py",
+        "schemas.py",
+        "errors.py",
+        "auth.py",
+        "cancellation.py",
+        "sessions.py",
+        "events.py",
+        "operations.py",
+        "service.py",
+    ],
+)
+@pytest.mark.parametrize("framework", ["fastapi", "starlette", "uvicorn"])
+def test_framework_free_server_modules_reject_web_frameworks(
+    tmp_path: Path, module_name: str, framework: str
+) -> None:
+    target = tmp_path / "src" / "atlasrag" / "server" / module_name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(f"import {framework}\n", encoding="utf-8")
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode != 0
+    assert (
+        f"framework-independent server module may not import '{framework}'"
+        in result.stderr
+    )
+
+
+def test_server_app_allows_fastapi_and_starlette(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "atlasrag" / "server" / "app.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("import fastapi\nimport starlette\n", encoding="utf-8")
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "forbidden",
+    ["atlasrag.runtime.composition", "fastapi", "starlette", "uvicorn"],
+)
+def test_cli_module_rejects_heavy_and_web_imports(
+    tmp_path: Path, forbidden: str
+) -> None:
+    target = tmp_path / "src" / "atlasrag" / "cli" / "main.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(f"import {forbidden}\n", encoding="utf-8")
+
+    result = run_checker(tmp_path)
+
+    assert result.returncode != 0
+    assert f"cli module may not import '{forbidden}'" in result.stderr
+
+
+@pytest.mark.parametrize("forbidden", ["fastapi", "starlette"])
+def test_server_launcher_rejects_web_app_frameworks_and_allows_uvicorn(
+    tmp_path: Path, forbidden: str
+) -> None:
+    target = tmp_path / "src" / "atlasrag" / "server" / "launcher.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("import uvicorn\n", encoding="utf-8")
+    allowed_result = run_checker(tmp_path)
+    assert allowed_result.returncode == 0, allowed_result.stdout + allowed_result.stderr
+
+    target.write_text(f"import {forbidden}\n", encoding="utf-8")
+    blocked_result = run_checker(tmp_path)
+    assert blocked_result.returncode != 0
+    assert (
+        f"server launcher module may not import '{forbidden}'" in blocked_result.stderr
+    )

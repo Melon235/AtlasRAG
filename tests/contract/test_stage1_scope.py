@@ -61,7 +61,17 @@ FORBIDDEN_IMPORT_PREFIXES = (
 )
 EXPECTED_DECLARED_DISTRIBUTIONS = {
     "project.dependencies": frozenset(
-        {"pydantic", "alembic", "psycopg", "redis", "pymilvus", "langgraph", "httpx"}
+        {
+            "pydantic",
+            "alembic",
+            "psycopg",
+            "redis",
+            "pymilvus",
+            "langgraph",
+            "httpx",
+            "fastapi",
+            "uvicorn",
+        }
     ),
     "dependency-groups.dev": frozenset(
         {"mypy", "pytest", "pytest-cov", "pytest-asyncio", "ruff"}
@@ -360,6 +370,25 @@ STAGE10_PRODUCTION_FILES = frozenset(
         "runtime/resources.py",
         "runtime/tasks.py",
         "services/sync/source_safety.py",
+    }
+)
+STAGE11_PRODUCTION_FILES = frozenset(
+    {
+        "cli/__init__.py",
+        "cli/main.py",
+        "runtime/observation.py",
+        "server/__init__.py",
+        "server/app.py",
+        "server/auth.py",
+        "server/cancellation.py",
+        "server/config.py",
+        "server/errors.py",
+        "server/events.py",
+        "server/launcher.py",
+        "server/operations.py",
+        "server/schemas.py",
+        "server/service.py",
+        "server/sessions.py",
     }
 )
 STAGE2_PRODUCTION_FILES = frozenset(
@@ -704,12 +733,31 @@ def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
                 "socket",
             }
             else {
+                "src/atlasrag/cli/main.py",
                 "src/atlasrag/providers/web/searxng.py",
                 "src/atlasrag/providers/generation/deepseek.py",
                 "src/atlasrag/runtime/composition.py",
             }
         )
         return relative_path.as_posix() not in allowed
+    if root == "uvicorn":
+        if path is None:
+            return True
+        relative_path = (
+            path.relative_to(REPOSITORY_ROOT)
+            if path.is_absolute() and path.is_relative_to(REPOSITORY_ROOT)
+            else path
+        )
+        return relative_path.as_posix() != "src/atlasrag/server/launcher.py"
+    if root in {"fastapi", "starlette"}:
+        if path is None:
+            return True
+        relative_path = (
+            path.relative_to(REPOSITORY_ROOT)
+            if path.is_absolute() and path.is_relative_to(REPOSITORY_ROOT)
+            else path
+        )
+        return relative_path.as_posix() != "src/atlasrag/server/app.py"
     if root in {"torch", "transformers", "huggingface_hub"}:
         if path is None:
             return True
@@ -878,6 +926,7 @@ def _production_manifest_violations(production_root: Path) -> tuple[str, ...]:
         | STAGE7_PRODUCTION_FILES
         | STAGE8_PRODUCTION_FILES
         | STAGE10_PRODUCTION_FILES
+        | STAGE11_PRODUCTION_FILES
     )
     if unexpected := sorted(actual_files - allowed_files):
         violations.append(f"unexpected production files: {unexpected}")
@@ -1158,6 +1207,7 @@ def test_no_backend_client_provider_or_business_modules_exist() -> None:
             | STAGE7_PRODUCTION_FILES
             | STAGE8_PRODUCTION_FILES
             | STAGE10_PRODUCTION_FILES
+            | STAGE11_PRODUCTION_FILES
         ):
             continue
         tokens = {
