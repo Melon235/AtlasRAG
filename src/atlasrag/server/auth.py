@@ -12,12 +12,14 @@ import secrets
 import signal
 import stat
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
-from atlasrag.runtime.ownership import canonical_lock_path
+import atlasrag.runtime.ownership as _ownership_module
+from atlasrag._canonical import validate_unicode_scalar_text
 from atlasrag.server.config import ServerConfig, validate_loopback_host
 from atlasrag.server.errors import ServerHttpError, TransportErrorCode
 from atlasrag.server.schemas import ServerDiscoveryRecord, ShutdownReceipt
@@ -36,10 +38,13 @@ def canonical_state_directory(server_config: ServerConfig | None = None) -> Path
 
 
 def validate_loopback_url(url: str) -> str:
-    """Ensure a target URL uses HTTP(S) on loopback without userinfo."""
+    """Ensure a target base URL uses strict HTTP(S) loopback without unsafe components."""
 
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"}:
+    cleaned = validate_unicode_scalar_text(url)
+    if cleaned != cleaned.strip() or not cleaned:
+        raise ValueError("server URL must not be blank or contain outer whitespace")
+    parsed = urlsplit(cleaned)
+    if parsed.scheme.casefold() not in {"http", "https"}:
         raise ValueError("server URL must use http or https")
     if (
         parsed.username is not None
@@ -47,10 +52,31 @@ def validate_loopback_url(url: str) -> str:
         or "@" in parsed.netloc
     ):
         raise ValueError("server URL must not contain userinfo")
+    if (
+        parsed.query
+        or parsed.fragment
+        or "?" in cleaned
+        or "#" in cleaned
+        or ";" in cleaned
+    ):
+        raise ValueError("server URL must not contain query, fragment, or params")
+    if parsed.path not in {"", "/"}:
+        raise ValueError("server URL must not contain a non-root path")
     if parsed.hostname is None:
         raise ValueError("server URL must contain a loopback host")
-    validate_loopback_host(parsed.hostname)
-    return url.rstrip("/")
+    normalized_host = validate_loopback_host(parsed.hostname)
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("server URL contains an invalid port") from error
+    scheme = parsed.scheme.casefold()
+    default_port = 80 if scheme == "http" else 443
+    host_formatted = (
+        f"[{normalized_host}]" if ":" in normalized_host else normalized_host
+    )
+    if port is not None and port != default_port:
+        return f"{scheme}://{host_formatted}:{port}"
+    return f"{scheme}://{host_formatted}"
 
 
 def build_allowed_hosts(config: ServerConfig) -> frozenset[str]:
@@ -239,11 +265,30 @@ def write_secure_local_file(path: Path, content: str) -> None:
         raise
     else:
         os.close(fd)
-    os.replace(tmp_path, path)
+    try:
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 _SAFE_INSTANCE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _SAFE_RECEIPT_FILENAME = re.compile(r"^shutdown-([A-Za-z0-9_-]{1,128})\.json$")
+
+
+class CleanupOutcome(StrEnum):
+    """Explicit result of verified instance-owned metadata removal."""
+
+    ABSENT = "ABSENT"
+    REMOVED = "REMOVED"
+    FOREIGN_INSTANCE = "FOREIGN_INSTANCE"
+
+
+class MetadataCleanupError(RuntimeError):
+    """Raised when owned metadata validation or unlink fails."""
 
 
 class ProcessIdentityVerificationError(RuntimeError):
@@ -259,6 +304,7 @@ class TargetServerIdentity:
     process_start_ticks: int
     boot_id: str
     url: str
+    shutdown_timeout_seconds: float | None = None
 
 
 @dataclass(slots=True)
@@ -305,14 +351,6 @@ def shutdown_receipt_path(state_dir: Path, server_instance_id: str) -> Path:
 
 def cli_session_path(state_dir: Path) -> Path:
     return state_dir / "cli_session.json"
-
-
-def resolve_runtime_lock_path(server_config: ServerConfig | None = None) -> Path:
-    """Return runtime.lock in the explicit state directory or the canonical user lock path."""
-
-    if server_config is not None and server_config.state_directory is not None:
-        return Path(server_config.state_directory) / "runtime.lock"
-    return canonical_lock_path()
 
 
 def read_proc_stat_starttime(pid: int) -> int:
@@ -376,17 +414,17 @@ def read_boot_id() -> str:
     return boot_id
 
 
-def is_runtime_lock_active(lock_path: Path) -> bool:
-    """Return True iff runtime.lock is regular, UID-owned, 0o600, and flock-held."""
+def _inspect_lock_inode(lock_path: Path) -> tuple[int, int] | None:
+    """Return (st_dev, st_ino) iff lock_path is secure and actively flock-held."""
 
     try:
         dir_info = lock_path.parent.lstat()
     except OSError:
-        return False
+        return None
     if stat.S_ISLNK(dir_info.st_mode) or not stat.S_ISDIR(dir_info.st_mode):
-        return False
+        return None
     if dir_info.st_uid != os.getuid() or (stat.S_IMODE(dir_info.st_mode) & 0o077):
-        return False
+        return None
     flags = (
         os.O_RDONLY
         | getattr(os, "O_NONBLOCK", 0)
@@ -396,24 +434,77 @@ def is_runtime_lock_active(lock_path: Path) -> bool:
     try:
         fd = os.open(lock_path, flags)
     except OSError:
-        return False
+        return None
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-            return False
+            return None
         if stat.S_IMODE(info.st_mode) & 0o077:
-            return False
+            return None
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as error:
             if error.errno in {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK}:
-                return True
-            return False
+                return (info.st_dev, info.st_ino)
+            return None
         else:
             fcntl.flock(fd, fcntl.LOCK_UN)
-            return False
+            return None
     finally:
         os.close(fd)
+
+
+def is_runtime_lock_active(lock_path: Path) -> bool:
+    """Return True iff runtime.lock is regular, UID-owned, 0o600, and flock-held."""
+
+    return _inspect_lock_inode(lock_path) is not None
+
+
+def verify_process_holds_flock(pid: int, lock_path: Path) -> bool:
+    """Verify via kernel /proc/<pid>/fdinfo that pid holds exclusive FLOCK on lock_path."""
+
+    if pid < 1:
+        return False
+    inode_pair = _inspect_lock_inode(lock_path)
+    if inode_pair is None:
+        return False
+    st_dev, st_ino = inode_pair
+    expected_lock_id = f"{os.major(st_dev):02x}:{os.minor(st_dev):02x}:{st_ino}"
+
+    fd_dir = Path(f"/proc/{pid}/fd")
+    fdinfo_dir = Path(f"/proc/{pid}/fdinfo")
+    try:
+        entries = list(fd_dir.iterdir())
+    except OSError:
+        return False
+
+    for entry in entries:
+        try:
+            fd_stat = entry.stat()
+        except OSError:
+            continue
+        if (fd_stat.st_dev, fd_stat.st_ino) != (st_dev, st_ino):
+            continue
+        try:
+            info_text = (fdinfo_dir / entry.name).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in info_text.splitlines():
+            if not line.startswith("lock:"):
+                continue
+            tokens = line.split()
+            # Format: lock: <idx>: FLOCK ADVISORY WRITE <pid> <maj>:<min>:<ino> ...
+            if (
+                len(tokens) >= 7
+                and tokens[2] == "FLOCK"
+                and tokens[3] == "ADVISORY"
+                and tokens[4] == "WRITE"
+                and tokens[5].isdigit()
+                and int(tokens[5]) == pid
+                and tokens[6] == expected_lock_id
+            ):
+                return True
+    return False
 
 
 def load_server_discovery(state_dir: Path) -> ServerDiscoveryRecord:
@@ -431,13 +522,22 @@ def load_server_discovery(state_dir: Path) -> ServerDiscoveryRecord:
         raise
     raw = read_secure_local_file(discovery_path, max_bytes=16_384)
     record = ServerDiscoveryRecord.model_validate_json(raw)
-    validate_loopback_url(record.url)
+    canonical_url = validate_loopback_url(record.url)
+    if canonical_url != record.url:
+        record = ServerDiscoveryRecord.model_validate(
+            {**record.model_dump(mode="python"), "url": canonical_url}
+        )
     return record
 
 
-def verify_target_process(state_dir: Path, *, lock_path: Path) -> VerifiedTargetProcess:
+def verify_target_process(
+    state_dir: Path, *, lock_path: Path | None = None
+) -> VerifiedTargetProcess:
     """Capture TargetServerIdentity, open pidfd, and verify start time, UID, and lock."""
 
+    target_lock = (
+        _ownership_module.canonical_lock_path() if lock_path is None else lock_path
+    )
     try:
         record = load_server_discovery(state_dir)
     except FileNotFoundError:
@@ -453,6 +553,7 @@ def verify_target_process(state_dir: Path, *, lock_path: Path) -> VerifiedTarget
         process_start_ticks=record.process_start_ticks,
         boot_id=record.boot_id,
         url=record.url,
+        shutdown_timeout_seconds=record.shutdown_timeout_seconds,
     )
     current_boot_id = read_boot_id()
     if identity.boot_id != current_boot_id:
@@ -472,10 +573,12 @@ def verify_target_process(state_dir: Path, *, lock_path: Path) -> VerifiedTarget
         actual_uid = read_proc_uid(identity.pid)
         if actual_uid != os.getuid():
             raise ProcessIdentityVerificationError("process owner UID mismatch")
-        if not is_runtime_lock_active(lock_path):
+        if not verify_process_holds_flock(identity.pid, target_lock):
             raise ProcessIdentityVerificationError(
-                "runtime ownership lock is not active"
+                "target process does not hold canonical runtime ownership lock"
             )
+        if read_proc_stat_starttime(identity.pid) != identity.process_start_ticks:
+            raise ProcessIdentityVerificationError("process start time changed")
     except BaseException:
         os.close(pidfd)
         raise
@@ -530,36 +633,112 @@ def prune_shutdown_receipts(state_dir: Path, *, keep: int = 8) -> None:
             pass
 
 
-def unlink_owned_server_discovery(state_dir: Path, server_instance_id: str) -> None:
-    """Unlink server.json only if it safely belongs to server_instance_id."""
+def _ensure_absent_or_raise(path: Path, state_dir: Path) -> None:
+    if not state_dir.exists():
+        raise FileNotFoundError(path)
+    dir_info = state_dir.lstat()
+    if stat.S_ISLNK(dir_info.st_mode) or not stat.S_ISDIR(dir_info.st_mode):
+        raise MetadataCleanupError("state directory must not be a symlink")
+    path.lstat()
+
+
+def unlink_owned_server_discovery(
+    state_dir: Path, server_instance_id: str
+) -> CleanupOutcome:
+    """Fail-closed instance-verified removal of server.json."""
 
     path = server_discovery_path(state_dir)
     try:
+        _ensure_absent_or_raise(path, state_dir)
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except OSError as error:
+        raise MetadataCleanupError("server.json path inspection failed") from error
+
+    try:
         raw = read_secure_local_file(path, max_bytes=16_384)
         record = ServerDiscoveryRecord.model_validate_json(raw)
-    except (FileNotFoundError, OSError, PermissionError, ValueError, ValidationError):
-        return
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except (OSError, PermissionError, ValueError, ValidationError) as error:
+        raise MetadataCleanupError(
+            "server.json failed security or schema checks"
+        ) from error
+
     if record.server_instance_id != server_instance_id:
-        return
+        return CleanupOutcome.FOREIGN_INSTANCE
+
     try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        pass
+        path.unlink()
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except OSError as error:
+        raise MetadataCleanupError("failed to unlink owned server.json") from error
+    return CleanupOutcome.REMOVED
 
 
-def unlink_owned_control_token(state_dir: Path, expected_token: str) -> None:
-    """Unlink control.token only if its verified content matches expected_token."""
+def unlink_owned_control_token(state_dir: Path, expected_token: str) -> CleanupOutcome:
+    """Fail-closed token-verified removal of control.token."""
 
     if not expected_token:
-        return
+        raise MetadataCleanupError("empty expected control token")
     path = control_token_path(state_dir)
     try:
-        current = read_secure_local_file(path, max_bytes=8_192).strip()
-    except (FileNotFoundError, OSError, PermissionError, ValueError):
-        return
-    if not hmac.compare_digest(current.encode("utf-8"), expected_token.encode("utf-8")):
-        return
+        _ensure_absent_or_raise(path, state_dir)
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except OSError as error:
+        raise MetadataCleanupError("control.token path inspection failed") from error
+
     try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        pass
+        current = read_secure_local_file(path, max_bytes=8_192).strip()
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except (OSError, PermissionError, ValueError) as error:
+        raise MetadataCleanupError("control.token failed security checks") from error
+
+    if not hmac.compare_digest(current.encode("utf-8"), expected_token.encode("utf-8")):
+        return CleanupOutcome.FOREIGN_INSTANCE
+
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except OSError as error:
+        raise MetadataCleanupError("failed to unlink owned control.token") from error
+    return CleanupOutcome.REMOVED
+
+
+def unlink_owned_shutdown_receipt(
+    state_dir: Path, server_instance_id: str
+) -> CleanupOutcome:
+    """Unlink owned clean-shutdown receipt only on pre-release rollback."""
+
+    path = shutdown_receipt_path(state_dir, server_instance_id)
+    try:
+        _ensure_absent_or_raise(path, state_dir)
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except OSError as error:
+        raise MetadataCleanupError("shutdown receipt inspection failed") from error
+
+    try:
+        raw = read_secure_local_file(path, max_bytes=16_384)
+        receipt = ShutdownReceipt.model_validate_json(raw)
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except (OSError, PermissionError, ValueError, ValidationError) as error:
+        raise MetadataCleanupError(
+            "shutdown receipt failed security or schema checks"
+        ) from error
+
+    if receipt.server_instance_id != server_instance_id:
+        return CleanupOutcome.FOREIGN_INSTANCE
+
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except OSError as error:
+        raise MetadataCleanupError("failed to unlink shutdown receipt") from error
+    return CleanupOutcome.REMOVED

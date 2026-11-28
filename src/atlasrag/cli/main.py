@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import os
 import select
@@ -19,6 +20,7 @@ from types import FrameType
 import httpx
 from pydantic import ValidationError
 
+import atlasrag.runtime.ownership as _ownership_module
 from atlasrag.domain.errors import ConfigurationError
 from atlasrag.domain.requests import QueryFilters
 from atlasrag.domain.results import FinalLocalCitation
@@ -31,10 +33,11 @@ from atlasrag.server.auth import (
     control_token_path,
     load_clean_shutdown_receipt,
     load_server_discovery,
+    read_proc_stat_starttime,
     read_secure_local_file,
-    resolve_runtime_lock_path,
     shutdown_receipt_path,
     validate_loopback_url,
+    verify_process_holds_flock,
     verify_target_process,
     write_secure_local_file,
 )
@@ -42,6 +45,7 @@ from atlasrag.server.config import ServerConfig, load_server_config
 from atlasrag.server.schemas import (
     CliSessionRecord,
     LivenessResponse,
+    LivenessStatus,
     OperationAcceptedResponse,
     OperationStatus,
     OperationStatusResponse,
@@ -286,6 +290,15 @@ def _resolve_state_dir(
     return canonical_state_directory(None)
 
 
+def _validate_url_option(raw_url: str, *, label: str) -> str:
+    try:
+        return validate_loopback_url(raw_url)
+    except ValueError as error:
+        raise _CliUsageOrConfigError(
+            f"{label} must be a valid http(s) loopback URL without unsafe components"
+        ) from error
+
+
 def _resolve_server_target(
     *,
     cli_server_url: str | None,
@@ -305,27 +318,38 @@ def _resolve_server_target(
         discovery_error.__cause__ = error
 
     if cli_server_url is not None:
-        try:
-            return validate_loopback_url(cli_server_url), discovery
-        except ValueError as error:
-            raise _CliUsageOrConfigError(
-                "server URL must be a valid http(s) loopback URL without userinfo"
-            ) from error
+        return _validate_url_option(cli_server_url, label="server URL"), discovery
 
     env_url = environ.get("ATLASRAG_SERVER_URL")
-    if env_url:
-        try:
-            return validate_loopback_url(env_url), discovery
-        except ValueError as error:
-            raise _CliUsageOrConfigError(
-                "ATLASRAG_SERVER_URL must be a valid http(s) loopback URL without userinfo"
-            ) from error
+    if env_url is not None and env_url != "":
+        return _validate_url_option(env_url, label="ATLASRAG_SERVER_URL"), discovery
 
     if discovery_error is not None:
         raise discovery_error
     if discovery is not None:
         return discovery.url, discovery
     return _DEFAULT_SERVER_URL, None
+
+
+def _resolve_bound_control_override(
+    *,
+    expected_url: str,
+    cli_server_url: str | None,
+    environ: Mapping[str, str],
+) -> str | None:
+    """Validate optional CLI/env URL overrides match the verified server URL."""
+
+    canonical_expected = validate_loopback_url(expected_url)
+    if cli_server_url is not None:
+        explicit = _validate_url_option(cli_server_url, label="server URL")
+        if explicit != canonical_expected:
+            return "Explicit --server-url does not match the verified running server."
+    env_url = environ.get("ATLASRAG_SERVER_URL")
+    if env_url is not None and env_url != "":
+        explicit_env = _validate_url_option(env_url, label="ATLASRAG_SERVER_URL")
+        if explicit_env != canonical_expected:
+            return "ATLASRAG_SERVER_URL does not match the verified running server."
+    return None
 
 
 def _build_client(target_url: str, *, timeout: httpx.Timeout) -> httpx.Client:
@@ -409,7 +433,12 @@ def _load_or_create_cli_session(
     if resp.status_code != 201:
         code, message = _parse_api_error_message(resp)
         raise RuntimeError(f"{code}: {message}")
-    created = SessionResponse.model_validate_json(resp.text)
+    try:
+        created = SessionResponse.model_validate_json(resp.text)
+    except ValidationError as error:
+        raise RuntimeError(
+            "INVALID_SERVER_RESPONSE: malformed session response"
+        ) from error
     record = CliSessionRecord(
         server_instance_id=(
             discovery.server_instance_id if discovery is not None else None
@@ -576,9 +605,9 @@ def _cmd_ask(args: argparse.Namespace, *, environ: Mapping[str, str]) -> int:
             error_code="INVALID_REQUEST",
         )
         return EXIT_USAGE_OR_CONFIG_ERROR
-    if args.timeout <= 0:
+    if not (0 < args.timeout <= 86_400.0):
         _emit_error(
-            "--timeout must be greater than zero.",
+            "--timeout must be finite and greater than zero.",
             json_output=bool(args.json),
             error_code="INVALID_REQUEST",
         )
@@ -743,6 +772,13 @@ def _cmd_ask(args: argparse.Namespace, *, environ: Mapping[str, str]) -> int:
             error_code="SERVER_UNREACHABLE",
         )
         return EXIT_UNAVAILABLE
+    except ValidationError:
+        _emit_error(
+            "Received malformed server query response.",
+            json_output=bool(args.json),
+            error_code="INVALID_SERVER_RESPONSE",
+        )
+        return EXIT_OPERATIONAL_ERROR
     except httpx.HTTPError as error:
         _emit_error(
             f"HTTP request failed: {type(error).__name__}.",
@@ -848,7 +884,15 @@ def _cmd_status(args: argparse.Namespace, *, environ: Mapping[str, str]) -> int:
         _emit_error(msg, json_output=bool(args.json), error_code=code)
         return EXIT_OPERATIONAL_ERROR
 
-    status = RuntimeStatusResponse.model_validate_json(resp.text)
+    try:
+        status = RuntimeStatusResponse.model_validate_json(resp.text)
+    except ValidationError:
+        _emit_error(
+            "Received malformed server status response.",
+            json_output=bool(args.json),
+            error_code="INVALID_SERVER_RESPONSE",
+        )
+        return EXIT_OPERATIONAL_ERROR
     if args.json:
         _emit_json(status.model_dump(mode="json"))
     else:
@@ -892,117 +936,193 @@ def _render_operation_status(op: OperationStatusResponse, *, json_output: bool) 
 def _cmd_maintenance(
     args: argparse.Namespace, *, kind: str, environ: Mapping[str, str]
 ) -> int:
-    if args.poll_interval <= 0:
+    if not (0 < args.poll_interval <= 3600.0):
         _emit_error(
-            "--poll-interval must be greater than zero.",
+            "--poll-interval must be finite and greater than zero.",
             json_output=bool(args.json),
             error_code="INVALID_REQUEST",
         )
         return EXIT_USAGE_OR_CONFIG_ERROR
 
+    if args.server_url is not None:
+        _validate_url_option(args.server_url, label="server URL")
+    env_url = environ.get("ATLASRAG_SERVER_URL")
+    if env_url is not None and env_url != "":
+        _validate_url_option(env_url, label="ATLASRAG_SERVER_URL")
+
     state_dir = _resolve_state_dir(args.state_dir, environ=environ)
-    target_url, _ = _resolve_server_target(
-        cli_server_url=args.server_url, state_dir=state_dir, environ=environ
-    )
     try:
-        token = _read_control_token(target_url, state_dir)
-    except (FileNotFoundError, OSError, PermissionError, ValueError):
+        verified = verify_target_process(state_dir)
+    except FileNotFoundError:
         _emit_error(
-            "Valid local control authorization token could not be loaded.",
-            json_output=bool(args.json),
-            error_code="UNAUTHORIZED",
-        )
-        return EXIT_OPERATIONAL_ERROR
-
-    headers = _control_headers(target_url, token)
-    timeout = httpx.Timeout(
-        connect=_CONNECT_TIMEOUT_SECONDS,
-        read=_CONTROL_HTTP_TIMEOUT_SECONDS,
-        write=10.0,
-        pool=10.0,
-    )
-    try:
-        with _build_client(target_url, timeout=timeout) as client:
-            resp = client.post(
-                f"/api/v1/control/{kind}",
-                json={},
-                headers=headers,
-            )
-            if resp.status_code != 202:
-                code, msg = _parse_api_error_message(resp)
-                _emit_error(msg, json_output=bool(args.json), error_code=code)
-                return EXIT_OPERATIONAL_ERROR
-            accepted = OperationAcceptedResponse.model_validate_json(resp.text)
-            if not args.wait:
-                if args.json:
-                    _emit_json(accepted.model_dump(mode="json"))
-                else:
-                    print(
-                        f"operation={accepted.operation_id} kind={accepted.kind.value} status={accepted.status.value}"
-                    )
-                return EXIT_OK
-
-            while True:
-                status_resp = client.get(
-                    f"/api/v1/control/operations/{accepted.operation_id}",
-                    headers=headers,
-                )
-                if status_resp.status_code != 200:
-                    code, msg = _parse_api_error_message(status_resp)
-                    _emit_error(msg, json_output=bool(args.json), error_code=code)
-                    return EXIT_OPERATIONAL_ERROR
-                current = OperationStatusResponse.model_validate_json(status_resp.text)
-                if current.status in {
-                    OperationStatus.SUCCEEDED,
-                    OperationStatus.FAILED,
-                }:
-                    _render_operation_status(current, json_output=bool(args.json))
-                    if (
-                        current.status is OperationStatus.SUCCEEDED
-                        and current.serving_safety is ServingSafety.SAFE_TO_SERVE
-                    ):
-                        return EXIT_OK
-                    return EXIT_OPERATIONAL_ERROR
-                time.sleep(float(args.poll_interval))
-    except (httpx.ConnectError, httpx.ConnectTimeout):
-        _emit_error(
-            f"Unable to reach AtlasRAG server at {target_url}.",
+            "No verified running server discovery metadata found; refusing control transmission.",
             json_output=bool(args.json),
             error_code="SERVER_UNREACHABLE",
         )
         return EXIT_UNAVAILABLE
-    except httpx.HTTPError as error:
+    except ProcessIdentityVerificationError as error:
         _emit_error(
-            f"Control request failed: {type(error).__name__}.",
+            f"Refusing {kind}: {error}.",
             json_output=bool(args.json),
-            error_code="HTTP_ERROR",
+            error_code="UNVERIFIED_PROCESS_IDENTITY",
         )
-        return EXIT_OPERATIONAL_ERROR
+        return EXIT_FATAL_LIFECYCLE
+
+    with verified:
+        identity = verified.identity
+        mismatch_msg = _resolve_bound_control_override(
+            expected_url=identity.url,
+            cli_server_url=args.server_url,
+            environ=environ,
+        )
+        if mismatch_msg is not None:
+            _emit_error(
+                mismatch_msg,
+                json_output=bool(args.json),
+                error_code="CONTROL_TARGET_MISMATCH",
+            )
+            return EXIT_FATAL_LIFECYCLE
+
+        target_url = identity.url
+        try:
+            token = _read_control_token(target_url, state_dir)
+        except (FileNotFoundError, OSError, PermissionError, ValueError):
+            _emit_error(
+                "Valid local control authorization token could not be loaded.",
+                json_output=bool(args.json),
+                error_code="UNAUTHORIZED",
+            )
+            return EXIT_OPERATIONAL_ERROR
+
+        headers = _control_headers(target_url, token)
+        timeout = httpx.Timeout(
+            connect=_CONNECT_TIMEOUT_SECONDS,
+            read=_CONTROL_HTTP_TIMEOUT_SECONDS,
+            write=10.0,
+            pool=10.0,
+        )
+        try:
+            with _build_client(target_url, timeout=timeout) as client:
+                resp = client.post(
+                    f"/api/v1/control/{kind}",
+                    json={},
+                    headers=headers,
+                )
+                if resp.status_code != 202:
+                    code, msg = _parse_api_error_message(resp)
+                    _emit_error(msg, json_output=bool(args.json), error_code=code)
+                    return EXIT_OPERATIONAL_ERROR
+                accepted = OperationAcceptedResponse.model_validate_json(resp.text)
+                if not args.wait:
+                    if args.json:
+                        _emit_json(accepted.model_dump(mode="json"))
+                    else:
+                        print(
+                            f"operation={accepted.operation_id} kind={accepted.kind.value} status={accepted.status.value}"
+                        )
+                    return EXIT_OK
+
+                while True:
+                    status_resp = client.get(
+                        f"/api/v1/control/operations/{accepted.operation_id}",
+                        headers=headers,
+                    )
+                    if status_resp.status_code != 200:
+                        code, msg = _parse_api_error_message(status_resp)
+                        _emit_error(msg, json_output=bool(args.json), error_code=code)
+                        return EXIT_OPERATIONAL_ERROR
+                    current = OperationStatusResponse.model_validate_json(
+                        status_resp.text
+                    )
+                    if current.status in {
+                        OperationStatus.SUCCEEDED,
+                        OperationStatus.FAILED,
+                    }:
+                        _render_operation_status(current, json_output=bool(args.json))
+                        if (
+                            current.status is OperationStatus.SUCCEEDED
+                            and current.serving_safety is ServingSafety.SAFE_TO_SERVE
+                        ):
+                            return EXIT_OK
+                        return EXIT_OPERATIONAL_ERROR
+                    time.sleep(float(args.poll_interval))
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            _emit_error(
+                f"Unable to reach AtlasRAG server at {target_url}.",
+                json_output=bool(args.json),
+                error_code="SERVER_UNREACHABLE",
+            )
+            return EXIT_UNAVAILABLE
+        except ValidationError:
+            _emit_error(
+                "Received malformed server maintenance response.",
+                json_output=bool(args.json),
+                error_code="INVALID_SERVER_RESPONSE",
+            )
+            return EXIT_OPERATIONAL_ERROR
+        except httpx.HTTPError as error:
+            _emit_error(
+                f"Control request failed: {type(error).__name__}.",
+                json_output=bool(args.json),
+                error_code="HTTP_ERROR",
+            )
+            return EXIT_OPERATIONAL_ERROR
+
+
+def _verify_pre_shutdown_stability(
+    *,
+    state_dir: Path,
+    identity: TargetServerIdentity,
+    captured_token: str,
+) -> bool:
+    """Confirm discovery, token, and process lock did not change before HTTP send."""
+
+    try:
+        latest = load_server_discovery(state_dir)
+        latest_token = _read_control_token(identity.url, state_dir)
+    except (FileNotFoundError, OSError, PermissionError, ValueError, ValidationError):
+        return False
+    if (
+        latest.server_instance_id != identity.server_instance_id
+        or latest.pid != identity.pid
+        or latest.process_start_ticks != identity.process_start_ticks
+        or latest.boot_id != identity.boot_id
+        or latest.url != identity.url
+    ):
+        return False
+    if not hmac.compare_digest(
+        latest_token.encode("utf-8"), captured_token.encode("utf-8")
+    ):
+        return False
+    if not verify_process_holds_flock(
+        identity.pid, _ownership_module.canonical_lock_path()
+    ):
+        return False
+    try:
+        return read_proc_stat_starttime(identity.pid) == identity.process_start_ticks
+    except ProcessIdentityVerificationError:
+        return False
 
 
 def _cmd_stop(args: argparse.Namespace, *, environ: Mapping[str, str]) -> int:
-    if args.timeout is not None and args.timeout <= 0:
+    if args.timeout is not None and not (0 < args.timeout <= 86_400.0):
         _emit_error(
-            "--timeout must be greater than zero.",
+            "--timeout must be finite and greater than zero.",
             json_output=bool(args.json),
             error_code="INVALID_REQUEST",
         )
         return EXIT_USAGE_OR_CONFIG_ERROR
-    wait_timeout = (
-        float(args.timeout)
-        if args.timeout is not None
-        else _DEFAULT_STOP_TIMEOUT_SECONDS
-    )
+    if args.server_url is not None:
+        _validate_url_option(args.server_url, label="server URL")
+    env_url = environ.get("ATLASRAG_SERVER_URL")
+    if env_url is not None and env_url != "":
+        _validate_url_option(env_url, label="ATLASRAG_SERVER_URL")
 
-    explicit_state_dir = args.state_dir is not None or "ATLASRAG_STATE_DIR" in environ
     state_dir = _resolve_state_dir(args.state_dir, environ=environ)
-    lock_path = resolve_runtime_lock_path(
-        ServerConfig(state_directory=str(state_dir)) if explicit_state_dir else None
-    )
 
     # Pre-shutdown verification & pidfd capture strictly BEFORE any HTTP/signal call.
     try:
-        verified = verify_target_process(state_dir, lock_path=lock_path)
+        verified = verify_target_process(state_dir)
     except FileNotFoundError:
         if args.force:
             _emit_error(
@@ -1028,17 +1148,29 @@ def _cmd_stop(args: argparse.Namespace, *, environ: Mapping[str, str]) -> int:
     with verified:
         identity: TargetServerIdentity = verified.identity
         assert verified.pidfd is not None
+        mismatch_msg = _resolve_bound_control_override(
+            expected_url=identity.url,
+            cli_server_url=args.server_url,
+            environ=environ,
+        )
+        if mismatch_msg is not None:
+            _emit_error(
+                mismatch_msg,
+                json_output=bool(args.json),
+                error_code="CONTROL_TARGET_MISMATCH",
+            )
+            return EXIT_FATAL_LIFECYCLE
+
+        wait_timeout = (
+            float(args.timeout)
+            if args.timeout is not None
+            else (
+                max(1.0, 2.0 * float(identity.shutdown_timeout_seconds) + 5.0)
+                if identity.shutdown_timeout_seconds is not None
+                else _DEFAULT_STOP_TIMEOUT_SECONDS
+            )
+        )
         target_url = identity.url
-        if args.server_url is not None:
-            try:
-                target_url = validate_loopback_url(args.server_url)
-            except ValueError:
-                _emit_error(
-                    "server URL must be a valid http(s) loopback URL without userinfo",
-                    json_output=bool(args.json),
-                    error_code="INVALID_REQUEST",
-                )
-                return EXIT_USAGE_OR_CONFIG_ERROR
 
         try:
             token = _read_control_token(target_url, state_dir)
@@ -1047,6 +1179,16 @@ def _cmd_stop(args: argparse.Namespace, *, environ: Mapping[str, str]) -> int:
                 "Valid local control authorization token could not be loaded.",
                 json_output=bool(args.json),
                 error_code="UNAUTHORIZED",
+            )
+            return EXIT_FATAL_LIFECYCLE
+
+        if not _verify_pre_shutdown_stability(
+            state_dir=state_dir, identity=identity, captured_token=token
+        ):
+            _emit_error(
+                "Server discovery or control token changed during pre-shutdown verification.",
+                json_output=bool(args.json),
+                error_code="UNVERIFIED_PROCESS_IDENTITY",
             )
             return EXIT_FATAL_LIFECYCLE
 
@@ -1083,7 +1225,28 @@ def _cmd_stop(args: argparse.Namespace, *, environ: Mapping[str, str]) -> int:
             code, msg = _parse_api_error_message(resp)
             _emit_error(msg, json_output=bool(args.json), error_code=code)
             return EXIT_OPERATIONAL_ERROR
-        accepted = ShutdownAcceptedResponse.model_validate_json(resp.text)
+
+        try:
+            accepted = ShutdownAcceptedResponse.model_validate_json(resp.text)
+        except ValidationError:
+            _emit_error(
+                "Received malformed shutdown acceptance response.",
+                json_output=bool(args.json),
+                error_code="INVALID_SERVER_RESPONSE",
+            )
+            return EXIT_FATAL_LIFECYCLE
+
+        if (
+            accepted.status is not LivenessStatus.SHUTTING_DOWN
+            or accepted.pid != identity.pid
+            or accepted.server_instance_id != identity.server_instance_id
+        ):
+            _emit_error(
+                "Shutdown response identity does not match captured server identity.",
+                json_output=bool(args.json),
+                error_code="SERVER_IDENTITY_MISMATCH",
+            )
+            return EXIT_FATAL_LIFECYCLE
 
         exited = _wait_pidfd_exit(verified.pidfd, wait_timeout)
         if exited:
@@ -1138,7 +1301,7 @@ def _cmd_stop(args: argparse.Namespace, *, environ: Mapping[str, str]) -> int:
                 signal.pidfd_send_signal(verified.pidfd, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            _wait_pidfd_exit(verified.pidfd, 2.0)
+            terminated = _wait_pidfd_exit(verified.pidfd, 2.0)
 
         if args.json:
             _emit_json(
@@ -1147,11 +1310,13 @@ def _cmd_stop(args: argparse.Namespace, *, environ: Mapping[str, str]) -> int:
                     "signal": escalation_signal,
                     "pid": identity.pid,
                     "server_instance_id": identity.server_instance_id,
+                    "terminated": terminated,
                 }
             )
         else:
+            state_desc = "exited" if terminated else "still alive after reap grace"
             print(
-                f"error: forced termination ({escalation_signal}) applied to pid={identity.pid}.",
+                f"error: forced termination ({escalation_signal}) applied to pid={identity.pid} ({state_desc}).",
                 file=sys.stderr,
             )
         return EXIT_FATAL_LIFECYCLE

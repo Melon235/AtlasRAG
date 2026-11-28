@@ -15,7 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from atlasrag.config.models import RuntimeConfig
-from atlasrag.domain.errors import AtlasRAGError
+from atlasrag.domain.errors import AtlasRAGError, RuntimeShutdownFailedError
 from atlasrag.runtime.composition import ApplicationComposition
 from atlasrag.runtime.coordinator import ApplicationCoordinator
 from atlasrag.server.auth import (
@@ -449,9 +449,14 @@ def create_app(
         finally:
             if owns_shutdown and active_coordinator is not None:
                 await active_coordinator.shutdown()
-            await service.operations.wait_active(
-                timeout=runtime_config.maintenance.shutdown_timeout_seconds
-            )
+                if not await service.operations.wait_active(
+                    timeout=runtime_config.maintenance.shutdown_timeout_seconds
+                ):
+                    raise RuntimeShutdownFailedError
+            else:
+                await service.operations.wait_active(
+                    timeout=runtime_config.maintenance.shutdown_timeout_seconds
+                )
 
     app = FastAPI(
         title="AtlasRAG Local Application Server",

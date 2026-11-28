@@ -243,15 +243,9 @@ async def _retry_startup_dependency(
 class ApplicationComposition:
     """Own shared infrastructure and expose one ApplicationCoordinator."""
 
-    def __init__(
-        self, config: RuntimeConfig, *, ownership_path: Path | None = None
-    ) -> None:
+    def __init__(self, config: RuntimeConfig) -> None:
         self._config = config
-        self._ownership = (
-            RuntimeOwnershipLock()
-            if ownership_path is None
-            else RuntimeOwnershipLock(ownership_path)
-        )
+        self._ownership = RuntimeOwnershipLock()
         self._pool: PostgresPool | None = None
         self._pool_cleanup_failed = False
         self._milvus: MilvusIndexProvider | None = None

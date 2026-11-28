@@ -325,16 +325,11 @@ class MaintenanceOperationRegistry:
             )
 
     async def wait_active(self, *, timeout: float | None = None) -> bool:
-        """Await any active server-owned maintenance task up to optional timeout.
-
-        Returns True when no active operation remains unsettled; returns False on
-        timeout without cancelling the operation or falsifying its terminal state.
-        Propagates outer cancellation immediately.
-        """
+        """Await any active server-owned maintenance task or reservation cleanly."""
 
         task = self._active_task
         if task is None or task.done():
-            return True
+            return self._active_operation_id is None
         effective_timeout = None if timeout is None else max(0.0, timeout)
         done, _ = await asyncio.wait((task,), timeout=effective_timeout)
-        return task in done or task.done()
+        return (task in done or task.done()) and self._active_operation_id is None

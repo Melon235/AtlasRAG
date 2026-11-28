@@ -218,6 +218,7 @@ class ServerDiscoveryRecord(FrozenModel):
     boot_id: StrictStr
     server_instance_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
     started_at: datetime
+    shutdown_timeout_seconds: Annotated[StrictReal, Field(gt=0)] | None = None
 
 
 class ShutdownReceipt(FrozenModel):

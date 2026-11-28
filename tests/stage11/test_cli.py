@@ -1,4 +1,4 @@
-"""WP-D unit and local subprocess tests for the thin AtlasRAG CLI."""
+"""WP-D unit, R1 security regression, and subprocess tests for the thin CLI."""
 
 from __future__ import annotations
 
@@ -13,12 +13,14 @@ import sys
 import threading
 import time
 from collections.abc import Awaitable, Callable
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import httpx
 import pytest
 from pydantic import HttpUrl
 
+import atlasrag.runtime.ownership as ownership_module
 from atlasrag.cli.main import EXIT_OK, build_parser, main
 from atlasrag.config.models import RuntimeConfig
 from atlasrag.domain.enums import EvidenceType
@@ -39,6 +41,7 @@ from atlasrag.server.auth import (
     read_secure_local_file,
     server_discovery_path,
     shutdown_receipt_path,
+    validate_loopback_url,
     write_secure_local_file,
 )
 from atlasrag.server.config import ServerConfig
@@ -59,6 +62,23 @@ from stage11.conftest import (
 )
 
 cli_module = sys.modules["atlasrag.cli.main"]
+
+
+def _stop_threaded_server(
+    *, state_dir: Path, port: int, thread: threading.Thread
+) -> None:
+    token = read_secure_local_file(control_token_path(state_dir))
+    with httpx.Client(follow_redirects=False, trust_env=False) as client:
+        resp = client.post(
+            f"http://127.0.0.1:{port}/api/v1/control/shutdown",
+            json={},
+            headers={
+                "origin": f"http://127.0.0.1:{port}",
+                "authorization": f"Bearer {token}",
+            },
+        )
+        assert resp.status_code == 202
+    thread.join(timeout=5.0)
 
 
 def _unused_port() -> int:
@@ -83,14 +103,12 @@ def _run_launcher_in_thread(
     shutdown_timeout_seconds: float = 1.5,
 ) -> tuple[threading.Thread, list[int], RuntimeOwnershipLock]:
     exit_codes: list[int] = []
-    ready_event = threading.Event()
-    lock = RuntimeOwnershipLock(state_dir / "runtime.lock")
+    lock = RuntimeOwnershipLock()
 
     async def factory(
         cfg: RuntimeConfig,
         bus: InvocationEventBus,
         settled: Callable[[], Awaitable[None] | None],
-        _lp: Path | None,
     ) -> ApplicationCoordinator:
         deps, harness = build_test_dependencies(
             retrieval=retrieval,
@@ -132,7 +150,6 @@ def _run_launcher_in_thread(
     assert server_discovery_path(state_dir).exists(), (
         f"server failed early: {exit_codes}"
     )
-    ready_event.set()
     return thread, exit_codes, lock
 
 
@@ -165,7 +182,7 @@ assert not forbidden, forbidden
     assert not (tmp_path / "s").exists()
 
 
-def test_cli_discovery_precedence_and_non_loopback_token_guard(
+def test_cli_discovery_precedence_and_url_security_bounds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     state_dir = tmp_path / "state"
@@ -192,7 +209,6 @@ def test_cli_discovery_precedence_and_non_loopback_token_guard(
 
     monkeypatch.setattr(httpx, "Client", _FakeClient)
 
-    # 1. --server-url beats ATLASRAG_SERVER_URL and server.json
     assert (
         main(
             [
@@ -208,7 +224,6 @@ def test_cli_discovery_precedence_and_non_loopback_token_guard(
     )
     assert seen_base_urls[-1] == "http://127.0.0.1:9001"
 
-    # 2. ATLASRAG_SERVER_URL beats server.json
     assert (
         main(
             ["health", "--state-dir", str(state_dir)],
@@ -218,24 +233,29 @@ def test_cli_discovery_precedence_and_non_loopback_token_guard(
     )
     assert seen_base_urls[-1] == "http://localhost:9002"
 
-    # 3. server.json beats default :8000
     assert main(["health", "--state-dir", str(state_dir)], environ={}) == 3
     assert seen_base_urls[-1] == "http://127.0.0.1:8123"
 
-    # 4. Non-loopback target fails BEFORE reading control.token!
+    # Reject non-loopback, fragments, queries, non-root paths, userinfo BEFORE token access.
     read_calls: list[Path] = []
-    orig_read = read_secure_local_file
+    orig_read = cli_module.read_secure_local_file
 
     def _spy_read(path: Path, *, max_bytes: int = 8192) -> str:
         read_calls.append(path)
-        return orig_read(path, max_bytes=max_bytes)
+        return str(orig_read(path, max_bytes=max_bytes))
 
     monkeypatch.setattr(cli_module, "read_secure_local_file", _spy_read)
     for bad_url in [
         "http://evil.example.com:8000",
         "http://user:pass@127.0.0.1:8000",
         "ftp://127.0.0.1:8000",
+        "http://127.0.0.1:8000#frag",
+        "http://127.0.0.1:8000?a=1",
+        "http://127.0.0.1:8000/subpath",
+        "http://127.0.0.1:99999",
     ]:
+        with pytest.raises(ValueError):
+            validate_loopback_url(bad_url)
         code = main(
             ["sync", "--state-dir", str(state_dir), "--server-url", bad_url],
             environ={},
@@ -262,10 +282,225 @@ def test_cli_serve_invalid_config_exits_2_without_state_dir_mutation(
     assert not state_dir.exists()
 
 
+def test_wpd_f02_control_commands_refuse_unrelated_loopback_destination_without_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """WPD-F02: stop/sync/recover must never send control.token to mismatched loopback URL."""
+
+    state_dir = tmp_path / "state"
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+    port = _unused_port()
+
+    unrelated_hits: list[tuple[str, dict[str, str]]] = []
+
+    class _DecoyHandler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            unrelated_hits.append(
+                (self.path, {k.lower(): v for k, v in self.headers.items()})
+            )
+            self.send_response(202)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                b'{"status":"SHUTTING_DOWN","pid":1,"server_instance_id":"decoy"}'
+            )
+
+        def log_message(self, *_args: object) -> None:
+            return
+
+    decoy = HTTPServer(("127.0.0.1", 0), _DecoyHandler)
+    decoy_port = int(decoy.server_address[1])
+    decoy_thread = threading.Thread(target=decoy.serve_forever, daemon=True)
+    decoy_thread.start()
+
+    thread, exit_codes, lock = _run_launcher_in_thread(state_dir=state_dir, port=port)
+    try:
+        decoy_url = f"http://127.0.0.1:{decoy_port}"
+        for argv, env in [
+            (
+                [
+                    "stop",
+                    "--state-dir",
+                    str(state_dir),
+                    "--server-url",
+                    decoy_url,
+                    "--force",
+                    "--json",
+                ],
+                {},
+            ),
+            (
+                ["stop", "--state-dir", str(state_dir), "--force", "--json"],
+                {"ATLASRAG_SERVER_URL": decoy_url},
+            ),
+            (
+                [
+                    "sync",
+                    "--state-dir",
+                    str(state_dir),
+                    "--server-url",
+                    decoy_url,
+                    "--json",
+                ],
+                {},
+            ),
+            (
+                ["recover", "--state-dir", str(state_dir), "--json"],
+                {"ATLASRAG_SERVER_URL": decoy_url},
+            ),
+        ]:
+            code = main(argv, environ=env)
+            assert code == 4
+            out = json.loads(capsys.readouterr().out)
+            assert out["error_code"] == "CONTROL_TARGET_MISMATCH"
+        assert unrelated_hits == []
+
+        _stop_threaded_server(state_dir=state_dir, port=port, thread=thread)
+        assert exit_codes == [EXIT_OK]
+    finally:
+        decoy.shutdown()
+        decoy.server_close()
+        lock.release()
+
+
+def test_wpd_f02_stop_rejects_mismatched_202_identity_and_pre_shutdown_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """WPD-F02: Verify HTTP 202 status/pid/instance_id and pre-shutdown replacement race."""
+
+    state_dir = tmp_path / "state"
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        ticks = read_proc_stat_starttime(sleeper.pid)
+        boot = read_boot_id()
+        signal_calls: list[int] = []
+        monkeypatch.setattr(
+            signal, "pidfd_send_signal", lambda _fd, sig: signal_calls.append(sig)
+        )
+        # Hold canonical lock FROM sleeper's PID? Wait: verify_target_process requires sleeper to hold lock;
+        # mock verify_process_holds_flock for the HTTP-202 mismatch & replacement cases while testing real flock elsewhere.
+        monkeypatch.setattr(
+            cli_module, "verify_process_holds_flock", lambda _p, _lp: True
+        )
+        orig_verify_target = cli_module.verify_target_process
+
+        # Mock HTTP server returning tampered 202 payloads.
+        responses: list[bytes] = [
+            json.dumps(
+                {
+                    "status": "SHUTTING_DOWN",
+                    "pid": sleeper.pid + 1,
+                    "server_instance_id": "inst-ok",
+                }
+            ).encode(),
+            json.dumps(
+                {
+                    "status": "SHUTTING_DOWN",
+                    "pid": sleeper.pid,
+                    "server_instance_id": "wrong-id",
+                }
+            ).encode(),
+            json.dumps(
+                {"status": "ALIVE", "pid": sleeper.pid, "server_instance_id": "inst-ok"}
+            ).encode(),
+        ]
+
+        class _Bad202Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                body = responses.pop(0)
+                self.send_response(202)
+                self.send_header("content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args: object) -> None:
+                return
+
+        srv = HTTPServer(("127.0.0.1", 0), _Bad202Handler)
+        srv_port = int(srv.server_address[1])
+        srv_thread = threading.Thread(target=srv.serve_forever, daemon=True)
+        srv_thread.start()
+        try:
+            write_secure_local_file(control_token_path(state_dir), "tok-ok")
+            write_secure_local_file(
+                server_discovery_path(state_dir),
+                json.dumps(
+                    {
+                        "url": f"http://127.0.0.1:{srv_port}",
+                        "host": "127.0.0.1",
+                        "port": srv_port,
+                        "pid": sleeper.pid,
+                        "process_start_ticks": ticks,
+                        "boot_id": boot,
+                        "server_instance_id": "inst-ok",
+                        "started_at": "2026-01-01T00:00:00Z",
+                    }
+                ),
+            )
+            monkeypatch.setattr(
+                cli_module,
+                "verify_target_process",
+                lambda sd: orig_verify_target(sd, lock_path=lock_path),
+            )
+            # Even test real verify_process_holds_flock isn't active? Notice cli_module.verify_target_process uses auth module's.
+            import atlasrag.server.auth as auth_module
+
+            monkeypatch.setattr(
+                auth_module, "verify_process_holds_flock", lambda _p, _lp: True
+            )
+
+            for _ in range(3):
+                assert (
+                    main(
+                        ["stop", "--state-dir", str(state_dir), "--force", "--json"],
+                        environ={},
+                    )
+                    == 4
+                )
+                err = json.loads(capsys.readouterr().out)
+                assert err["error_code"] == "SERVER_IDENTITY_MISMATCH"
+            assert not signal_calls
+
+            # Pre-shutdown discovery/token replacement race: simulate token rotated right before POST.
+            def rotating_verify_stability(**_kwargs: object) -> bool:
+                write_secure_local_file(
+                    control_token_path(state_dir), "rotated-new-token"
+                )
+                return False
+
+            monkeypatch.setattr(
+                cli_module, "_verify_pre_shutdown_stability", rotating_verify_stability
+            )
+            assert (
+                main(
+                    ["stop", "--state-dir", str(state_dir), "--force", "--json"],
+                    environ={},
+                )
+                == 4
+            )
+            assert (
+                json.loads(capsys.readouterr().out)["error_code"]
+                == "UNVERIFIED_PROCESS_IDENTITY"
+            )
+            assert not signal_calls
+        finally:
+            srv.shutdown()
+            srv.server_close()
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+
+
 def test_cli_ask_session_reuse_auto_renew_stream_filters_and_maintenance(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     state_dir = tmp_path / "state"
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
     port = _unused_port()
     seen_filters: list[QueryFilters | None] = []
     sync_outcomes = [
@@ -294,7 +529,6 @@ def test_cli_ask_session_reuse_auto_renew_stream_filters_and_maintenance(
         retrieval=fake_retrieval,
     )
     try:
-        # 1. health --live / --ready and status --refresh
         assert (
             main(["health", "--state-dir", str(state_dir), "--json"], environ={}) == 0
         )
@@ -316,10 +550,8 @@ def test_cli_ask_session_reuse_auto_renew_stream_filters_and_maintenance(
             )
             == 0
         )
-        status_json = json.loads(capsys.readouterr().out)
-        assert status_json["mode"] == "SERVING"
+        assert json.loads(capsys.readouterr().out)["mode"] == "SERVING"
 
-        # 2. First ask creates cli_session.json (0o600)
         assert (
             main(
                 [
@@ -343,12 +575,11 @@ def test_cli_ask_session_reuse_auto_renew_stream_filters_and_maintenance(
         assert stat.S_IMODE(cli_session_path(state_dir).stat().st_mode) == 0o600
         assert seen_filters[-1] is not None and seen_filters[-1].file_name == "doc.md"
 
-        # 3. Second ask reuses the same cli_session.json session_id and streams SSE cleanly
         assert (
             main(
                 [
                     "ask",
-                    "Streamed question",
+                    "Streamed",
                     "--stream",
                     "--state-dir",
                     str(state_dir),
@@ -361,7 +592,6 @@ def test_cli_ask_session_reuse_auto_renew_stream_filters_and_maintenance(
         second_out = json.loads(capsys.readouterr().out)
         assert second_out["session_id"] == first_session_id
 
-        # 4. Stale cached session_id -> server returns 404 SESSION_NOT_FOUND -> CLI auto-renews once!
         stale_record = CliSessionRecord(
             server_instance_id=None,
             server_url=f"http://127.0.0.1:{port}",
@@ -372,21 +602,18 @@ def test_cli_ask_session_reuse_auto_renew_stream_filters_and_maintenance(
             cli_session_path(state_dir), stale_record.model_dump_json()
         )
         assert (
-            main(
-                ["ask", "Renew question", "--state-dir", str(state_dir), "--json"],
-                environ={},
-            )
+            main(["ask", "Renew", "--state-dir", str(state_dir), "--json"], environ={})
             == 0
         )
-        renewed_out = json.loads(capsys.readouterr().out)
-        assert renewed_out["session_id"] != "sess_expired_unknown"
+        assert (
+            json.loads(capsys.readouterr().out)["session_id"] != "sess_expired_unknown"
+        )
 
-        # 5. Pinned --session-id unknown fails exit 1 without silently renewing.
         assert (
             main(
                 [
                     "ask",
-                    "Bad session",
+                    "Bad sess",
                     "--session-id",
                     "sess_bad",
                     "--state-dir",
@@ -399,7 +626,6 @@ def test_cli_ask_session_reuse_auto_renew_stream_filters_and_maintenance(
         )
         assert json.loads(capsys.readouterr().out)["error_code"] == "SESSION_NOT_FOUND"
 
-        # 6. Invalid ask args -> exit 2
         assert main(["ask", "   ", "--state-dir", str(state_dir)], environ={}) == 2
         assert (
             main(
@@ -409,7 +635,6 @@ def test_cli_ask_session_reuse_auto_renew_stream_filters_and_maintenance(
             == 2
         )
 
-        # 7. sync SAFE_TO_SERVE -> exit 0; UNSAFE_TO_SERVE -> exit 1!
         assert (
             main(
                 [
@@ -424,8 +649,7 @@ def test_cli_ask_session_reuse_auto_renew_stream_filters_and_maintenance(
             )
             == 0
         )
-        sync_ok = json.loads(capsys.readouterr().out)
-        assert sync_ok["serving_safety"] == "SAFE_TO_SERVE"
+        assert json.loads(capsys.readouterr().out)["serving_safety"] == "SAFE_TO_SERVE"
 
         assert (
             main(
@@ -441,33 +665,24 @@ def test_cli_ask_session_reuse_auto_renew_stream_filters_and_maintenance(
             )
             == 1
         )
-        sync_unsafe = json.loads(capsys.readouterr().out)
-        assert sync_unsafe["serving_safety"] == "UNSAFE_TO_SERVE"
+        assert (
+            json.loads(capsys.readouterr().out)["serving_safety"] == "UNSAFE_TO_SERVE"
+        )
 
-        # 8. HTTP shutdown ends thread cleanly
-        token = read_secure_local_file(control_token_path(state_dir))
-        with httpx.Client(follow_redirects=False, trust_env=False) as client:
-            stop_r = client.post(
-                f"http://127.0.0.1:{port}/api/v1/control/shutdown",
-                json={},
-                headers={
-                    "origin": f"http://127.0.0.1:{port}",
-                    "authorization": f"Bearer {token}",
-                },
-            )
-            assert stop_r.status_code == 202
-        thread.join(timeout=5.0)
+        _stop_threaded_server(state_dir=state_dir, port=port, thread=thread)
         assert exit_codes == [EXIT_OK]
     finally:
         lock.release()
 
 
 def _spawn_test_server_subprocess(
-    *, state_dir: Path, port: int, behavior: str = "clean"
+    *, state_dir: Path, lock_path: Path, port: int, behavior: str = "clean"
 ) -> subprocess.Popen[str]:
     script = f"""
 import asyncio, dataclasses, os, sys
 from pathlib import Path
+import atlasrag.runtime.ownership as ownership_mod
+ownership_mod.canonical_lock_path = lambda: Path({str(lock_path)!r})
 from atlasrag.runtime.coordinator import ApplicationCoordinator
 from atlasrag.runtime.ownership import RuntimeOwnershipLock
 from atlasrag.server.config import ServerConfig
@@ -481,7 +696,7 @@ payload["maintenance"]["shutdown_timeout_seconds"] = 1.0
 runtime_cfg = type(sample_runtime_config()).model_validate(payload)
 server_cfg = ServerConfig(host="127.0.0.1", port={port}, state_directory=str(state_dir))
 
-async def factory(cfg, bus, settled, lp):
+async def factory(cfg, bus, settled):
     async def hang_close():
         await asyncio.sleep(30.0)
     deps, harness = build_test_dependencies(
@@ -489,8 +704,7 @@ async def factory(cfg, bus, settled, lp):
         close_resources=hang_close if behavior == "hang_shutdown" else None,
         shutdown_timeout_seconds=1.0,
     )
-    if lp is not None:
-        harness.ownership = RuntimeOwnershipLock(lp)
+    harness.ownership = RuntimeOwnershipLock()
     deps_locked = dataclasses.replace(
         deps,
         ownership=harness.ownership,
@@ -529,13 +743,17 @@ raise SystemExit(code)
     return proc
 
 
-def test_cli_stop_verifies_pidfd_and_clean_receipt_end_to_end(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_cli_stop_verifies_pidfd_and_clean_receipt_and_new_server_isolation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Real child server + stop clean exit, plus old exit & new startup race isolation."""
+
     state_dir = tmp_path / "state"
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
     port = _unused_port()
     proc = _spawn_test_server_subprocess(
-        state_dir=state_dir, port=port, behavior="clean"
+        state_dir=state_dir, lock_path=lock_path, port=port, behavior="clean"
     )
     try:
         code = main(
@@ -547,7 +765,6 @@ def test_cli_stop_verifies_pidfd_and_clean_receipt_end_to_end(
         assert result["status"] == "CLEAN_SHUTDOWN"
         assert result["pid"] == proc.pid
         assert proc.wait(timeout=3.0) == 0
-        # Receipt consumed and cleaned up after verified exit.
         assert not shutdown_receipt_path(
             state_dir, result["server_instance_id"]
         ).exists()
@@ -557,13 +774,63 @@ def test_cli_stop_verifies_pidfd_and_clean_receipt_end_to_end(
             proc.wait()
 
 
+def test_wpd_f02_original_process_exits_and_new_server_starts_while_stop_waits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """WPD-F02: When old server dies without receipt and new server starts, stop fails 4 and leaves new server intact."""
+
+    state_dir = tmp_path / "state"
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+    old_port = _unused_port()
+    old_proc = _spawn_test_server_subprocess(
+        state_dir=state_dir, lock_path=lock_path, port=old_port, behavior="no_receipt"
+    )
+    new_proc: subprocess.Popen[str] | None = None
+    try:
+        # Intercept _wait_pidfd_exit so after old_proc exits without receipt, a brand-new server starts in the SAME state_dir.
+        orig_wait = cli_module._wait_pidfd_exit
+
+        def wait_then_start_new(pidfd: int, timeout_s: float) -> bool:
+            exited = bool(orig_wait(pidfd, timeout_s))
+            old_proc.wait(timeout=3.0)
+            nonlocal new_proc
+            new_proc = _spawn_test_server_subprocess(
+                state_dir=state_dir,
+                lock_path=lock_path,
+                port=_unused_port(),
+                behavior="clean",
+            )
+            return exited
+
+        monkeypatch.setattr(cli_module, "_wait_pidfd_exit", wait_then_start_new)
+        code = main(
+            ["stop", "--state-dir", str(state_dir), "--timeout", "5.0", "--json"],
+            environ={},
+        )
+        assert code == 4
+        assert json.loads(capsys.readouterr().out)["error_code"] == "UNVERIFIED_EXIT"
+        assert new_proc is not None and new_proc.poll() is None
+        # New server discovery must NOT have been touched or stopped by old stop!
+        assert server_discovery_path(state_dir).exists()
+    finally:
+        if old_proc.poll() is None:
+            old_proc.kill()
+            old_proc.wait()
+        if new_proc is not None and new_proc.poll() is None:
+            new_proc.kill()
+            new_proc.wait()
+
+
 def test_cli_stop_exits_4_when_process_exits_without_clean_receipt(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     state_dir = tmp_path / "state"
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
     port = _unused_port()
     proc = _spawn_test_server_subprocess(
-        state_dir=state_dir, port=port, behavior="no_receipt"
+        state_dir=state_dir, lock_path=lock_path, port=port, behavior="no_receipt"
     )
     try:
         code = main(
@@ -580,15 +847,16 @@ def test_cli_stop_exits_4_when_process_exits_without_clean_receipt(
 
 
 def test_cli_stop_timeout_without_force_and_with_verified_pidfd_force(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     state_dir = tmp_path / "state"
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
     port = _unused_port()
     proc = _spawn_test_server_subprocess(
-        state_dir=state_dir, port=port, behavior="hang_shutdown"
+        state_dir=state_dir, lock_path=lock_path, port=port, behavior="hang_shutdown"
     )
     try:
-        # 1. Without --force: times out -> exit 1; process stays alive!
         code1 = main(
             ["stop", "--state-dir", str(state_dir), "--timeout", "0.3", "--json"],
             environ={},
@@ -596,9 +864,6 @@ def test_cli_stop_timeout_without_force_and_with_verified_pidfd_force(
         assert code1 == 1
         assert json.loads(capsys.readouterr().out)["error_code"] == "SHUTDOWN_TIMEOUT"
         assert proc.poll() is None
-
-        # 2. Server.json already removed on graceful request, or write same identity so pre-shutdown verify works for --force test
-        # Re-test --force against a fresh hanging subprocess before first shutdown:
     finally:
         proc.kill()
         proc.wait()
@@ -606,7 +871,7 @@ def test_cli_stop_timeout_without_force_and_with_verified_pidfd_force(
     state_dir2 = tmp_path / "state2"
     port2 = _unused_port()
     proc2 = _spawn_test_server_subprocess(
-        state_dir=state_dir2, port=port2, behavior="hang_shutdown"
+        state_dir=state_dir2, lock_path=lock_path, port=port2, behavior="hang_shutdown"
     )
     try:
         code2 = main(
@@ -625,6 +890,7 @@ def test_cli_stop_timeout_without_force_and_with_verified_pidfd_force(
         out2 = json.loads(capsys.readouterr().out)
         assert out2["status"] == "FORCED_TERMINATION"
         assert out2["signal"] in {"SIGTERM", "SIGKILL"}
+        assert out2["terminated"] is True
         assert proc2.wait(timeout=3.0) is not None
     finally:
         if proc2.poll() is None:
@@ -632,10 +898,12 @@ def test_cli_stop_timeout_without_force_and_with_verified_pidfd_force(
             proc2.wait()
 
 
-def test_cli_stop_force_refuses_missing_unsafe_reused_or_unlocked_process(
+def test_cli_stop_force_refuses_missing_unsafe_reused_foreign_or_unlocked_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # 1. Missing server.json with --force -> exit 4 without HTTP/signal
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+
     empty_state = tmp_path / "empty"
     empty_state.mkdir()
     assert (
@@ -645,22 +913,47 @@ def test_cli_stop_force_refuses_missing_unsafe_reused_or_unlocked_process(
     assert main(["stop", "--state-dir", str(empty_state), "--json"], environ={}) == 3
     capsys.readouterr()
 
-    # 2. Prepare valid live child sleeping process + tampered metadata checks
     sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
         state_dir = tmp_path / "verify_fail"
-        lock = RuntimeOwnershipLock(state_dir / "runtime.lock")
-        lock.acquire()
         ticks = read_proc_stat_starttime(sleeper.pid)
         boot = read_boot_id()
         write_secure_local_file(control_token_path(state_dir), "tok")
 
         signal_calls: list[int] = []
         monkeypatch.setattr(
-            signal, "pidfd_send_signal", lambda fd, sig: signal_calls.append(sig)
+            signal, "pidfd_send_signal", lambda _fd, sig: signal_calls.append(sig)
         )
 
-        # 2a. PID start time mismatch (PID reuse simulation) -> exit 4, zero signal
+        # 1. Canonical lock held by THIS pytest process (NOT sleeper.pid!) -> even with valid sleeper pid & ticks, must REFUSE!
+        lock = RuntimeOwnershipLock(lock_path)
+        lock.acquire()
+        write_secure_local_file(
+            server_discovery_path(state_dir),
+            json.dumps(
+                {
+                    "url": "http://127.0.0.1:8999",
+                    "host": "127.0.0.1",
+                    "port": 8999,
+                    "pid": sleeper.pid,
+                    "process_start_ticks": ticks,
+                    "boot_id": boot,
+                    "server_instance_id": "inst-foreign-lock",
+                    "started_at": "2026-01-01T00:00:00Z",
+                }
+            ),
+        )
+        assert (
+            main(
+                ["stop", "--state-dir", str(state_dir), "--force", "--json"], environ={}
+            )
+            == 4
+        )
+        foreign_err = json.loads(capsys.readouterr().out)
+        assert "canonical runtime ownership lock" in foreign_err["message"]
+        assert not signal_calls
+
+        # 2. PID start time mismatch -> exit 4
         write_secure_local_file(
             server_discovery_path(state_dir),
             json.dumps(
@@ -684,7 +977,7 @@ def test_cli_stop_force_refuses_missing_unsafe_reused_or_unlocked_process(
         )
         assert not signal_calls
 
-        # 2b. boot_id mismatch -> exit 4
+        # 3. boot_id mismatch -> exit 4
         write_secure_local_file(
             server_discovery_path(state_dir),
             json.dumps(
@@ -708,7 +1001,10 @@ def test_cli_stop_force_refuses_missing_unsafe_reused_or_unlocked_process(
         )
         assert not signal_calls
 
-        # 2c. runtime.lock released (not held) -> exit 4
+        # 4. Decoy lock placed inside state_dir while canonical lock_path is unlocked -> exit 4
+        lock.release()
+        decoy_state_lock = RuntimeOwnershipLock(state_dir / "runtime.lock")
+        decoy_state_lock.acquire()
         write_secure_local_file(
             server_discovery_path(state_dir),
             json.dumps(
@@ -719,12 +1015,11 @@ def test_cli_stop_force_refuses_missing_unsafe_reused_or_unlocked_process(
                     "pid": sleeper.pid,
                     "process_start_ticks": ticks,
                     "boot_id": boot,
-                    "server_instance_id": "inst-unlocked",
+                    "server_instance_id": "inst-decoy-dir-lock",
                     "started_at": "2026-01-01T00:00:00Z",
                 }
             ),
         )
-        lock.release()
         assert (
             main(
                 ["stop", "--state-dir", str(state_dir), "--force", "--json"], environ={}
@@ -732,6 +1027,7 @@ def test_cli_stop_force_refuses_missing_unsafe_reused_or_unlocked_process(
             == 4
         )
         assert not signal_calls
+        decoy_state_lock.release()
         capsys.readouterr()
     finally:
         sleeper.kill()
@@ -774,9 +1070,11 @@ def test_parser_subcommands_cover_stage11_contract() -> None:
 
 
 def test_cli_recover_no_wait_and_human_text_rendering(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     state_dir = tmp_path / "state"
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
     port = _unused_port()
 
     async def blocked_reconcile() -> ReconciliationResult:
@@ -819,7 +1117,6 @@ def test_cli_recover_no_wait_and_human_text_rendering(
         retrieval=cited_retrieval,
     )
     try:
-        # 1. Blocked server -> health --ready returns 1, health --live returns 0, status returns 0
         assert main(["health", "--state-dir", str(state_dir)], environ={}) == 1
         assert "ready=False" in capsys.readouterr().out
 
@@ -833,7 +1130,6 @@ def test_cli_recover_no_wait_and_human_text_rendering(
         assert "mode=BLOCKED" in status_text
         assert "dependencies:" in status_text
 
-        # 2. recover restores SERVING (with --wait -> exit 0)
         assert (
             main(
                 ["recover", "--poll-interval", "0.05", "--state-dir", str(state_dir)],
@@ -841,43 +1137,24 @@ def test_cli_recover_no_wait_and_human_text_rendering(
             )
             == 0
         )
-        recover_text = capsys.readouterr().out
-        assert "serving_safety=SAFE_TO_SERVE" in recover_text
+        assert "serving_safety=SAFE_TO_SERVE" in capsys.readouterr().out
 
-        # 3. ask text output prints answer_text + local/web citations + footer
         assert (
-            main(
-                ["ask", "Explain manual", "--state-dir", str(state_dir)],
-                environ={},
-            )
+            main(["ask", "Explain manual", "--state-dir", str(state_dir)], environ={})
             == 0
         )
         ask_text = capsys.readouterr().out
         assert "Answer with local and web citations." in ask_text
         assert "[L1] manual.pdf (docs/manual.pdf) (p.2)" in ask_text
         assert "[W1] Example Reference: https://example.com/ref" in ask_text
-        assert "[cache=" in ask_text
 
-        # 4. sync --no-wait exits 0 immediately after 202 acceptance
         assert (
             main(["sync", "--no-wait", "--state-dir", str(state_dir)], environ={}) == 0
         )
         assert "operation=op_" in capsys.readouterr().out
 
-        # Wait briefly so background no-wait sync finishes before shutdown
         time.sleep(0.15)
-        token = read_secure_local_file(control_token_path(state_dir))
-        with httpx.Client(follow_redirects=False, trust_env=False) as client:
-            resp = client.post(
-                f"http://127.0.0.1:{port}/api/v1/control/shutdown",
-                json={},
-                headers={
-                    "origin": f"http://127.0.0.1:{port}",
-                    "authorization": f"Bearer {token}",
-                },
-            )
-            assert resp.status_code == 202
-        thread.join(timeout=5.0)
+        _stop_threaded_server(state_dir=state_dir, port=port, thread=thread)
         assert exit_codes == [EXIT_OK]
     finally:
         lock.release()

@@ -20,21 +20,27 @@ import uvicorn
 from uvicorn.server import HANDLED_SIGNALS
 
 from atlasrag.config.models import RuntimeConfig
-from atlasrag.domain.errors import ConfigurationError, RuntimeOwnershipConflictError
+from atlasrag.domain.errors import (
+    ConfigurationError,
+    RuntimeOwnershipConflictError,
+    RuntimeShutdownFailedError,
+)
 from atlasrag.runtime.composition import ApplicationComposition
 from atlasrag.runtime.coordinator import ApplicationCoordinator
 from atlasrag.server.app import create_app
 from atlasrag.server.auth import (
+    CleanupOutcome,
+    MetadataCleanupError,
     canonical_state_directory,
     control_token_path,
     prune_shutdown_receipts,
     read_boot_id,
     read_proc_stat_starttime,
-    resolve_runtime_lock_path,
     server_discovery_path,
     shutdown_receipt_path,
     unlink_owned_control_token,
     unlink_owned_server_discovery,
+    unlink_owned_shutdown_receipt,
     validate_loopback_url,
     write_secure_local_file,
 )
@@ -54,7 +60,6 @@ LauncherCoordinatorFactory = Callable[
         RuntimeConfig,
         InvocationEventBus,
         Callable[[], Awaitable[None] | None],
-        Path | None,
     ],
     Awaitable[ApplicationCoordinator],
 ]
@@ -107,14 +112,23 @@ class _ManagedUvicornServer(uvicorn.Server):
         on_bound: Callable[[int], None],
         on_begin_shutdown: Callable[[], Awaitable[None]],
         on_signal_exit: Callable[[], None],
+        is_coordinator_ready: Callable[[], bool],
+        on_signal_before_publish: Callable[[], None],
     ) -> None:
         super().__init__(config)
         self._on_bound = on_bound
         self._on_begin_shutdown = on_begin_shutdown
         self._on_signal_exit = on_signal_exit
+        self._is_coordinator_ready = is_coordinator_ready
+        self._on_signal_before_publish = on_signal_before_publish
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._signals_enabled = True
         self._shutdown_started = False
         self._lifespan_shutdown_ran = False
+
+    def disable_signals(self) -> None:
+        self._signals_enabled = False
+        self._loop = None
 
     @contextlib.contextmanager
     def capture_signals(self) -> Iterator[None]:
@@ -129,6 +143,7 @@ class _ManagedUvicornServer(uvicorn.Server):
         try:
             yield
         finally:
+            self._signals_enabled = False
             for sig, handler in original_handlers.items():
                 signal.signal(sig, handler)
 
@@ -138,6 +153,8 @@ class _ManagedUvicornServer(uvicorn.Server):
             self.force_exit = True
         else:
             self.should_exit = True
+        if not self._signals_enabled:
+            return
         loop = self._loop
         if loop is not None and not loop.is_closed():
             try:
@@ -145,9 +162,37 @@ class _ManagedUvicornServer(uvicorn.Server):
             except RuntimeError:
                 pass
 
+    def _has_bound_socket(self, sockets: Sequence[Any] | None) -> bool:
+        if sockets:
+            return True
+        for server in getattr(self, "servers", ()):
+            if getattr(server, "sockets", None):
+                return True
+        return False
+
     async def startup(self, sockets: list[Any] | None = None) -> None:
         self._loop = asyncio.get_running_loop()
         await super().startup(sockets=sockets)
+        lifespan = getattr(self, "lifespan", None)
+        lifespan_ok = (
+            lifespan is not None
+            and not lifespan.startup_failed
+            and not lifespan.error_occurred
+            and not lifespan.should_exit
+        )
+        if (
+            not self.started
+            or not lifespan_ok
+            or not self._has_bound_socket(sockets)
+            or not self._is_coordinator_ready()
+        ):
+            await self.ensure_lifespan_shutdown()
+            raise SystemExit(EXIT_FATAL_LIFECYCLE)
+
+        if self.should_exit:
+            self._on_signal_before_publish()
+            return
+
         bound_port = self._resolve_bound_port(sockets)
         try:
             self._on_bound(bound_port)
@@ -164,14 +209,14 @@ class _ManagedUvicornServer(uvicorn.Server):
             self._lifespan_shutdown_ran = True
 
     async def ensure_lifespan_shutdown(self) -> None:
-        """Ensure lifespan/coordinator teardown still executes even on force_exit."""
+        """Ensure single lifespan/coordinator teardown still executes on force_exit."""
 
         lifespan = getattr(self, "lifespan", None)
         if lifespan is None or self._lifespan_shutdown_ran:
             return
+        self._lifespan_shutdown_ran = True
         if not lifespan.shutdown_event.is_set() and not lifespan.error_occurred:
             await lifespan.shutdown()
-        self._lifespan_shutdown_ran = True
 
     def _resolve_bound_port(self, sockets: Sequence[Any] | None) -> int:
         if sockets:
@@ -203,7 +248,6 @@ class ServerLauncher:
         self._coordinator_factory = coordinator_factory
         self._log_level = log_level
         self._state_dir = canonical_state_directory(server_config)
-        self._lock_path = resolve_runtime_lock_path(server_config)
         self._event_bus = InvocationEventBus()
         self._server_instance_id = uuid4().hex
         self._control_token: str | None = None
@@ -211,9 +255,13 @@ class ServerLauncher:
         self._discovery_record: ServerDiscoveryRecord | None = None
         self._shutdown_receipt: ShutdownReceipt | None = None
         self._server_published = False
+        self._receipt_written = False
         self._settled_cleanly = False
+        self._signal_before_publish = False
+        self._cleanup_closed = False
         self._startup_exit_code: int | None = None
         self._shutdown_failed = False
+        self._t0_discovery_cleanup_error: BaseException | None = None
         self._uvicorn_server: _ManagedUvicornServer | None = None
         self._app: Any = None
         self._signal_begin_task: asyncio.Task[None] | None = None
@@ -238,12 +286,56 @@ class ServerLauncher:
     def uvicorn_server(self) -> _ManagedUvicornServer | None:
         return self._uvicorn_server
 
-    async def _on_shutdown_settled(self) -> None:
-        """Remove owned discovery/token and write clean receipt strictly under lock."""
+    def _safe_t0_unlink_discovery(self) -> None:
+        if self._cleanup_closed:
+            return
+        try:
+            outcome = unlink_owned_server_discovery(
+                self._state_dir, self._server_instance_id
+            )
+            if outcome is CleanupOutcome.FOREIGN_INSTANCE:
+                self._t0_discovery_cleanup_error = MetadataCleanupError(
+                    "foreign server.json observed at shutdown initiation"
+                )
+        except MetadataCleanupError as error:
+            self._t0_discovery_cleanup_error = error
 
-        unlink_owned_server_discovery(self._state_dir, self._server_instance_id)
+    async def _on_shutdown_settled(self) -> None:
+        """Verify operations settlement and clean owned metadata strictly under lock."""
+
+        service = (
+            getattr(self._app.state, "server_service", None)
+            if self._app is not None
+            else None
+        )
+        if service is not None:
+            ops_settled = await service.operations.wait_active(
+                timeout=self._runtime_config.maintenance.shutdown_timeout_seconds
+            )
+            if not ops_settled:
+                raise RuntimeShutdownFailedError
+
+        disc_outcome = unlink_owned_server_discovery(
+            self._state_dir, self._server_instance_id
+        )
+        if disc_outcome is CleanupOutcome.FOREIGN_INSTANCE:
+            raise MetadataCleanupError(
+                "refusing clean receipt with foreign server.json present"
+            )
         if self._control_token is not None:
-            unlink_owned_control_token(self._state_dir, self._control_token)
+            token_outcome = unlink_owned_control_token(
+                self._state_dir, self._control_token
+            )
+            if token_outcome is CleanupOutcome.FOREIGN_INSTANCE:
+                raise MetadataCleanupError(
+                    "refusing clean receipt with foreign control.token present"
+                )
+        if (
+            self._t0_discovery_cleanup_error is not None
+            and disc_outcome is not CleanupOutcome.REMOVED
+        ):
+            raise self._t0_discovery_cleanup_error
+
         if self._server_published:
             receipt = ShutdownReceipt(
                 server_instance_id=self._server_instance_id,
@@ -256,31 +348,26 @@ class ServerLauncher:
                 receipt.model_dump_json(indent=2),
             )
             self._shutdown_receipt = receipt
+            self._receipt_written = True
             self._settled_cleanly = True
+        else:
+            # Startup/bind failure or signal-before-publish: metadata cleaned, no clean receipt.
+            self._settled_cleanly = self._signal_before_publish
+
+        self._cleanup_closed = True
 
     async def _start_coordinator(
         self, runtime_config: RuntimeConfig
     ) -> ApplicationCoordinator:
-        ownership_arg = (
-            self._lock_path if self._server_config.state_directory is not None else None
-        )
         try:
             if self._coordinator_factory is not None:
                 coordinator = await self._coordinator_factory(
                     runtime_config,
                     self._event_bus,
                     self._on_shutdown_settled,
-                    ownership_arg,
                 )
             else:
-                composition = (
-                    ApplicationComposition(runtime_config)
-                    if ownership_arg is None
-                    else ApplicationComposition(
-                        runtime_config, ownership_path=ownership_arg
-                    )
-                )
-                coordinator = await composition.start(
+                coordinator = await ApplicationComposition(runtime_config).start(
                     observer=self._event_bus,
                     on_shutdown_settled=self._on_shutdown_settled,
                 )
@@ -324,6 +411,7 @@ class ServerLauncher:
             boot_id=read_boot_id(),
             server_instance_id=self._server_instance_id,
             started_at=datetime.now(UTC),
+            shutdown_timeout_seconds=self._runtime_config.maintenance.shutdown_timeout_seconds,
         )
         write_secure_local_file(
             server_discovery_path(self._state_dir),
@@ -333,12 +421,14 @@ class ServerLauncher:
         self._server_published = True
 
     def _on_http_shutdown_requested(self) -> None:
-        unlink_owned_server_discovery(self._state_dir, self._server_instance_id)
+        self._safe_t0_unlink_discovery()
         if self._uvicorn_server is not None:
             self._uvicorn_server.should_exit = True
 
     def _on_signal_exit(self) -> None:
-        unlink_owned_server_discovery(self._state_dir, self._server_instance_id)
+        if self._cleanup_closed:
+            return
+        self._safe_t0_unlink_discovery()
         coordinator = self._coordinator
         if coordinator is not None and (
             self._signal_begin_task is None or self._signal_begin_task.done()
@@ -347,10 +437,15 @@ class ServerLauncher:
                 coordinator.gate.begin_shutdown()
             )
 
+    def _on_signal_before_publish(self) -> None:
+        self._signal_before_publish = True
+
     async def _on_begin_shutdown(self) -> None:
-        unlink_owned_server_discovery(self._state_dir, self._server_instance_id)
+        if self._cleanup_closed:
+            return
         if self._coordinator is not None:
             await self._coordinator.gate.begin_shutdown()
+        self._safe_t0_unlink_discovery()
 
     async def serve(self, *, sockets: list[Any] | None = None) -> int:
         """Start the server, serve until shutdown, and return the exit code."""
@@ -380,21 +475,20 @@ class ServerLauncher:
             on_bound=self._on_bound,
             on_begin_shutdown=self._on_begin_shutdown,
             on_signal_exit=self._on_signal_exit,
+            is_coordinator_ready=lambda: self._coordinator is not None,
+            on_signal_before_publish=self._on_signal_before_publish,
         )
         self._uvicorn_server = server
 
+        startup_system_exit = False
         try:
             await server.serve(sockets=sockets)
         except SystemExit:
-            if self._startup_exit_code is not None:
-                return self._startup_exit_code
-            return EXIT_FATAL_LIFECYCLE
+            startup_system_exit = True
         except BaseException:
-            if self._startup_exit_code is not None:
-                return self._startup_exit_code
             self._shutdown_failed = True
-            return EXIT_FATAL_LIFECYCLE
         finally:
+            server.disable_signals()
             if (
                 self._signal_begin_task is not None
                 and not self._signal_begin_task.done()
@@ -408,19 +502,7 @@ class ServerLauncher:
                 await server.ensure_lifespan_shutdown()
             except BaseException:
                 self._shutdown_failed = True
-            lifespan = getattr(server, "lifespan", None)
-            lifespan_failed = lifespan is not None and (
-                lifespan.error_occurred or lifespan.shutdown_failed
-            )
-            if (
-                self._coordinator is not None
-                and not self._settled_cleanly
-                and not lifespan_failed
-            ):
-                try:
-                    await self._coordinator.shutdown()
-                except BaseException:
-                    self._shutdown_failed = True
+            self._cleanup_closed = True
 
         lifespan = getattr(server, "lifespan", None)
         if lifespan is not None and (
@@ -428,19 +510,31 @@ class ServerLauncher:
         ):
             self._shutdown_failed = True
 
-        service = getattr(app.state, "server_service", None)
-        if service is not None:
+        # WPD-F03: if ownership.release() failed AFTER on_shutdown_settled wrote receipt,
+        # coordinator._shutdown_done remains False (lock never released); revoke the
+        # receipt so no false CLEAN_SHUTDOWN exists, and exit 4.
+        if (
+            self._receipt_written
+            and self._coordinator is not None
+            and not getattr(self._coordinator, "_shutdown_done", False)
+        ):
+            self._shutdown_failed = True
+            self._settled_cleanly = False
+            self._shutdown_receipt = None
             try:
-                if not await service.operations.wait_active(timeout=0.0):
-                    self._shutdown_failed = True
+                unlink_owned_shutdown_receipt(self._state_dir, self._server_instance_id)
             except BaseException:
-                self._shutdown_failed = True
+                pass
 
         if self._startup_exit_code is not None:
             return self._startup_exit_code
-        if self._shutdown_failed or not self._settled_cleanly:
+        if startup_system_exit:
             return EXIT_FATAL_LIFECYCLE
-        return EXIT_OK
+        if self._shutdown_failed:
+            return EXIT_FATAL_LIFECYCLE
+        if self._settled_cleanly:
+            return EXIT_OK
+        return EXIT_FATAL_LIFECYCLE
 
     def run(self, *, sockets: list[Any] | None = None) -> int:
         """Execute the managed single-worker Uvicorn server synchronously."""
