@@ -573,7 +573,7 @@ def test_real_server_slow_consumer_and_actual_asgi_send_stall_timeout(
     diag_dir = tmp_path / "diag_slow"
     port = _unused_port()
 
-    # Part A: slow reader with small queue maxsize (2) finishes burst without blocking worker.
+    # Part A: slow reader with small queue maxsize (16) finishes burst without blocking worker.
     with _spawn_real_uvicorn_server(
         home_dir=home,
         state_dir=state_dir,
@@ -844,14 +844,19 @@ def test_real_server_external_sigkill_and_hung_worker_force_pidfd_escalation(
 ) -> None:
     """S11-22/23/24: External SIGKILL fails closed (4); hung live worker escalates via pidfd --force (4)."""
 
-    # 1. External SIGKILL -> stop exits 4 (UNVERIFIED_EXIT); next serve recovers stale state cleanly.
+    # 1. External SIGKILL while stop waits (during close_resources) -> stop exits 4 (UNVERIFIED_EXIT); next serve recovers cleanly.
     home_kill = tmp_path / "home_kill"
     state_kill = tmp_path / "state_kill"
     diag_kill = tmp_path / "diag_kill"
     port_kill = _unused_port()
 
     with _spawn_real_uvicorn_server(
-        home_dir=home_kill, state_dir=state_kill, diag_dir=diag_kill, port=port_kill
+        home_dir=home_kill,
+        state_dir=state_kill,
+        diag_dir=diag_kill,
+        port=port_kill,
+        mode="hung_worker",
+        shutdown_timeout_seconds=0.3,
     ) as proc_kill:
         kill_lock_path = home_kill / ".local" / "state" / "atlasrag" / "runtime.lock"
         stop_proc = subprocess.Popen(
@@ -871,12 +876,34 @@ def test_real_server_external_sigkill_and_hung_worker_force_pidfd_escalation(
             stderr=subprocess.PIPE,
             text=True,
         )
-        # Wait until stop captures server identity & initiates shutdown (unlinking server.json), or kill directly:
-        time.sleep(0.15)
+        _wait_for_marker(diag_kill / "hung_close_entered", timeout=8.0, proc=proc_kill)
         proc_kill.kill()
         proc_kill.wait(timeout=5.0)
         out_stop, _ = stop_proc.communicate(timeout=8.0)
         assert stop_proc.returncode == EXIT_FATAL_LIFECYCLE
+        assert json.loads(out_stop)["error_code"] == "UNVERIFIED_EXIT"
+
+    # External SIGKILL before stop (leaves stale discovery/token) -> stop exits 4; next serve recovers cleanly.
+    with _spawn_real_uvicorn_server(
+        home_dir=home_kill,
+        state_dir=state_kill,
+        diag_dir=diag_kill,
+        port=_unused_port(),
+    ) as proc_ungraceful:
+        proc_ungraceful.kill()
+        proc_ungraceful.wait(timeout=5.0)
+        assert server_discovery_path(state_kill).exists()
+        stale_stop = subprocess.run(
+            _cli_subprocess_cmd(
+                kill_lock_path,
+                ["stop", "--state-dir", str(state_kill), "--json"],
+            ),
+            env=_make_subprocess_env(home_kill),
+            capture_output=True,
+            text=True,
+            timeout=8.0,
+        )
+        assert stale_stop.returncode == EXIT_FATAL_LIFECYCLE
 
     # Fresh restart recovers from any leftover files cleanly.
     with _spawn_real_uvicorn_server(
