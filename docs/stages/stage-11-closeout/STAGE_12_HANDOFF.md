@@ -1,6 +1,6 @@
 # Stage 12 Handoff — Web Demo and Existing RAG Acceptance
 
-- **Predecessor Stage:** Stage 11 — Local Application Server (`COMPLETE / READY_FOR_PR_REVIEW` on `stage/11-local-application-server` at `0789687`)
+- **Predecessor Stage:** Stage 11 — Local Application Server (`COMPLETE / READY_FOR_PR_REVIEW` on `stage/11-local-application-server`)
 - **Accepted `main` Baseline Prior to Stage 11 PR:** `9cd2344f2076d60ee53568eb35aaa625474dc645`
 - **Next Planned Stage:** Stage 12 — Web Demo and Existing RAG Acceptance (`NOT_STARTED`)
 - **Stage 13 MCP Server Status:** **`DEFERRED`** (do not start MCP tools/ACLs/Evidence Cache in Stage 12)

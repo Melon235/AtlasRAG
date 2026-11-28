@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -227,7 +229,7 @@ def test_stage10_ci_uses_isolated_real_services_and_cleanup() -> None:
     assert "FLUSHALL" not in verify_script
 
 
-def test_stage11_ci_uses_isolated_real_services_and_cleanup() -> None:
+def test_stage11_ci_uses_isolated_real_services_and_cleanup(tmp_path: Path) -> None:
     workflow = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
     stage11 = _job(workflow, "stage11-server")
     verify_script = (REPOSITORY_ROOT / "scripts" / "stage11_verify.sh").read_text(
@@ -259,3 +261,49 @@ def test_stage11_ci_uses_isolated_real_services_and_cleanup() -> None:
     assert "scripts/stage11_verify.sh --integration-only" in makefile
     assert "FLUSHDB" not in verify_script
     assert "FLUSHALL" not in verify_script
+
+    rt_ok = tmp_path / "rt-ok"
+    rt_bad = tmp_path / "rt-bad"
+    rt_ok.mkdir()
+    rt_bad.mkdir()
+    isolation_script = REPOSITORY_ROOT / "scripts" / "stage10_isolation.py"
+    clean_env = {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "STAGE10_LOCK_DIR": str(tmp_path / "locks"),
+    }
+    accepted = subprocess.run(
+        [
+            sys.executable,
+            str(isolation_script),
+            "prepare",
+            "--runtime-dir",
+            str(rt_ok),
+            "--repository-root",
+            str(REPOSITORY_ROOT),
+            "--project-name",
+            "atlasrag-stage11-ci-123-1",
+        ],
+        capture_output=True,
+        text=True,
+        env=clean_env,
+        check=False,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+    rejected = subprocess.run(
+        [
+            sys.executable,
+            str(isolation_script),
+            "prepare",
+            "--runtime-dir",
+            str(rt_bad),
+            "--repository-root",
+            str(REPOSITORY_ROOT),
+            "--project-name",
+            "atlasrag-local",
+        ],
+        capture_output=True,
+        text=True,
+        env=clean_env,
+        check=False,
+    )
+    assert rejected.returncode != 0

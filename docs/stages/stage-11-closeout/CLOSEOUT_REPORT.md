@@ -16,7 +16,7 @@ Stage 13 MCP: DEFERRED
 
 - **Repository / Branch:** `Melon235/AtlasRAG` / `stage/11-local-application-server`
 - **Accepted `main` Baseline:** `9cd2344f2076d60ee53568eb35aaa625474dc645` (`PR #11` & `PR #12` **MERGED**)
-- **Reviewed Implementation `HEAD`:** `0789687` (`2efe7bb` + deterministic `SIGKILL` synchronization)
+- **Layer D Independently Reviewed Implementation:** `2efe7bb` (+ `0789687` deterministic `SIGKILL` sync + CI isolation prefix support in `scripts/stage10_isolation.py`)
 - **Architecture Authorities:**
   - [`AtlasRAG_Complete_Final_Architecture_Design_Manual.md`](../../architecture/AtlasRAG_Complete_Final_Architecture_Design_Manual.md) (preserved unmodified)
   - [`ADR-002-part-iv-web-demo-and-mcp-milestone-refinement.md`](../../architecture/ADR-002-part-iv-web-demo-and-mcp-milestone-refinement.md)

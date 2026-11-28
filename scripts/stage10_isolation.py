@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import SplitResult, urlsplit
 
-STAGE10_PROJECT_PATTERN = re.compile(r"\Aatlasrag-stage10(?:[a-z0-9-]*[a-z0-9])?\Z")
+STAGE10_PROJECT_PATTERN = re.compile(r"\Aatlasrag-stage1[01](?:[a-z0-9-]*[a-z0-9])?\Z")
 STAGE10_RUN_ID_PATTERN = re.compile(r"\Aatlasrag_s10b_[a-f0-9]{16,64}\Z")
 STAGE10_REDIS_OWNER_KEY = "atlasrag:test:stage10b:owner"
 STAGE10_MILVUS_OWNER_COLLECTION = "atlasrag_stage10b_owner"
@@ -89,7 +89,7 @@ def validate_stage10_project_name(project_name: str) -> str:
         or STAGE10_PROJECT_PATTERN.fullmatch(project_name) is None
     ):
         raise Stage10IsolationError(
-            "COMPOSE_PROJECT_NAME must match ^atlasrag-stage10[a-z0-9-]*[a-z0-9]$ "
+            "COMPOSE_PROJECT_NAME must match ^atlasrag-stage1[01](?:[a-z0-9-]*[a-z0-9])?$ "
             "(development/Stage 9 project names are forbidden)"
         )
     return project_name
