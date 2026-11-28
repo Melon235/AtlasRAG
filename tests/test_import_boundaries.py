@@ -543,3 +543,21 @@ def test_cli_module_rejects_heavy_and_web_imports(
 
     assert result.returncode != 0
     assert f"cli module may not import '{forbidden}'" in result.stderr
+
+
+@pytest.mark.parametrize("forbidden", ["fastapi", "starlette"])
+def test_server_launcher_rejects_web_app_frameworks_and_allows_uvicorn(
+    tmp_path: Path, forbidden: str
+) -> None:
+    target = tmp_path / "src" / "atlasrag" / "server" / "launcher.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("import uvicorn\n", encoding="utf-8")
+    allowed_result = run_checker(tmp_path)
+    assert allowed_result.returncode == 0, allowed_result.stdout + allowed_result.stderr
+
+    target.write_text(f"import {forbidden}\n", encoding="utf-8")
+    blocked_result = run_checker(tmp_path)
+    assert blocked_result.returncode != 0
+    assert (
+        f"server launcher module may not import '{forbidden}'" in blocked_result.stderr
+    )

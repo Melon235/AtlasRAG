@@ -625,6 +625,27 @@ def scan_file(path: Path, root: Path) -> list[Diagnostic]:
                         )
                     )
                     continue
+            if relative_path == "src/atlasrag/server/launcher.py":
+                forbidden_asgi_app = next(
+                    (
+                        prefix
+                        for target in targets
+                        if (
+                            prefix := _matching_prefix(("fastapi", "starlette"), target)
+                        )
+                        is not None
+                    ),
+                    None,
+                )
+                if forbidden_asgi_app is not None:
+                    diagnostics.append(
+                        Diagnostic(
+                            relative_path,
+                            node.lineno,
+                            f"server launcher module may not import '{forbidden_asgi_app}'",
+                        )
+                    )
+                    continue
             if relative_path.startswith("src/atlasrag/cli/"):
                 forbidden_cli = next(
                     (

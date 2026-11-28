@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, StrictBool, StrictInt, StrictStr, field_validator
 
@@ -205,3 +205,34 @@ class ShutdownAcceptedResponse(FrozenModel):
     status: LivenessStatus = LivenessStatus.SHUTTING_DOWN
     pid: Annotated[StrictInt, Field(ge=1)]
     server_instance_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+
+
+class ServerDiscoveryRecord(FrozenModel):
+    """Local server discovery metadata written only after lock and socket bind."""
+
+    url: StrictStr
+    host: StrictStr
+    port: Annotated[StrictInt, Field(ge=1, le=65535)]
+    pid: Annotated[StrictInt, Field(ge=1)]
+    process_start_ticks: Annotated[StrictInt, Field(ge=0)]
+    boot_id: StrictStr
+    server_instance_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+    started_at: datetime
+
+
+class ShutdownReceipt(FrozenModel):
+    """Atomic clean-shutdown receipt written strictly under RuntimeOwnershipLock."""
+
+    server_instance_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+    pid: Annotated[StrictInt, Field(ge=1)]
+    status: Literal["CLEAN_SHUTDOWN"] = "CLEAN_SHUTDOWN"
+    completed_at: datetime
+
+
+class CliSessionRecord(FrozenModel):
+    """Locally persisted CLI session metadata scoped to one server instance."""
+
+    server_instance_id: StrictStr | None = None
+    server_url: StrictStr
+    session_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+    expires_at: datetime

@@ -384,6 +384,7 @@ STAGE11_PRODUCTION_FILES = frozenset(
         "server/config.py",
         "server/errors.py",
         "server/events.py",
+        "server/launcher.py",
         "server/operations.py",
         "server/schemas.py",
         "server/service.py",
@@ -732,12 +733,22 @@ def _is_forbidden_import(module_name: str, path: Path | None = None) -> bool:
                 "socket",
             }
             else {
+                "src/atlasrag/cli/main.py",
                 "src/atlasrag/providers/web/searxng.py",
                 "src/atlasrag/providers/generation/deepseek.py",
                 "src/atlasrag/runtime/composition.py",
             }
         )
         return relative_path.as_posix() not in allowed
+    if root == "uvicorn":
+        if path is None:
+            return True
+        relative_path = (
+            path.relative_to(REPOSITORY_ROOT)
+            if path.is_absolute() and path.is_relative_to(REPOSITORY_ROOT)
+            else path
+        )
+        return relative_path.as_posix() != "src/atlasrag/server/launcher.py"
     if root in {"fastapi", "starlette"}:
         if path is None:
             return True

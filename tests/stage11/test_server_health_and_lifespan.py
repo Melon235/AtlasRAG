@@ -224,9 +224,9 @@ def test_cli_main_scaffold_is_import_safe_and_lightweight(
     assert cli_main([]) == 2
     out = capsys.readouterr()
     assert "atlasrag" in out.out.casefold()
-    with pytest.raises(SystemExit) as exc_info:
-        cli_main(["serve"])
-    assert exc_info.value.code == 2
+    assert cli_main(["serve"]) == 2
+    serve_out = capsys.readouterr()
+    assert "configuration" in (serve_out.out + serve_out.err).casefold()
 
     assert require_control_bearer is not None
     result = subprocess.run(
