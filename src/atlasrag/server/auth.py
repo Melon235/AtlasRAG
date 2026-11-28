@@ -709,36 +709,65 @@ def unlink_owned_control_token(state_dir: Path, expected_token: str) -> CleanupO
     return CleanupOutcome.REMOVED
 
 
-def unlink_owned_shutdown_receipt(
-    state_dir: Path, server_instance_id: str
+def clear_stale_server_discovery_under_lock(
+    state_dir: Path, current_instance_id: str
 ) -> CleanupOutcome:
-    """Unlink owned clean-shutdown receipt only on pre-release rollback."""
+    """Safely clear stale server.json strictly under newly acquired runtime ownership."""
 
-    path = shutdown_receipt_path(state_dir, server_instance_id)
+    path = server_discovery_path(state_dir)
     try:
         _ensure_absent_or_raise(path, state_dir)
     except FileNotFoundError:
         return CleanupOutcome.ABSENT
     except OSError as error:
-        raise MetadataCleanupError("shutdown receipt inspection failed") from error
+        raise MetadataCleanupError("stale server.json inspection failed") from error
 
     try:
         raw = read_secure_local_file(path, max_bytes=16_384)
-        receipt = ShutdownReceipt.model_validate_json(raw)
+        record = ServerDiscoveryRecord.model_validate_json(raw)
     except FileNotFoundError:
         return CleanupOutcome.ABSENT
     except (OSError, PermissionError, ValueError, ValidationError) as error:
         raise MetadataCleanupError(
-            "shutdown receipt failed security or schema checks"
+            "stale server.json failed security or schema checks"
         ) from error
 
-    if receipt.server_instance_id != server_instance_id:
-        return CleanupOutcome.FOREIGN_INSTANCE
+    if record.server_instance_id == current_instance_id:
+        return CleanupOutcome.ABSENT
 
     try:
         path.unlink()
     except FileNotFoundError:
         return CleanupOutcome.ABSENT
     except OSError as error:
-        raise MetadataCleanupError("failed to unlink shutdown receipt") from error
+        raise MetadataCleanupError("failed to clear stale server.json") from error
+    return CleanupOutcome.REMOVED
+
+
+def clear_stale_control_token_under_lock(state_dir: Path) -> CleanupOutcome:
+    """Safely clear stale control.token strictly under newly acquired runtime ownership."""
+
+    path = control_token_path(state_dir)
+    try:
+        _ensure_absent_or_raise(path, state_dir)
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except OSError as error:
+        raise MetadataCleanupError("stale control.token inspection failed") from error
+
+    try:
+        read_secure_local_file(path, max_bytes=8_192)
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except (OSError, PermissionError, ValueError) as error:
+        raise MetadataCleanupError(
+            "stale control.token failed security checks"
+        ) from error
+
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return CleanupOutcome.ABSENT
+    except OSError as error:
+        raise MetadataCleanupError("failed to clear stale control.token") from error
     return CleanupOutcome.REMOVED

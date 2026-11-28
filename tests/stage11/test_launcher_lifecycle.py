@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import fcntl
 import json
 import os
 import signal
 import socket
 import stat
+import threading
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -21,6 +23,7 @@ import atlasrag.runtime.ownership as ownership_module
 from atlasrag.config.models import RuntimeConfig
 from atlasrag.domain.errors import (
     RuntimeBootstrapFailedError,
+    RuntimeOwnershipConflictError,
     RuntimeShutdownFailedError,
 )
 from atlasrag.domain.requests import UserTurnRequest
@@ -28,12 +31,18 @@ from atlasrag.domain.results import FinalResponse
 from atlasrag.runtime.composition import ApplicationComposition
 from atlasrag.runtime.coordinator import ApplicationCoordinator
 from atlasrag.runtime.modes import RuntimeMode
-from atlasrag.runtime.ownership import RuntimeOwnershipLock
+from atlasrag.runtime.ownership import (
+    LockOwnershipState,
+    OwnershipReleaseOutcome,
+    RuntimeOwnershipLock,
+)
 from atlasrag.runtime.tasks import TaskKind
+from atlasrag.server import auth as auth_module
 from atlasrag.server import launcher as launcher_module
 from atlasrag.server.auth import (
     CleanupOutcome,
     MetadataCleanupError,
+    clear_stale_server_discovery_under_lock,
     control_token_path,
     is_runtime_lock_active,
     read_boot_id,
@@ -930,3 +939,556 @@ def test_instance_verified_unlink_preserves_other_instance_and_fails_closed_on_u
     write_secure_local_file(server_discovery_path(state_dir), "{corrupt")
     with pytest.raises(MetadataCleanupError):
         unlink_owned_server_discovery(state_dir, "inst-new")
+
+    # D11-02-AMENDMENT-01: no stale receipt-revocation helper remains necessary.
+    assert not hasattr(auth_module, "unlink_owned_shutdown_receipt")
+
+
+def test_e0_02_receipt_timing_post_release_only_and_lock_semantics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E0-02: Verify post-release CLEAN_SHUTDOWN commit ordering and all release failure modes."""
+
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+
+    # 1. Normal shutdown writes integer-pid receipt strictly AFTER ownership.release().
+    state_ok = tmp_path / "normal_order"
+    port_ok = _unused_loopback_port()
+    events: list[str] = []
+    harness_ok: list[HarnessObjects] = []
+
+    async def _run_normal_order() -> None:
+        async def factory(
+            cfg: RuntimeConfig,
+            bus: InvocationEventBus,
+            settled: Callable[[], Awaitable[None] | None],
+        ) -> ApplicationCoordinator:
+            async def wrapped_settled() -> None:
+                res = settled()
+                if res is not None:
+                    await res
+                assert not list(state_ok.glob("shutdown-*.json"))
+                assert not server_discovery_path(state_ok).exists()
+                assert not control_token_path(state_ok).exists()
+                assert is_runtime_lock_active(lock_path) is True
+                events.append("pre_release_settled")
+
+            coord = await _start_locked_coordinator(
+                cfg, bus, wrapped_settled, harness_sink=harness_ok
+            )
+            orig_release = harness_ok[0].ownership.release
+
+            def tracked_release() -> None:
+                assert not list(state_ok.glob("shutdown-*.json"))
+                orig_release()
+                assert not list(state_ok.glob("shutdown-*.json"))
+                assert (
+                    harness_ok[0].ownership.release_outcome
+                    is OwnershipReleaseOutcome.CONFIRMED_RELEASED
+                )
+                assert (
+                    harness_ok[0].ownership.inspect_kernel_ownership()
+                    is LockOwnershipState.NOT_HELD
+                )
+                events.append("ownership_released")
+
+            monkeypatch.setattr(harness_ok[0].ownership, "release", tracked_release)
+            return coord
+
+        launcher = ServerLauncher(
+            runtime_config=_make_runtime_with_timeout(0.5),
+            server_config=ServerConfig(
+                host="127.0.0.1", port=port_ok, state_directory=str(state_ok)
+            ),
+            coordinator_factory=factory,
+        )
+        serve_task = asyncio.create_task(launcher.serve())
+        await _wait_for_discovery(state_ok, serve_task)
+        assert launcher.uvicorn_server is not None
+        launcher.uvicorn_server.handle_exit(signal.SIGTERM, None)
+        exit_code = await asyncio.wait_for(serve_task, timeout=4.0)
+        assert exit_code == EXIT_OK
+        assert events == ["pre_release_settled", "ownership_released"]
+        receipt_file = shutdown_receipt_path(state_ok, launcher.server_instance_id)
+        assert receipt_file.exists()
+        raw = json.loads(read_secure_local_file(receipt_file))
+        assert type(raw["pid"]) is int and raw["pid"] == os.getpid()
+        assert raw["status"] == "CLEAN_SHUTDOWN"
+
+    asyncio.run(_run_normal_order())
+    monkeypatch.undo()
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+
+    # 2. Release raises AFTER actual unlock (flock(LOCK_UN) fails -> finally os.close releases kernel lock).
+    state_after = tmp_path / "release_after_unlock"
+    port_after = _unused_loopback_port()
+    harness_after: list[HarnessObjects] = []
+
+    async def _run_release_after_unlock() -> None:
+        async def factory(
+            cfg: RuntimeConfig,
+            bus: InvocationEventBus,
+            settled: Callable[[], Awaitable[None] | None],
+        ) -> ApplicationCoordinator:
+            return await _start_locked_coordinator(
+                cfg, bus, settled, harness_sink=harness_after
+            )
+
+        launcher = ServerLauncher(
+            runtime_config=_make_runtime_with_timeout(0.5),
+            server_config=ServerConfig(
+                host="127.0.0.1", port=port_after, state_directory=str(state_after)
+            ),
+            coordinator_factory=factory,
+        )
+        serve_task = asyncio.create_task(launcher.serve())
+        await _wait_for_discovery(state_after, serve_task)
+
+        target_unlock_fd = harness_after[0].ownership._fd
+        assert target_unlock_fd is not None
+        orig_flock = fcntl.flock
+        injected = False
+
+        def fail_unlock(fd: int, op: int) -> None:
+            nonlocal injected
+            if not injected and fd == target_unlock_fd and op == fcntl.LOCK_UN:
+                injected = True
+                raise OSError("injected LOCK_UN failure")
+            orig_flock(fd, op)
+
+        monkeypatch.setattr(fcntl, "flock", fail_unlock)
+        assert launcher.uvicorn_server is not None
+        launcher.uvicorn_server.handle_exit(signal.SIGTERM, None)
+        exit_code = await asyncio.wait_for(serve_task, timeout=4.0)
+        assert exit_code == EXIT_FATAL_LIFECYCLE
+        assert launcher.shutdown_receipt is None
+        assert not list(state_after.glob("shutdown-*.json"))
+        # Real os.close(fd) ran and released the kernel flock even though release() raised.
+        assert harness_after[0].ownership.acquired is False
+        assert (
+            harness_after[0].ownership.inspect_kernel_ownership()
+            is LockOwnershipState.NOT_HELD
+        )
+        assert (
+            harness_after[0].ownership.release_outcome
+            is OwnershipReleaseOutcome.FAILED_AFTER_RELEASE
+        )
+        assert is_runtime_lock_active(lock_path) is False
+        # Verify competing lock acquisition succeeds cleanly without stale holder.
+        probe = RuntimeOwnershipLock(lock_path)
+        probe.acquire()
+        probe.release()
+
+    asyncio.run(_run_release_after_unlock())
+    monkeypatch.undo()
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+
+    # 3. Release raises on os.close after real kernel close (Linux EIO semantics) -> never double-closes fd!
+    state_close = tmp_path / "release_close_eio"
+    port_close = _unused_loopback_port()
+    harness_close: list[HarnessObjects] = []
+
+    async def _run_close_eio() -> None:
+        async def factory(
+            cfg: RuntimeConfig,
+            bus: InvocationEventBus,
+            settled: Callable[[], Awaitable[None] | None],
+        ) -> ApplicationCoordinator:
+            return await _start_locked_coordinator(
+                cfg, bus, settled, harness_sink=harness_close
+            )
+
+        launcher = ServerLauncher(
+            runtime_config=_make_runtime_with_timeout(0.5),
+            server_config=ServerConfig(
+                host="127.0.0.1", port=port_close, state_directory=str(state_close)
+            ),
+            coordinator_factory=factory,
+        )
+        serve_task = asyncio.create_task(launcher.serve())
+        await _wait_for_discovery(state_close, serve_task)
+
+        target_fd = harness_close[0].ownership._fd
+        assert target_fd is not None
+        closed_fds: list[int] = []
+        orig_close = os.close
+        raised_once = False
+
+        def eio_close(fd: int) -> None:
+            nonlocal raised_once
+            if fd == target_fd and not raised_once:
+                raised_once = True
+                closed_fds.append(fd)
+                orig_close(fd)
+                raise OSError("EIO after kernel close")
+            if fd == target_fd and raised_once:
+                closed_fds.append(fd)
+            orig_close(fd)
+
+        monkeypatch.setattr(os, "close", eio_close)
+        assert launcher.uvicorn_server is not None
+        launcher.uvicorn_server.handle_exit(signal.SIGINT, None)
+        exit_code = await asyncio.wait_for(serve_task, timeout=4.0)
+        assert exit_code == EXIT_FATAL_LIFECYCLE
+        assert not list(state_close.glob("shutdown-*.json"))
+        assert (
+            harness_close[0].ownership.release_outcome
+            is OwnershipReleaseOutcome.FAILED_AFTER_RELEASE
+        )
+        # Idempotent retry of release() never calls close() a second time on target_fd.
+        closed_fds.clear()
+        harness_close[0].ownership.release()
+        assert closed_fds == []
+
+    asyncio.run(_run_close_eio())
+    monkeypatch.undo()
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+
+    # 4. Ambiguous unlock/close state (UNKNOWN) forbids receipt and returns exit 4.
+    state_ambig = tmp_path / "release_unknown"
+    port_ambig = _unused_loopback_port()
+    harness_ambig: list[HarnessObjects] = []
+
+    async def _run_unknown_state() -> None:
+        async def factory(
+            cfg: RuntimeConfig,
+            bus: InvocationEventBus,
+            settled: Callable[[], Awaitable[None] | None],
+        ) -> ApplicationCoordinator:
+            return await _start_locked_coordinator(
+                cfg, bus, settled, harness_sink=harness_ambig
+            )
+
+        launcher = ServerLauncher(
+            runtime_config=_make_runtime_with_timeout(0.5),
+            server_config=ServerConfig(
+                host="127.0.0.1", port=port_ambig, state_directory=str(state_ambig)
+            ),
+            coordinator_factory=factory,
+        )
+        serve_task = asyncio.create_task(launcher.serve())
+        await _wait_for_discovery(state_ambig, serve_task)
+
+        monkeypatch.setattr(
+            harness_ambig[0].ownership,
+            "inspect_kernel_ownership",
+            lambda: LockOwnershipState.UNKNOWN,
+        )
+        assert launcher.uvicorn_server is not None
+        launcher.uvicorn_server.handle_exit(signal.SIGTERM, None)
+        exit_code = await asyncio.wait_for(serve_task, timeout=4.0)
+        assert exit_code == EXIT_FATAL_LIFECYCLE
+        assert (
+            harness_ambig[0].ownership.release_outcome
+            is OwnershipReleaseOutcome.FAILED_UNKNOWN
+        )
+        assert not list(state_ambig.glob("shutdown-*.json"))
+
+    asyncio.run(_run_unknown_state())
+    monkeypatch.undo()
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+
+    # 5. Post-release receipt publication failure exits 4 cleanly with no leftover receipt or tmp file.
+    state_pub = tmp_path / "receipt_write_fail"
+    port_pub = _unused_loopback_port()
+
+    async def _run_receipt_fail() -> None:
+        launcher = ServerLauncher(
+            runtime_config=_make_runtime_with_timeout(0.5),
+            server_config=ServerConfig(
+                host="127.0.0.1", port=port_pub, state_directory=str(state_pub)
+            ),
+            coordinator_factory=_start_locked_coordinator,
+        )
+        serve_task = asyncio.create_task(launcher.serve())
+        await _wait_for_discovery(state_pub, serve_task)
+
+        orig_write = write_secure_local_file
+
+        def fail_receipt_write(path: Path, content: str) -> None:
+            if path.name.startswith("shutdown-"):
+                raise OSError("disk full writing receipt")
+            orig_write(path, content)
+
+        monkeypatch.setattr(
+            launcher_module, "write_secure_local_file", fail_receipt_write
+        )
+        assert launcher.uvicorn_server is not None
+        launcher.uvicorn_server.handle_exit(signal.SIGTERM, None)
+        exit_code = await asyncio.wait_for(serve_task, timeout=4.0)
+        assert exit_code == EXIT_FATAL_LIFECYCLE
+        assert launcher.shutdown_receipt is None
+        assert not list(state_pub.glob("shutdown-*.json"))
+        assert not list(state_pub.glob("*.tmp"))
+        assert is_runtime_lock_active(lock_path) is False
+
+    asyncio.run(_run_receipt_fail())
+    monkeypatch.undo()
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+
+    # 6. New server starts DURING old server's post-release receipt window + delayed callbacks cannot mutate new server.
+    state_race = tmp_path / "shared_state_race"
+    port_old = _unused_loopback_port()
+    port_new = _unused_loopback_port()
+    old_released_before_receipt = threading.Event()
+    allow_old_receipt = threading.Event()
+    orig_write = write_secure_local_file
+
+    launcher_old = ServerLauncher(
+        runtime_config=_make_runtime_with_timeout(0.5),
+        server_config=ServerConfig(
+            host="127.0.0.1", port=port_old, state_directory=str(state_race)
+        ),
+        coordinator_factory=_start_locked_coordinator,
+    )
+    old_id = launcher_old.server_instance_id
+
+    def barrier_receipt_write(path: Path, content: str) -> None:
+        if path.name == f"shutdown-{old_id}.json":
+            old_released_before_receipt.set()
+            assert allow_old_receipt.wait(timeout=5.0)
+        orig_write(path, content)
+
+    monkeypatch.setattr(
+        launcher_module, "write_secure_local_file", barrier_receipt_write
+    )
+
+    old_codes: list[int] = []
+    old_thread = threading.Thread(
+        target=lambda: old_codes.append(launcher_old.run()), daemon=True
+    )
+    old_thread.start()
+
+    deadline = time.monotonic() + 5.0
+    while (
+        time.monotonic() < deadline and not server_discovery_path(state_race).exists()
+    ):
+        time.sleep(0.02)
+    assert server_discovery_path(state_race).exists()
+
+    # Trigger graceful shutdown on old server; it will release ownership, then pause BEFORE writing receipt.
+    assert launcher_old.uvicorn_server is not None
+    launcher_old.uvicorn_server.handle_exit(signal.SIGTERM, None)
+    assert old_released_before_receipt.wait(timeout=5.0)
+    assert not is_runtime_lock_active(lock_path)
+    assert not server_discovery_path(state_race).exists()
+    assert not control_token_path(state_race).exists()
+    assert not shutdown_receipt_path(state_race, old_id).exists()
+
+    # While old server has NOT yet written its receipt, start the new server completely!
+    launcher_new = ServerLauncher(
+        runtime_config=_make_runtime_with_timeout(0.5),
+        server_config=ServerConfig(
+            host="127.0.0.1", port=port_new, state_directory=str(state_race)
+        ),
+        coordinator_factory=_start_locked_coordinator,
+    )
+    new_codes: list[int] = []
+    new_thread = threading.Thread(
+        target=lambda: new_codes.append(launcher_new.run()), daemon=True
+    )
+    new_thread.start()
+
+    deadline = time.monotonic() + 5.0
+    while (
+        time.monotonic() < deadline and not server_discovery_path(state_race).exists()
+    ):
+        time.sleep(0.02)
+    assert server_discovery_path(state_race).exists()
+    new_disc_before = json.loads(
+        read_secure_local_file(server_discovery_path(state_race))
+    )
+    new_token_before = read_secure_local_file(control_token_path(state_race))
+    assert new_disc_before["server_instance_id"] == launcher_new.server_instance_id
+
+    # Now allow old server to finish publishing its instance-scoped receipt concurrently with running new server.
+    allow_old_receipt.set()
+    old_thread.join(timeout=5.0)
+    assert old_codes == [EXIT_OK]
+
+    # Delayed callbacks on old launcher MUST NOT remove new server's server.json or control.token.
+    launcher_old._on_http_shutdown_requested()
+    launcher_old._on_signal_exit()
+    launcher_old._safe_t0_unlink_discovery()
+
+    new_disc_after = json.loads(
+        read_secure_local_file(server_discovery_path(state_race))
+    )
+    assert new_disc_after == new_disc_before
+    assert read_secure_local_file(control_token_path(state_race)) == new_token_before
+    assert shutdown_receipt_path(state_race, old_id).exists()
+    assert is_runtime_lock_active(lock_path) is True
+
+    assert launcher_new.uvicorn_server is not None
+    launcher_new.uvicorn_server.handle_exit(signal.SIGTERM, None)
+    new_thread.join(timeout=5.0)
+    assert new_codes == [EXIT_OK]
+
+
+def test_e0_03_stale_discovery_recovery_and_startup_failure_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E0-03: Verify stale recovery under newly acquired lock across normal restart, EADDRINUSE, signals, and unsafe files."""
+
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+
+    def _write_stale_crash_artifacts(state_dir: Path) -> None:
+        write_secure_local_file(control_token_path(state_dir), "stale-dead-token")
+        write_secure_local_file(
+            server_discovery_path(state_dir),
+            json.dumps(
+                {
+                    "url": "http://127.0.0.1:8123",
+                    "host": "127.0.0.1",
+                    "port": 8123,
+                    "pid": 999_999,
+                    "process_start_ticks": 123,
+                    "boot_id": read_boot_id(),
+                    "server_instance_id": "crashed-old-inst",
+                    "started_at": "2026-01-01T00:00:00Z",
+                }
+            ),
+        )
+        stale_lock = RuntimeOwnershipLock(lock_path)
+        stale_lock.acquire()
+        stale_lock.release()
+
+    # 1. Abnormal old exit -> new server recovers cleanly, replaces token & discovery, and shuts down cleanly.
+    state_ok = tmp_path / "recover_ok"
+    _write_stale_crash_artifacts(state_ok)
+    port_ok = _unused_loopback_port()
+
+    async def _run_recover_ok() -> None:
+        launcher = ServerLauncher(
+            runtime_config=_make_runtime_with_timeout(0.4),
+            server_config=ServerConfig(
+                host="127.0.0.1", port=port_ok, state_directory=str(state_ok)
+            ),
+            coordinator_factory=_start_locked_coordinator,
+        )
+        serve_task = asyncio.create_task(launcher.serve())
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not launcher._server_published:
+            assert not serve_task.done()
+            await asyncio.sleep(0.02)
+        assert launcher._server_published
+        disc = json.loads(read_secure_local_file(server_discovery_path(state_ok)))
+        assert disc["server_instance_id"] == launcher.server_instance_id
+        assert disc["server_instance_id"] != "crashed-old-inst"
+        assert (
+            read_secure_local_file(control_token_path(state_ok)) != "stale-dead-token"
+        )
+        assert launcher.uvicorn_server is not None
+        launcher.uvicorn_server.handle_exit(signal.SIGTERM, None)
+        assert await asyncio.wait_for(serve_task, timeout=4.0) == EXIT_OK
+        assert not server_discovery_path(state_ok).exists()
+        assert not control_token_path(state_ok).exists()
+        assert shutdown_receipt_path(state_ok, launcher.server_instance_id).exists()
+
+    asyncio.run(_run_recover_ok())
+
+    # 2. Abnormal old exit -> occupied port EADDRINUSE cleans stale discovery & token under lock, releases lock, exits 4.
+    state_bind = tmp_path / "recover_bind_fail"
+    _write_stale_crash_artifacts(state_bind)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(1)
+    occupied_port = int(sock.getsockname()[1])
+    try:
+        launcher_bind = ServerLauncher(
+            runtime_config=_make_runtime_with_timeout(0.3),
+            server_config=ServerConfig(
+                host="127.0.0.1", port=occupied_port, state_directory=str(state_bind)
+            ),
+            coordinator_factory=_start_locked_coordinator,
+        )
+        code = launcher_bind.run()
+        assert code == EXIT_FATAL_LIFECYCLE
+        assert not server_discovery_path(state_bind).exists()
+        assert not control_token_path(state_bind).exists()
+        assert not list(state_bind.glob("shutdown-*.json"))
+        assert is_runtime_lock_active(lock_path) is False
+    finally:
+        sock.close()
+
+    # 3. Abnormal old exit -> shutdown signal during startup cleans stale discovery & token under lock without receipt.
+    state_sig = tmp_path / "recover_startup_sig"
+    _write_stale_crash_artifacts(state_sig)
+    port_sig = _unused_loopback_port()
+
+    async def _run_recover_sig() -> None:
+        holder: list[ServerLauncher] = []
+
+        async def sig_on_open() -> None:
+            assert holder[0].uvicorn_server is not None
+            holder[0].uvicorn_server.handle_exit(signal.SIGTERM, None)
+
+        async def factory(
+            cfg: RuntimeConfig,
+            bus: InvocationEventBus,
+            settled: Callable[[], Awaitable[None] | None],
+        ) -> ApplicationCoordinator:
+            return await _start_locked_coordinator(
+                cfg, bus, settled, open_resources=sig_on_open
+            )
+
+        launcher_sig = ServerLauncher(
+            runtime_config=_make_runtime_with_timeout(0.4),
+            server_config=ServerConfig(
+                host="127.0.0.1", port=port_sig, state_directory=str(state_sig)
+            ),
+            coordinator_factory=factory,
+        )
+        holder.append(launcher_sig)
+        assert await launcher_sig.serve() == EXIT_OK
+        assert not server_discovery_path(state_sig).exists()
+        assert not control_token_path(state_sig).exists()
+        assert not list(state_sig.glob("shutdown-*.json"))
+        assert is_runtime_lock_active(lock_path) is False
+
+    asyncio.run(_run_recover_sig())
+
+    # 4. Unsafe symlink stale server.json fails closed under lock without following symlink.
+    state_unsafe = tmp_path / "recover_unsafe_symlink"
+    target_secret = tmp_path / "do_not_delete.txt"
+    target_secret.write_text("keep", encoding="utf-8")
+    state_unsafe.mkdir(mode=0o700)
+    server_discovery_path(state_unsafe).symlink_to(target_secret)
+    with pytest.raises(MetadataCleanupError):
+        clear_stale_server_discovery_under_lock(state_unsafe, "new-inst")
+    assert target_secret.exists()
+
+    # 5. Pre-lock signal during competing startup never mutates live primary server's files.
+    state_prelock = tmp_path / "prelock_signal"
+    write_secure_local_file(control_token_path(state_prelock), "primary-live-token")
+    primary_lock = RuntimeOwnershipLock(lock_path)
+    primary_lock.acquire()
+    try:
+
+        async def prelock_abort_factory(
+            cfg: RuntimeConfig,
+            bus: InvocationEventBus,
+            settled: Callable[[], Awaitable[None] | None],
+        ) -> ApplicationCoordinator:
+            del cfg, bus, settled
+            raise RuntimeOwnershipConflictError
+
+        competing = ServerLauncher(
+            runtime_config=_make_runtime_with_timeout(0.3),
+            server_config=ServerConfig(
+                host="127.0.0.1",
+                port=_unused_loopback_port(),
+                state_directory=str(state_prelock),
+            ),
+            coordinator_factory=prelock_abort_factory,
+        )
+        competing._on_http_shutdown_requested()
+        assert competing.run() == EXIT_OWNERSHIP_CONFLICT
+        assert (
+            read_secure_local_file(control_token_path(state_prelock))
+            == "primary-live-token"
+        )
+    finally:
+        primary_lock.release()

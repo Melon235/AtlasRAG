@@ -27,11 +27,19 @@ from atlasrag.domain.errors import (
 )
 from atlasrag.runtime.composition import ApplicationComposition
 from atlasrag.runtime.coordinator import ApplicationCoordinator
+from atlasrag.runtime.ownership import (
+    LockOwnershipState,
+    OwnershipReleaseOutcome,
+    RuntimeOwnershipLock,
+    inspect_process_flock_state,
+)
 from atlasrag.server.app import create_app
 from atlasrag.server.auth import (
     CleanupOutcome,
     MetadataCleanupError,
     canonical_state_directory,
+    clear_stale_control_token_under_lock,
+    clear_stale_server_discovery_under_lock,
     control_token_path,
     prune_shutdown_receipts,
     read_boot_id,
@@ -40,7 +48,6 @@ from atlasrag.server.auth import (
     shutdown_receipt_path,
     unlink_owned_control_token,
     unlink_owned_server_discovery,
-    unlink_owned_shutdown_receipt,
     validate_loopback_url,
     write_secure_local_file,
 )
@@ -255,7 +262,7 @@ class ServerLauncher:
         self._discovery_record: ServerDiscoveryRecord | None = None
         self._shutdown_receipt: ShutdownReceipt | None = None
         self._server_published = False
-        self._receipt_written = False
+        self._pre_release_settled = False
         self._settled_cleanly = False
         self._signal_before_publish = False
         self._cleanup_closed = False
@@ -287,7 +294,11 @@ class ServerLauncher:
         return self._uvicorn_server
 
     def _safe_t0_unlink_discovery(self) -> None:
-        if self._cleanup_closed:
+        if (
+            self._cleanup_closed
+            or self._coordinator is None
+            or not self._server_published
+        ):
             return
         try:
             outcome = unlink_owned_server_discovery(
@@ -301,7 +312,7 @@ class ServerLauncher:
             self._t0_discovery_cleanup_error = error
 
     async def _on_shutdown_settled(self) -> None:
-        """Verify operations settlement and clean owned metadata strictly under lock."""
+        """Verify operations settlement and clean shared metadata strictly under lock."""
 
         service = (
             getattr(self._app.state, "server_service", None)
@@ -320,7 +331,7 @@ class ServerLauncher:
         )
         if disc_outcome is CleanupOutcome.FOREIGN_INSTANCE:
             raise MetadataCleanupError(
-                "refusing clean receipt with foreign server.json present"
+                "refusing shutdown completion with foreign server.json present"
             )
         if self._control_token is not None:
             token_outcome = unlink_owned_control_token(
@@ -328,7 +339,7 @@ class ServerLauncher:
             )
             if token_outcome is CleanupOutcome.FOREIGN_INSTANCE:
                 raise MetadataCleanupError(
-                    "refusing clean receipt with foreign control.token present"
+                    "refusing shutdown completion with foreign control.token present"
                 )
         if (
             self._t0_discovery_cleanup_error is not None
@@ -336,25 +347,8 @@ class ServerLauncher:
         ):
             raise self._t0_discovery_cleanup_error
 
-        if self._server_published:
-            receipt = ShutdownReceipt(
-                server_instance_id=self._server_instance_id,
-                pid=os.getpid(),
-                status="CLEAN_SHUTDOWN",
-                completed_at=datetime.now(UTC),
-            )
-            write_secure_local_file(
-                shutdown_receipt_path(self._state_dir, self._server_instance_id),
-                receipt.model_dump_json(indent=2),
-            )
-            self._shutdown_receipt = receipt
-            self._receipt_written = True
-            self._settled_cleanly = True
-        else:
-            # Startup/bind failure or signal-before-publish: metadata cleaned, no clean receipt.
-            self._settled_cleanly = self._signal_before_publish
-
         self._cleanup_closed = True
+        self._pre_release_settled = True
 
     async def _start_coordinator(
         self, runtime_config: RuntimeConfig
@@ -386,8 +380,11 @@ class ServerLauncher:
 
         self._coordinator = coordinator
         token = secrets.token_hex(32)
-        self._control_token = token
         try:
+            clear_stale_server_discovery_under_lock(
+                self._state_dir, self._server_instance_id
+            )
+            clear_stale_control_token_under_lock(self._state_dir)
             prune_shutdown_receipts(self._state_dir, keep=8)
             write_secure_local_file(control_token_path(self._state_dir), token)
         except BaseException:
@@ -397,6 +394,7 @@ class ServerLauncher:
             except BaseException:
                 pass
             raise
+        self._control_token = token
         return coordinator
 
     def _on_bound(self, bound_port: int) -> None:
@@ -421,6 +419,8 @@ class ServerLauncher:
         self._server_published = True
 
     def _on_http_shutdown_requested(self) -> None:
+        if self._cleanup_closed:
+            return
         self._safe_t0_unlink_discovery()
         if self._uvicorn_server is not None:
             self._uvicorn_server.should_exit = True
@@ -510,31 +510,72 @@ class ServerLauncher:
         ):
             self._shutdown_failed = True
 
-        # WPD-F03: if ownership.release() failed AFTER on_shutdown_settled wrote receipt,
-        # coordinator._shutdown_done remains False (lock never released); revoke the
-        # receipt so no false CLEAN_SHUTDOWN exists, and exit 4.
-        if (
-            self._receipt_written
-            and self._coordinator is not None
-            and not getattr(self._coordinator, "_shutdown_done", False)
-        ):
-            self._shutdown_failed = True
-            self._settled_cleanly = False
-            self._shutdown_receipt = None
-            try:
-                unlink_owned_shutdown_receipt(self._state_dir, self._server_instance_id)
-            except BaseException:
-                pass
+        coordinator = self._coordinator
+        shutdown_done = bool(
+            coordinator is not None and getattr(coordinator, "_shutdown_done", False)
+        )
+        ownership = (
+            getattr(getattr(coordinator, "_deps", None), "ownership", None)
+            if coordinator is not None
+            else None
+        )
+        if isinstance(ownership, RuntimeOwnershipLock):
+            ownership_state = ownership.inspect_kernel_ownership()
+            release_confirmed = (
+                ownership.release_outcome is OwnershipReleaseOutcome.CONFIRMED_RELEASED
+            )
+        elif ownership is not None and hasattr(ownership, "path"):
+            ownership_state = inspect_process_flock_state(
+                os.getpid(),
+                ownership.path,
+                has_open_fd=bool(getattr(ownership, "acquired", False)),
+            )
+            release_confirmed = True
+        else:
+            ownership_state = LockOwnershipState.UNKNOWN
+            release_confirmed = False
+
+        ownership_confirmed_released = (
+            ownership is not None
+            and not ownership.acquired
+            and ownership_state is LockOwnershipState.NOT_HELD
+            and release_confirmed
+        )
 
         if self._startup_exit_code is not None:
             return self._startup_exit_code
-        if startup_system_exit:
+        if startup_system_exit or self._shutdown_failed:
             return EXIT_FATAL_LIFECYCLE
-        if self._shutdown_failed:
+        if (
+            not shutdown_done
+            or not self._pre_release_settled
+            or not ownership_confirmed_released
+        ):
             return EXIT_FATAL_LIFECYCLE
-        if self._settled_cleanly:
-            return EXIT_OK
-        return EXIT_FATAL_LIFECYCLE
+        if not self._server_published:
+            return EXIT_OK if self._signal_before_publish else EXIT_FATAL_LIFECYCLE
+
+        # D11-02-AMENDMENT-01: Final mandatory commit — atomic instance-scoped CLEAN_SHUTDOWN receipt.
+        receipt = ShutdownReceipt(
+            server_instance_id=self._server_instance_id,
+            pid=os.getpid(),
+            status="CLEAN_SHUTDOWN",
+            completed_at=datetime.now(UTC),
+        )
+        try:
+            write_secure_local_file(
+                shutdown_receipt_path(self._state_dir, self._server_instance_id),
+                receipt.model_dump_json(indent=2),
+            )
+        except BaseException:
+            self._shutdown_failed = True
+            self._settled_cleanly = False
+            self._shutdown_receipt = None
+            return EXIT_FATAL_LIFECYCLE
+
+        self._shutdown_receipt = receipt
+        self._settled_cleanly = True
+        return EXIT_OK
 
     def run(self, *, sockets: list[Any] | None = None) -> int:
         """Execute the managed single-worker Uvicorn server synchronously."""

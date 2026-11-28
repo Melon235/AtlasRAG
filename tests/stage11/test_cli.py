@@ -1158,3 +1158,288 @@ def test_cli_recover_no_wait_and_human_text_rendering(
         assert exit_codes == [EXIT_OK]
     finally:
         lock.release()
+
+
+def test_e0_01_maintenance_control_stability_and_replacement_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E0-01: sync and recover verify instance/pidfd/flock/discovery/token stability before POST and each poll."""
+
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+    monkeypatch.setattr(ownership_module, "canonical_lock_path", lambda: lock_path)
+    orig_verify = cli_module.verify_target_process
+    orig_stability = cli_module._verify_pre_shutdown_stability
+
+    for cmd in ("sync", "recover"):
+        state_dir = tmp_path / f"state_{cmd}"
+        sleeper = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"]
+        )
+        try:
+            ticks = read_proc_stat_starttime(sleeper.pid)
+            boot = read_boot_id()
+            auth_headers_seen: list[str] = []
+            get_requests = 0
+            post_requests = 0
+            op_id = "op_" + "a" * 24
+            expected_kind = cmd.upper()
+
+            class _ControlRaceHandler(BaseHTTPRequestHandler):
+                def do_POST(self) -> None:
+                    nonlocal post_requests
+                    post_requests += 1
+                    auth_headers_seen.append(str(self.headers.get("authorization")))
+                    body = json.dumps(
+                        {
+                            "operation_id": op_id,
+                            "kind": expected_kind,
+                            "status": "RUNNING",
+                            "accepted_at": "2026-01-01T00:00:00Z",
+                        }
+                    ).encode()
+                    self.send_response(202)
+                    self.send_header("content-type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(body)
+
+                def do_GET(self) -> None:
+                    nonlocal get_requests
+                    get_requests += 1
+                    body = json.dumps(
+                        {
+                            "operation_id": op_id,
+                            "kind": expected_kind,
+                            "status": "RUNNING",
+                            "runtime_mode": "MAINTENANCE",
+                            "started_at": "2026-01-01T00:00:00Z",
+                        }
+                    ).encode()
+                    self.send_response(200)
+                    self.send_header("content-type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(body)
+
+                def log_message(self, *_args: object) -> None:
+                    return
+
+            srv = HTTPServer(("127.0.0.1", 0), _ControlRaceHandler)
+            srv_port = int(srv.server_address[1])
+            srv_thread = threading.Thread(target=srv.serve_forever, daemon=True)
+            srv_thread.start()
+            try:
+                monkeypatch.setattr(
+                    cli_module,
+                    "verify_target_process",
+                    lambda sd: orig_verify(sd, lock_path=lock_path),
+                )
+                import atlasrag.server.auth as auth_mod
+
+                monkeypatch.setattr(
+                    auth_mod, "verify_process_holds_flock", lambda _p, _lp: True
+                )
+                monkeypatch.setattr(
+                    cli_module, "verify_process_holds_flock", lambda _p, _lp: True
+                )
+
+                write_secure_local_file(control_token_path(state_dir), "orig-token")
+                write_secure_local_file(
+                    server_discovery_path(state_dir),
+                    json.dumps(
+                        {
+                            "url": f"http://127.0.0.1:{srv_port}",
+                            "host": "127.0.0.1",
+                            "port": srv_port,
+                            "pid": sleeper.pid,
+                            "process_start_ticks": ticks,
+                            "boot_id": boot,
+                            "server_instance_id": "inst-orig",
+                            "started_at": "2026-01-01T00:00:00Z",
+                        }
+                    ),
+                )
+
+                # Case A: Pre-POST replacement rotated server_instance_id -> refuse HTTP send altogether.
+                def rotate_before_post(**kwargs: object) -> bool:
+                    write_secure_local_file(
+                        control_token_path(state_dir), "replacement-token"
+                    )
+                    return bool(orig_stability(**kwargs))
+
+                monkeypatch.setattr(
+                    cli_module, "_verify_pre_shutdown_stability", rotate_before_post
+                )
+                code_a = main(
+                    [
+                        cmd,
+                        "--state-dir",
+                        str(state_dir),
+                        "--poll-interval",
+                        "0.02",
+                        "--json",
+                    ],
+                    environ={},
+                )
+                assert code_a == 4
+                assert post_requests == 0
+                assert get_requests == 0
+                assert (
+                    json.loads(capsys.readouterr().out)["error_code"]
+                    == "UNVERIFIED_PROCESS_IDENTITY"
+                )
+
+                # Restore orig token and test Case B: replacement occurs DURING polling after 202.
+                write_secure_local_file(control_token_path(state_dir), "orig-token")
+                checks = 0
+
+                def rotate_after_post(**kwargs: object) -> bool:
+                    nonlocal checks
+                    checks += 1
+                    if checks >= 2:
+                        write_secure_local_file(
+                            server_discovery_path(state_dir),
+                            json.dumps(
+                                {
+                                    "url": f"http://127.0.0.1:{srv_port}",
+                                    "host": "127.0.0.1",
+                                    "port": srv_port,
+                                    "pid": sleeper.pid,
+                                    "process_start_ticks": ticks,
+                                    "boot_id": boot,
+                                    "server_instance_id": "inst-replacement",
+                                    "started_at": "2026-01-01T00:00:00Z",
+                                }
+                            ),
+                        )
+                    return bool(orig_stability(**kwargs))
+
+                monkeypatch.setattr(
+                    cli_module, "_verify_pre_shutdown_stability", rotate_after_post
+                )
+                code_b = main(
+                    [
+                        cmd,
+                        "--state-dir",
+                        str(state_dir),
+                        "--poll-interval",
+                        "0.02",
+                        "--json",
+                    ],
+                    environ={},
+                )
+                assert code_b == 4
+                assert post_requests == 1
+                # Must detect replacement BEFORE sending GET poll carrying orig-token!
+                assert get_requests == 0
+                assert (
+                    json.loads(capsys.readouterr().out)["error_code"]
+                    == "UNVERIFIED_PROCESS_IDENTITY"
+                )
+            finally:
+                srv.shutdown()
+                srv.server_close()
+        finally:
+            sleeper.kill()
+            sleeper.wait()
+
+
+def test_e0_02_stop_against_real_subprocesses_post_release_exit_and_release_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E0-02 cases 9, 14, 15: subprocess exit post-release without receipt or release failure fails closed (4)."""
+
+    lock_path = tmp_path / "canonical" / "runtime.lock"
+
+    def _spawn_variant(state_dir: Path, variant: str) -> subprocess.Popen[str]:
+        port = _unused_port()
+        repo_root = Path(__file__).resolve().parents[2]
+        script = f"""
+import asyncio, dataclasses, fcntl, os, signal, sys
+from pathlib import Path
+import atlasrag.runtime.ownership as ownership_mod
+ownership_mod.canonical_lock_path = lambda: Path({str(lock_path)!r})
+from atlasrag.runtime.coordinator import ApplicationCoordinator
+from atlasrag.runtime.ownership import RuntimeOwnershipLock
+from atlasrag.server import launcher as launcher_mod
+from atlasrag.server.config import ServerConfig
+from atlasrag.server.launcher import ServerLauncher
+from tests.stage11.conftest import build_test_dependencies, sample_runtime_config
+
+state_dir = Path({str(state_dir)!r})
+variant = {variant!r}
+payload = sample_runtime_config().model_dump(mode="python")
+payload["maintenance"]["shutdown_timeout_seconds"] = 1.0
+runtime_cfg = type(sample_runtime_config()).model_validate(payload)
+server_cfg = ServerConfig(host="127.0.0.1", port={port}, state_directory=str(state_dir))
+
+async def factory(cfg, bus, settled):
+    deps, harness = build_test_dependencies(
+        on_shutdown_settled=settled,
+        shutdown_timeout_seconds=1.0,
+    )
+    harness.ownership = RuntimeOwnershipLock()
+    deps_locked = dataclasses.replace(deps, ownership=harness.ownership, on_shutdown_settled=settled)
+    coord = await ApplicationCoordinator.start(deps_locked)
+    orig_release = harness.ownership.release
+    if variant == "exit_after_release_before_receipt":
+        def exit_early():
+            orig_release()
+            os._exit(0)
+        harness.ownership.release = exit_early
+    elif variant == "release_fails_after_unlock":
+        orig_flock = ownership_mod.fcntl.flock
+        def bad_unlock(fd, op):
+            if op == fcntl.LOCK_UN:
+                raise OSError("unlock error")
+            return orig_flock(fd, op)
+        ownership_mod.fcntl.flock = bad_unlock
+    return coord
+
+code = ServerLauncher(
+    runtime_config=runtime_cfg,
+    server_config=server_cfg,
+    coordinator_factory=factory,
+    log_level="warning",
+).run()
+raise SystemExit(code)
+"""
+        env = {**os.environ, "PYTHONPATH": f"{repo_root / 'src'}:{repo_root}"}
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                out, err = proc.communicate()
+                raise AssertionError(f"subprocess exited early: {out}\n{err}")
+            if server_discovery_path(state_dir).exists():
+                return proc
+            time.sleep(0.03)
+        raise AssertionError("timed out waiting for server.json")
+
+    for variant in ("exit_after_release_before_receipt", "release_fails_after_unlock"):
+        sd = tmp_path / variant
+        proc = _spawn_variant(sd, variant)
+        try:
+            old_fn = ownership_module.canonical_lock_path
+            ownership_module.canonical_lock_path = lambda: lock_path
+            try:
+                stop_code = main(
+                    ["stop", "--state-dir", str(sd), "--timeout", "5.0", "--json"],
+                    environ={},
+                )
+            finally:
+                ownership_module.canonical_lock_path = old_fn
+            assert stop_code == 4
+            assert (
+                json.loads(capsys.readouterr().out)["error_code"] == "UNVERIFIED_EXIT"
+            )
+            assert proc.wait(timeout=4.0) is not None
+            assert not list(sd.glob("shutdown-*.json"))
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()

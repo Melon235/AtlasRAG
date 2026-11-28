@@ -222,7 +222,7 @@ class ServerDiscoveryRecord(FrozenModel):
 
 
 class ShutdownReceipt(FrozenModel):
-    """Atomic clean-shutdown receipt written strictly under RuntimeOwnershipLock."""
+    """Instance-scoped clean-shutdown receipt committed atomically post-release."""
 
     server_instance_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
     pid: Annotated[StrictInt, Field(ge=1)]

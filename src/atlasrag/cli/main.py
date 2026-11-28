@@ -994,6 +994,19 @@ def _cmd_maintenance(
             )
             return EXIT_OPERATIONAL_ERROR
 
+        if not _verify_pre_shutdown_stability(
+            state_dir=state_dir,
+            identity=identity,
+            captured_token=token,
+            pidfd=verified.pidfd,
+        ):
+            _emit_error(
+                "Server discovery, control token, or process lock changed before maintenance transmission.",
+                json_output=bool(args.json),
+                error_code="UNVERIFIED_PROCESS_IDENTITY",
+            )
+            return EXIT_FATAL_LIFECYCLE
+
         headers = _control_headers(target_url, token)
         timeout = httpx.Timeout(
             connect=_CONNECT_TIMEOUT_SECONDS,
@@ -1013,6 +1026,13 @@ def _cmd_maintenance(
                     _emit_error(msg, json_output=bool(args.json), error_code=code)
                     return EXIT_OPERATIONAL_ERROR
                 accepted = OperationAcceptedResponse.model_validate_json(resp.text)
+                if accepted.kind.value != kind.upper():
+                    _emit_error(
+                        "Maintenance response operation kind does not match requested operation.",
+                        json_output=bool(args.json),
+                        error_code="SERVER_IDENTITY_MISMATCH",
+                    )
+                    return EXIT_FATAL_LIFECYCLE
                 if not args.wait:
                     if args.json:
                         _emit_json(accepted.model_dump(mode="json"))
@@ -1023,6 +1043,18 @@ def _cmd_maintenance(
                     return EXIT_OK
 
                 while True:
+                    if not _verify_pre_shutdown_stability(
+                        state_dir=state_dir,
+                        identity=identity,
+                        captured_token=token,
+                        pidfd=verified.pidfd,
+                    ):
+                        _emit_error(
+                            "Server discovery, control token, or process lock changed during maintenance polling.",
+                            json_output=bool(args.json),
+                            error_code="UNVERIFIED_PROCESS_IDENTITY",
+                        )
+                        return EXIT_FATAL_LIFECYCLE
                     status_resp = client.get(
                         f"/api/v1/control/operations/{accepted.operation_id}",
                         headers=headers,
@@ -1034,6 +1066,16 @@ def _cmd_maintenance(
                     current = OperationStatusResponse.model_validate_json(
                         status_resp.text
                     )
+                    if (
+                        current.operation_id != accepted.operation_id
+                        or current.kind != accepted.kind
+                    ):
+                        _emit_error(
+                            "Maintenance status response operation ID or kind mismatch.",
+                            json_output=bool(args.json),
+                            error_code="SERVER_IDENTITY_MISMATCH",
+                        )
+                        return EXIT_FATAL_LIFECYCLE
                     if current.status in {
                         OperationStatus.SUCCEEDED,
                         OperationStatus.FAILED,
@@ -1069,14 +1111,30 @@ def _cmd_maintenance(
             return EXIT_OPERATIONAL_ERROR
 
 
+def _pidfd_has_exited(pidfd: int | None) -> bool:
+    """Return True iff an opened Linux pidfd already indicates process exit."""
+
+    if pidfd is None:
+        return False
+    poller = select.poll()
+    poller.register(pidfd, select.POLLIN)
+    try:
+        return bool(poller.poll(0))
+    finally:
+        poller.unregister(pidfd)
+
+
 def _verify_pre_shutdown_stability(
     *,
     state_dir: Path,
     identity: TargetServerIdentity,
     captured_token: str,
+    pidfd: int | None = None,
 ) -> bool:
-    """Confirm discovery, token, and process lock did not change before HTTP send."""
+    """Confirm pidfd liveness, discovery, token, and process lock before HTTP send."""
 
+    if _pidfd_has_exited(pidfd):
+        return False
     try:
         latest = load_server_discovery(state_dir)
         latest_token = _read_control_token(identity.url, state_dir)
@@ -1161,6 +1219,7 @@ def _cmd_stop(args: argparse.Namespace, *, environ: Mapping[str, str]) -> int:
             )
             return EXIT_FATAL_LIFECYCLE
 
+        # Observation default preserved per D11-02/D11-11 (not an upper bound on every full shutdown path).
         wait_timeout = (
             float(args.timeout)
             if args.timeout is not None
@@ -1183,7 +1242,10 @@ def _cmd_stop(args: argparse.Namespace, *, environ: Mapping[str, str]) -> int:
             return EXIT_FATAL_LIFECYCLE
 
         if not _verify_pre_shutdown_stability(
-            state_dir=state_dir, identity=identity, captured_token=token
+            state_dir=state_dir,
+            identity=identity,
+            captured_token=token,
+            pidfd=verified.pidfd,
         ):
             _emit_error(
                 "Server discovery or control token changed during pre-shutdown verification.",
