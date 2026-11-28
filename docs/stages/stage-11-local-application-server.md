@@ -153,9 +153,9 @@ All extensions use backward-compatible defaults so existing Stage 10 callers and
 3. **Exception-Safe Maintenance Handoff Hook (`coordinator.py`, `maintenance.py` — `S11-DESIGN-F05`):**
    - Add optional `on_draining: Callable[[], None] | None = None` to `ApplicationCoordinator.run_maintenance` / `recover` and `MaintenanceCoordinator.run` / `recover_blocked`, invoked synchronously immediately after `await self._gate.begin_maintenance()` / `begin_recovery()` acquires `MaintenanceLease` (`RuntimeMode.DRAINING`) and inside `try ... except BaseException: await lease.abort(); raise` before `await lease.wait_for_drain(...)`:
      - If `on_draining()` raises for any reason, `await lease.abort()` executes immediately so the `MaintenanceLease` is **never** stranded in `DRAINING`.
-4. **Pre-Release Clean-Shutdown Metadata Hook (`coordinator.py`, `composition.py` — Final Launcher Closure):**
+4. **Pre-Release Shared Metadata Cleanup Hook (`coordinator.py`, `composition.py`, `D11-02-AMENDMENT-01`):**
    - Add optional `on_shutdown_settled: Callable[[], Awaitable[None] | None] | None = None` on `CoordinatorDependencies` / `ApplicationComposition.start(...)`, invoked inside `ApplicationCoordinator.shutdown()` **strictly after** `await self._deps.close_resources()` succeeds and **strictly before** `self._deps.ownership.release()`.
-   - Ensures instance-owned `control.token` / `server.json` removal and `shutdown-<server_instance_id>.json` receipt creation execute atomically under `RuntimeOwnershipLock`, eliminating any check-and-delete race with a newly starting server, and ensuring zero cleanup/receipt emission if `RuntimeShutdownFailedError` or `close_resources()` failure prevents lock release.
+   - Verifies maintenance settlement and performs instance-verified removal of shared discovery/control metadata (`server.json`, `control.token`) strictly under `RuntimeOwnershipLock`, while never writing `CLEAN_SHUTDOWN` prior to `ownership.release()`. If `RuntimeShutdownFailedError`, `close_resources()`, maintenance settlement, or shared cleanup fails, `ownership.release()` is not executed and no clean receipt is ever published. Under `D11-02-AMENDMENT-01`, the instance-scoped `shutdown-<server_instance_id>.json` (`CLEAN_SHUTDOWN`) commit marker is published only **after** `ownership.release()` and all mandatory lifecycle checks succeed.
 5. **Per-Invocation `ProductionObserver` Routing (`production.py`, `coordinator.py`, `composition.py`):**
    - Wire an invocation-scoped `ProductionObserver` multiplexer (`InvocationObserverMux`, dispatching strictly by `event.invocation_id or current_invocation_id()`) into `LocalEvidenceServices.observer` and `RagCoreServices.observer` in `build_default_business`, accepted via optional `observer: ProductionObserver | None = None` on `ApplicationComposition.start(...)`.
 6. **Truthful `query_cache` Health Projection & Bounded Status Read (`health.py`, `coordinator.py`):**
@@ -219,9 +219,9 @@ src/atlasrag/
 
 #### Ownership-Safe Startup & Metadata Replacement Invariants
 
-1. **Zero pre-lock state mutation:** Before `RuntimeOwnershipLock.acquire()` succeeds inside `ApplicationComposition.start()`, the process **must not** create, overwrite, rotate, or remove `control.token`, `server.json`, `shutdown-*.json`, or any shared server state file.
+1. **Zero pre-lock state mutation:** Before `RuntimeOwnershipLock.acquire()` succeeds inside `ApplicationComposition.start()`, the process **must not** create, overwrite, rotate, or remove `control.token`, `server.json`, `shutdown-*.json`, or any shared server state file. Any shutdown signal received prior to acquiring ownership aborts startup without mutating shared metadata.
 2. **Failed competing startup:** A second `atlasrag serve` hits `RuntimeOwnershipConflictError` inside `ApplicationComposition.start()` and exits `3` without altering the running server's `control.token`, `server.json`, `runtime.lock`, or resources.
-3. **Socket bind & metadata ordering:** `ServerLauncher` wraps `uvicorn.Server.startup()` so `control.token` is written only after lock acquisition, and `server.json` is written **only after** both `lifespan` startup and Uvicorn TCP socket binding succeed:
+3. **Stale recovery, socket bind & metadata ordering:** Once `RuntimeOwnershipLock.acquire()` succeeds, the new process is the sole runtime owner: any stale `server.json` left by an abnormally exited prior runtime is safely cleared/replaced under verified directory and `O_NOFOLLOW` regular-file rules, `control.token` is published under authoritative ownership, and new `server.json` is written **only after** both `lifespan` startup and Uvicorn TCP socket binding succeed:
 
 ```text
 1. Pre-Lock Config Load & Validation
@@ -230,77 +230,89 @@ src/atlasrag/
 2. Uvicorn Server.startup() -> Step A: FastAPI Lifespan Startup
    ├── coordinator = await ApplicationComposition(runtime_config).start(
    │       observer=event_bus,
-   │       on_shutdown_settled=owned_cleanup_and_receipt,
+   │       on_shutdown_settled=owned_shared_cleanup,
    │   )
    │    ├── RuntimeOwnershipLock.acquire()
    │    │    └── RuntimeOwnershipConflictError -> abort -> exit 3 (shared files untouched)
    │    ├── Open PG/Milvus/Redis/HTTP/Qwen(+BGE), reconcile, source_safety, verify
-   │    │    ├── Hard failure -> cleanup + release lock (unless cleanup failed) -> exit 4 (disk untouched)
+   │    │    ├── Hard failure -> cleanup + release lock (unless cleanup failed) -> exit 4 (shared files untouched)
    │    │    └── Unsafe KB -> RuntimeMode.BLOCKED (alive, not ready) | Safe -> SERVING
-   └── NOW (authoritative lock owner — safe replacement of any stale files from dead processes):
+   └── NOW (authoritative lock owner — safe recovery of stale files from dead processes):
         ├── Generate server_instance_id = uuid4().hex, control_token = secrets.token_hex(32)
+        ├── Safely clear any stale server.json left by a dead runtime (O_NOFOLLOW/UID/regular verified)
         ├── Prune stale shutdown-*.json receipts beyond latest 8 (under lock ownership)
         └── Atomically write ~/.local/state/atlasrag/control.token (0o700 dir, temp+replace, 0o600, O_NOFOLLOW)
 
 3. Uvicorn Server.startup() -> Step B: TCP Socket Bind (127.0.0.1:<port>)
-   ├── Bind fails (e.g., EADDRINUSE):
+   ├── Bind fails (e.g., EADDRINUSE) or signal during startup:
    │    ├── Uvicorn runs lifespan shutdown -> coordinator.shutdown()
-   │    ├── Pre-release on_shutdown_settled removes instance control.token (under lock!)
-   │    ├── server.json was NEVER written -> lock released -> exit 4
+   │    ├── Pre-release on_shutdown_settled cleans instance control.token & any discovery (under lock!)
+   │    ├── server.json is absent, ownership released cleanly (unless runtime unsettled) -> exit 4 (no receipt)
    └── Bind succeeds (socket listening, actual bound port captured):
         ├── Read /proc/self/stat starttime (field 22) & /proc/sys/kernel/random/boot_id
         └── Atomically write ~/.local/state/atlasrag/server.json (0o600, O_NOFOLLOW)
             {url, host, port, pid, process_start_ticks, boot_id, server_instance_id, started_at}
 ```
 
-#### Ownership-Safe Cleanup & Complete Bounded Shutdown Timeline
+#### `D11-02-AMENDMENT-01` — Instance-Scoped Post-Release Clean Receipt & Bounded Shutdown Timeline
 
-All shared-file cleanup (`server.json`, `control.token`) and clean-shutdown receipt emission (`shutdown-<server_instance_id>.json`) run **strictly under authoritative `RuntimeOwnershipLock` ownership**—never after `ownership.release()`—eliminating any check-and-delete race with a newly starting server:
+- **Previous protocol & compound failure limitation:** The original WP-D design wrote `shutdown-<server_instance_id>.json` (`status="CLEAN_SHUTDOWN"`) inside `on_shutdown_settled()` *before* `RuntimeOwnershipLock.release()`. Because `shutdown-<server_instance_id>.json` existed on disk before `ownership.release()`, two compound failures could not be resolved fail-closed:
+  1. `ownership.release()` failing *after* actually dropping the kernel `flock` (for instance `flock(LOCK_UN)` or `os.close(fd)` error after OS descriptor/lock release), where post-release state-directory deletion is forbidden (`S11-01`).
+  2. `ownership.release()` failure followed by receipt-revocation (`unlink`) failure.
+  In both cases `ServerLauncher` exited `4` while a schema-valid `"CLEAN_SHUTDOWN"` receipt remained on disk, causing `atlasrag stop` (which observes non-child exit via `pidfd` without POSIX exit code) to verify the unrevoked receipt and exit `0`.
+- **Approved replacement protocol (`D11-02-AMENDMENT-01`):**
+  1. All **shared** metadata cleanup (`server.json`, `control.token`), runtime task settlement, maintenance settlement, and `close_resources()` run strictly **under `RuntimeOwnershipLock`** inside `coordinator.shutdown()` (`on_shutdown_settled`) and **must never** emit `"CLEAN_SHUTDOWN"` before `ownership.release()`.
+  2. `RuntimeOwnershipLock.release()` tracks actual OS descriptor/release state without inferring kernel lock ownership from `_shutdown_done == False`, `_fd is None` before close, raised exceptions alone, or lock-file existence, and never blindly retries `close(fd)` on a closed/reused descriptor number.
+  3. Only after `coordinator.shutdown()`, verified `ownership.release()`, and all mandatory lifecycle checks succeed does `ServerLauncher` atomically publish this instance's **`shutdown-<server_instance_id>.json`** (`status="CLEAN_SHUTDOWN"`, integer `pid`) as the final commit marker before exiting `0`.
+- **Narrow post-release write exception & preserved ownership guarantees:** Only atomic temp-file creation + `os.replace` for this instance's own UUID-keyed `shutdown-<server_instance_id>.json` is permitted after `ownership.release()`. The old launcher must never create, overwrite, or remove `server.json`, `control.token`, `runtime.lock`, or another instance's receipts, must never prune receipt history (`prune_shutdown_receipts` remains lock-protected at startup), must never delete/replace `state_dir`, and must guard delayed signal/shutdown callbacks with `_cleanup_closed` so they cannot mutate shared metadata after release. If receipt publication fails or the process exits after `ownership.release()` before publication completes, no valid `"CLEAN_SHUTDOWN"` receipt exists and `stop` fails closed with exit `4`.
 
 ```text
 Shutdown Trigger (SIGINT / SIGTERM / POST /api/v1/control/shutdown)
   │
   ├─ T=0 (Prompt Admission Closure & Discovery Removal — under RuntimeOwnershipLock):
   │   ├── await coordinator.gate.begin_shutdown()  (all new /query, /query/stream, /control/sync|recover -> 503)
-  │   ├── Instance-owned unlink of server.json (only if server_instance_id matches)
+  │   ├── Instance-owned unlink of server.json (only if _cleanup_closed is False and server_instance_id matches)
   │   └── Set uvicorn.Server.should_exit = True
   │
   ├─ T=0 .. T_http (Bounded Uvicorn Connection Drain):
   │   ├── Uvicorn stops accepting connections & drains active HTTP/SSE tasks up to:
   │   │     timeout_graceful_shutdown = runtime_cfg.maintenance.shutdown_timeout_seconds
-  │   │   (never indefinite; stalled sockets cannot postpone coordinator shutdown)
   │   └── At expiry, Uvicorn cancels remaining ASGI tasks -> QuerySupervisor cancels query_task
   │       and awaits task settlement before returning from ASGI handlers
   │
-  └─ T_http .. T_coord (Authoritative Runtime Settlement — Sole Cleanup Owner):
-      └── FastAPI lifespan teardown invokes await coordinator.shutdown() (ONCE, no duplicate cleanup):
-           ├── tasks.close() -> await tasks.wait_empty(timeout=shutdown_timeout_seconds)
-           ├── If unsettled: await begin_guard_shutdown() -> tasks.cancel_all()
-           │     -> await asyncio.wait(remaining, timeout=shutdown_timeout_seconds)
-           ├── If still pending -> raises RuntimeShutdownFailedError:
-           │     ├── on_shutdown_settled NOT called; NO clean-shutdown receipt written
-           │     ├── RuntimeOwnershipLock RETAINED for as long as live process persists
-           │     └── ServerLauncher reports shutdown failure & attempts exit code 4
-           └── If settled:
-                 ├── close_resources() (if error -> raises, no receipt, lock RETAINED, exit 4)
-                 ├── on_shutdown_settled() runs STILL HOLDING RuntimeOwnershipLock:
-                 │     ├── Instance-verified unlink of server.json (if still present)
-                 │     ├── Instance-verified unlink of control.token
-                 │     └── Atomic write of shutdown-<server_instance_id>.json
-                 │         {"server_instance_id": ..., "pid": ..., "status": "CLEAN_SHUTDOWN", "completed_at": ...}
-                 ├── ownership.release() (ONLY AFTER all owned file ops finished!)
-                 └── atlasrag serve exits code 0
+  ├─ T_http .. T_coord (Authoritative Runtime Settlement & Shared Metadata Cleanup — Sole Owner):
+  │   └── FastAPI lifespan teardown invokes await coordinator.shutdown() (ONCE):
+  │        ├── tasks.close() -> await tasks.wait_empty(timeout=shutdown_timeout_seconds)
+  │        ├── If unsettled: await begin_guard_shutdown() -> tasks.cancel_all()
+  │        │     -> await asyncio.wait(remaining, timeout=shutdown_timeout_seconds)
+  │        ├── If still pending -> raises RuntimeShutdownFailedError:
+  │        │     ├── on_shutdown_settled NOT called; lock RETAINED while alive; NO receipt; exit 4
+  │        ├── close_resources() (if error -> raises, lock RETAINED, NO receipt, exit 4)
+  │        ├── on_shutdown_settled() runs STILL HOLDING RuntimeOwnershipLock:
+  │        │     ├── Verify service.operations.wait_active(...) (if unsettled -> raises, NO release, NO receipt, exit 4)
+  │        │     ├── Instance-verified unlink of server.json (if still present)
+  │        │     ├── Instance-verified unlink of control.token
+  │        │     └── Mark _cleanup_closed = True (DO NOT write CLEAN_SHUTDOWN yet!)
+  │        ├── ownership.release() (any pre-unlock, post-unlock, or ambiguous close failure -> exit 4, NO receipt!)
+  │        └── Mark coordinator._shutdown_done = True
+  │
+  └─ Final Post-Release Instance Commit (only if all mandatory checks & release succeeded cleanly):
+      ├── Atomically write shutdown-<server_instance_id>.json (write_secure_local_file, integer pid)
+      │     {"server_instance_id": ..., "pid": <int>, "status": "CLEAN_SHUTDOWN", "completed_at": ...}
+      ├── If receipt write fails -> NO valid receipt on disk -> atlasrag serve exits 4
+      └── Otherwise -> atlasrag serve exits code 0
 ```
 
 #### Unresolved Worker, Live Process State, and Clean-Shutdown Distinction
 
 - **Five explicitly distinguished outcomes:**
   1. **Shutdown accepted:** `POST /control/shutdown` returned `202`, `gate.begin_shutdown()` closed admission.
-  2. **Clean runtime shutdown (exit `0`):** Original `pidfd`/process exited **AND** `shutdown-<server_instance_id>.json` exists with matching `server_instance_id`, `pid`, and `status == "CLEAN_SHUTDOWN"`.
-  3. **Runtime shutdown failure (exit `4`):** `coordinator.shutdown()` raised `RuntimeShutdownFailedError` or `close_resources()` failed -> **no** clean-shutdown receipt written, `RuntimeOwnershipLock` retained while process remains alive, `ServerLauncher` reports runtime shutdown failure and returns exit code `4`. Note: **setting exit code `4` does not by itself guarantee immediate OS process exit** if non-daemon Python threads or blocked C/SDK workers keep the interpreter alive; while alive, the OS process continues holding `RuntimeOwnershipLock` (blocking competing startups with `RuntimeOwnershipConflictError`).
+  2. **Clean runtime shutdown (exit `0`):** Original `pidfd`/process exited **AND** `shutdown-<server_instance_id>.json` exists with matching `server_instance_id`, integer `pid`, and `status == "CLEAN_SHUTDOWN"`. A `CLEAN_SHUTDOWN` receipt attests that runtime settlement, resource cleanup, shared metadata cleanup, and `ownership.release()` succeeded (it does not independently report a non-child process's POSIX exit code via `pidfd`).
+  3. **Runtime / release / receipt failure (exit `4`):** `RuntimeShutdownFailedError`, `close_resources()` failure, shared cleanup failure, `ownership.release()` failure (whether lock remained held, released prior to error, or descriptor state became ambiguous), or post-release receipt write failure -> **no** valid clean-shutdown receipt on disk, `ServerLauncher` exits `4`. When pre-release settlement/cleanup failed, `RuntimeOwnershipLock` stays held while the OS process persists.
   4. **Forced process termination (exit `4`):** `atlasrag stop --force` escalated to `SIGTERM`/`SIGKILL` via retained `pidfd` after timeout -> OS kernel reaps process and releases `flock` fd; `stop` exits `4` (never `0`).
-  5. **Unverified process exit (exit `4`):** Original `pidfd`/PID disappears (crash, OOM kill, external `kill -9`) **without** a valid `shutdown-<server_instance_id>.json` receipt (or `stop` lacked `pidfd` verification). `stop` exits `4` (never `0`).
-- **Subsequent startup recovery:** After any failed shutdown, forced termination, or unverified exit, the next `atlasrag serve` acquires `RuntimeOwnershipLock` safely (replacing any stale files only after lock acquisition) and executes `StartupReconciliation` (`§80`).
+  5. **Unverified process exit (exit `4`):** Original `pidfd`/PID disappears (crash, OOM kill, external `kill -9`, or exit after `release()` before receipt publication) **without** a valid `shutdown-<server_instance_id>.json` receipt (or `stop` lacked `pidfd` verification). `stop` exits `4` (never `0`).
+- **Required E0-02 negative tests:** Must cover normal post-release receipt timing, resource/maintenance/metadata failures yielding no receipt, release failing before unlock, release failing after actual unlock, ambiguous unlock/close state, receipt publication failure post-release, exit between `release()` and receipt write, immediate new-server startup during the old receipt publication window without touching new-server metadata, delayed signal callbacks blocked from shared mutation, and `stop` returning `4` vs `0`.
+- **Subsequent startup recovery:** After any failed shutdown, forced termination, or unverified exit, the next `atlasrag serve` acquires `RuntimeOwnershipLock` safely (clearing stale `server.json` & replacing `control.token` only after lock acquisition) and executes `StartupReconciliation` (`§80`).
 
 ---
 
@@ -515,9 +527,9 @@ Implemented with `argparse` + `httpx` in `src/atlasrag/cli/main.py` and `src/atl
 | `atlasrag ask <query>` | `--session-id ID`, `--new-session`, `--file-name`, `--source-type`, `--sheet-name`, `--stream`, `--timeout 120.0`, `--json`, `--server-url` | `3.0s` connect; `120.0s` (or `--timeout`) read/stream | Reuses `cli_session.json` (`0o600`) or `--session-id`; `X-AtlasRAG-Client: cli`; prints answer + citations + `[cache=..., trace=..., elapsed=...ms]` or `--json`. |
 | `atlasrag health` | `--live` \| `--ready` (default `--ready`), `--json`, `--server-url` | `3.0s` connect; `10.0s` read | Knowledge/Host; exit `0` if live/ready, `1` if `503`/unhealthy, `3` unreachable. |
 | `atlasrag status` | `--refresh`, `--json`, `--server-url` | `3.0s` connect; `10.0s` read | Knowledge/Host; safe status table or JSON; exit `0`, `1`, `3`. |
-| `atlasrag sync` | `--wait` / `--no-wait` (default `--wait`), `--poll-interval 1.0`, `--json`, `--server-url` | `3.0s` connect; `10.0s` per request | Control (`control.token` on validated loopback); exit `0` only if terminal AND `serving_safety == SAFE_TO_SERVE`, `1` otherwise. |
-| `atlasrag recover` | `--wait` / `--no-wait` (default `--wait`), `--poll-interval 1.0`, `--json`, `--server-url` | `3.0s` connect; `10.0s` per request | Control (`control.token`); exit `0` only if terminal AND `serving_safety == SAFE_TO_SERVE`, `1` otherwise. |
-| `atlasrag stop` | `--timeout <seconds>`, `--force`, `--json`, `--server-url` | `3.0s` connect; `10.0s` HTTP trigger | Control (`control.token`); pre-shutdown identity & `pidfd` capture, clean-receipt verification, verified `pidfd` escalation. |
+| `atlasrag sync` | `--wait` / `--no-wait` (default `--wait`), `--poll-interval 1.0`, `--json`, `--server-url` | `3.0s` connect; `10.0s` per request | Control (`control.token` on validated loopback); verifies instance/pidfd/flock/discovery/token stability before `POST` & every poll `GET` (never switches instances), validates `operation_id`/`kind`, exits `0` only on terminal `SAFE_TO_SERVE`. |
+| `atlasrag recover` | `--wait` / `--no-wait` (default `--wait`), `--poll-interval 1.0`, `--json`, `--server-url` | `3.0s` connect; `10.0s` per request | Control (`control.token`); same pre-send & per-poll instance/pidfd/flock/discovery/token stability check and `operation_id`/`kind` check; exits `0` only on terminal `SAFE_TO_SERVE`. |
+| `atlasrag stop` | `--timeout <seconds>`, `--force`, `--json`, `--server-url` | `3.0s` connect; `10.0s` HTTP trigger | Control (`control.token`); pre-shutdown identity, stability & `pidfd` capture (no rediscovery after shutdown starts), post-release `CLEAN_SHUTDOWN` receipt verification, verified `pidfd` escalation. |
 
 - **Discovery precedence:** `--server-url` > `ATLASRAG_SERVER_URL` > `~/.local/state/atlasrag/server.json` (`url`) > `http://127.0.0.1:8000`.
 - **Thin-client rule:** Only `serve` imports/runs `ApplicationComposition`.
@@ -530,10 +542,10 @@ Implemented with `argparse` + `httpx` in `src/atlasrag/cli/main.py` and `src/atl
    - Verify `boot_id == /proc/sys/kernel/random/boot_id`.
    - Open `pidfd = os.pidfd_open(pid, 0)`, then **re-verify** `/proc/{pid}/stat` `starttime == process_start_ticks` and `uid == os.getuid()` **after** opening `pidfd`, and verify `runtime.lock` is actively `flock`-held.
    - If `--force` is requested and `server.json` is missing/unsafe, `pidfd` is unsupported, or process-start verification fails -> **refuse `--force` operation immediately** (exit `4`) without signalling any process!
-   - Retain this verified `pidfd` handle and `TargetServerIdentity` in memory for the **entire** `stop` command. **Never re-read `server.json` after sending the shutdown request.**
+   - Retain this verified `pidfd` handle and `TargetServerIdentity` in memory for the **entire** `stop` command. **Never re-read `server.json` after sending the shutdown request.** (Before initial `POST`, also confirm discovery, `control.token`, `starttime`, and `flock` did not change.)
 2. **Send `POST /api/v1/control/shutdown`** (carrying `control.token` captured before shutdown; ignore subsequent `server.json` removal or replacement by a new server).
-3. **Wait for retained `pidfd` exit** up to `--timeout` (`2 * shutdown_timeout_seconds + 5.0` default):
-   - When `pidfd` becomes readable (original process exited): check for `shutdown-<target.server_instance_id>.json` (`O_NOFOLLOW`, UID, `0o600`) with matching `server_instance_id`, `pid`, and `status == "CLEAN_SHUTDOWN"`:
+3. **Wait for retained `pidfd` exit** up to `--timeout` (`2 * shutdown_timeout_seconds + 5.0` default — note this default is an observation timeout, not an upper bound for every sequential shutdown path; long-running tests specify explicit timeouts):
+   - When `pidfd` becomes readable (original process exited): check for `shutdown-<target.server_instance_id>.json` (`O_NOFOLLOW`, UID, `0o600`) with matching `server_instance_id`, integer `pid`, and `status == "CLEAN_SHUTDOWN"` (which attests runtime settlement, cleanup, shared metadata cleanup, and `ownership.release()`, not the non-child process's unavailable POSIX exit code):
      - **Receipt valid:** unlink consumed receipt, exit `0` (**Clean Runtime Shutdown**).
      - **Receipt missing/invalid:** exit `4` (**Unverified Process Exit** — never exit `0`!).
    - If `pidfd` is still alive when `--timeout` expires:
@@ -573,6 +585,7 @@ Implemented with `argparse` + `httpx` in `src/atlasrag/cli/main.py` and `src/atl
 
 | Decision ID | Chosen Option | Summary |
 |---|---|---|
-| `OD11-01` | **B (OWNER_APPROVED)** | Minimal backward-compatible runtime extensions (`QueryCacheStatus` on `QueryResponseEnvelope`, `on_admitted` & exception-safe `on_draining` hooks, `on_shutdown_settled` pre-release hook, `InvocationObserverMux` wiring, `HealthRegistry.query_cache`, `ApplicationCoordinator.status(refresh=...)`). |
+| `OD11-01` | **B (OWNER_APPROVED)** | Minimal backward-compatible runtime extensions (`QueryCacheStatus` on `QueryResponseEnvelope`, `on_admitted` & exception-safe `on_draining` hooks, `on_shutdown_settled` pre-release shared-cleanup hook, `InvocationObserverMux` wiring, `HealthRegistry.query_cache`, `ApplicationCoordinator.status(refresh=...)`). |
 | `OD11-02` | **B (OWNER_APPROVED)** | `GET /api/v1/status` defaults to freshness-bounded `refresh_if_stale()`; `?refresh=true` enforces single-flight lock + server cooldown. |
 | `OD11-03` | **B (OWNER_APPROVED)** | Mandatory server-issued sessions via `POST /api/v1/sessions`; unknown/expired sessions fail `404 SESSION_NOT_FOUND`. |
+| `D11-02-AMENDMENT-01` | **OWNER_APPROVED** | Instance-Scoped Post-Release Clean Receipt: pre-release `on_shutdown_settled` performs maintenance verification and shared metadata cleanup (`server.json`, `control.token`) strictly under `RuntimeOwnershipLock`; atomic `shutdown-<server_instance_id>.json` (`CLEAN_SHUTDOWN`) is published only after confirmed `ownership.release()` and all mandatory lifecycle checks succeed. |

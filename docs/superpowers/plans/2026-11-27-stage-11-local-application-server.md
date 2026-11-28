@@ -32,7 +32,7 @@ Implementation proceeds sequentially across five dependency-ordered Work Package
 **Global Stop Conditions (Apply to ALL Work Packages):**
 1. Stop immediately if any requirement forces modifying `UserTurnRequest`, `QueryFilters`, `FinalResponse`, `FinalCitation`, `SessionQueryCache` key format, `CacheFreshnessBarrier` invariants, or `RuntimeGate` transition rules.
 2. Stop immediately if `ApplicationComposition` or `ApplicationCoordinator` would be instantiated outside `atlasrag serve`.
-3. Stop immediately if any shared state (`control.token`, `server.json`, `shutdown-*.json`) could be mutated before acquiring `RuntimeOwnershipLock` or deleted after `ownership.release()`.
+3. Stop immediately if any shared state (`control.token`, `server.json`, `runtime.lock`) or foreign receipt could be mutated before acquiring `RuntimeOwnershipLock` or deleted/modified after `ownership.release()` (post-release writes are strictly limited to this instance's atomic `shutdown-<server_instance_id>.json` under `D11-02-AMENDMENT-01`).
 4. Stop immediately if any Stage 13 MCP SDK/endpoints/migrations or Stage 12 Web frontend assets are pulled into Stage 11.
 5. Keep `make verify` green at the end of every work package.
 
@@ -156,13 +156,13 @@ Implementation proceeds sequentially across five dependency-ordered Work Package
 ### Scope
 - Implement `ServerLauncher` (`src/atlasrag/server/launcher.py`) enforcing `S11-DESIGN-F01` & `S11-DESIGN-F04` final closure:
   - `uvicorn.Server` (`workers=1`, `reload=False`, `timeout_graceful_shutdown = runtime_cfg.maintenance.shutdown_timeout_seconds`).
-  - `control.token` written ONLY after `ApplicationComposition.start()` acquires `RuntimeOwnershipLock`; `server.json` (with `pid`, `process_start_ticks`, `boot_id`, `server_instance_id`) written ONLY after socket bind succeeds.
-  - All shared-file cleanup (`server.json`, `control.token`) and clean-shutdown receipt emission (`shutdown-<server_instance_id>.json`) run inside `on_shutdown_settled` strictly **before** `ownership.release()` (zero post-release check-and-delete race).
-  - `SIGINT`/`SIGTERM` handlers close `gate.begin_shutdown()` & unlink owned `server.json` before bounded Uvicorn drain and single `coordinator.shutdown()` call; `RuntimeShutdownFailedError` / cleanup failure skips clean receipt, retains `RuntimeOwnershipLock` while process persists, and attempts exit `4`.
+  - Stale `server.json` recovery and `control.token` publication run ONLY after `ApplicationComposition.start()` acquires `RuntimeOwnershipLock`; `server.json` (with `pid`, `process_start_ticks`, `boot_id`, `server_instance_id`) written ONLY after socket bind succeeds.
+  - All shared-file cleanup (`server.json`, `control.token`) runs inside `on_shutdown_settled` strictly **before** `ownership.release()`; per `D11-02-AMENDMENT-01`, instance-scoped `shutdown-<server_instance_id>.json` (`CLEAN_SHUTDOWN`) is written atomically ONLY **after** verified `ownership.release()` and all mandatory lifecycle checks succeed.
+  - `SIGINT`/`SIGTERM` handlers close `gate.begin_shutdown()` & unlink owned `server.json` (guarded by `_cleanup_closed`) before bounded Uvicorn drain and single `coordinator.shutdown()` call; settlement, cleanup, `ownership.release()`, or receipt publication failure writes no valid clean receipt and attempts exit `4`.
 - Implement `argparse` + `httpx` CLI (`src/atlasrag/cli/main.py` & `__init__.py`):
   - Subcommands: `serve`, `ask`, `health`, `status`, `sync`, `recover`, `stop`.
-  - Loopback URL validation before attaching `control.token`; `httpx` `follow_redirects=False` & `trust_env=False`; `O_NOFOLLOW` / `S_ISREG` / UID / `0o600` file reads.
-  - `atlasrag stop`: captures & verifies `TargetServerIdentity` + Linux `os.pidfd_open(pid, 0)` + post-open `/proc/<pid>/stat` `starttime` & `boot_id` **before** requesting shutdown (never re-reading `server.json` afterward); confirms clean shutdown only via `shutdown-<server_instance_id>.json` (`0`); returns `4` on unverified disappearance or `--force` `pidfd_send_signal` escalation; refuses unverified `--force` (`4`).
+  - Loopback URL validation before attaching `control.token`; `httpx` `follow_redirects=False` & `trust_env=False`; `O_NOFOLLOW` / `S_ISREG` / UID / `0o600` file reads; `sync`/`recover` re-verify instance/pidfd/flock/discovery/token stability before `POST` and every poll `GET`.
+  - `atlasrag stop`: captures & verifies `TargetServerIdentity` + Linux `os.pidfd_open(pid, 0)` + post-open `/proc/<pid>/stat` `starttime` & `boot_id` **before** requesting shutdown (never re-reading `server.json` afterward); confirms clean shutdown only via post-release `shutdown-<server_instance_id>.json` (`0`); returns `4` on unverified disappearance or `--force` `pidfd_send_signal` escalation; refuses unverified `--force` (`4`).
   - Consistent exit codes (`0`, `1`, `2`, `3`, `4`, `130`, `143`) and `ServingSafety`-aware `sync`/`recover` exit behavior.
 
 ### Dependencies
@@ -173,10 +173,10 @@ Implementation proceeds sequentially across five dependency-ordered Work Package
 - Updated: `scripts/check_import_boundaries.py` (enforce CLI never imports `atlasrag.runtime.composition`, `fastapi`, `uvicorn` except in `serve` handler).
 
 ### Allowed Production Changes
-- `src/atlasrag/server/launcher.py`, `src/atlasrag/cli/*`, `scripts/check_import_boundaries.py`.
+- `src/atlasrag/server/launcher.py`, `src/atlasrag/cli/*`, `scripts/check_import_boundaries.py`, `src/atlasrag/runtime/ownership.py`.
 
 ### Required Tests (`tests/stage11/`)
-- `test_launcher_lifecycle.py`: pre-lock non-mutation on competing startup, socket-bind failure (`EADDRINUSE`) leaves zero `server.json`/clean receipt and cleans token/lock under ownership, **new server starts right after `ownership.release()` without old-server cleanup race**, **unresolved worker keeps process alive / retains lock / writes zero clean receipt**, bounded Uvicorn drain with stalled socket, `shutdown_failed` -> exit `4` + lock retained, `pidfd` + post-open `starttime` + `boot_id` verification.
+- `test_launcher_lifecycle.py`: pre-lock non-mutation on competing startup, stale discovery recovery after abnormal exit, socket-bind failure (`EADDRINUSE`) leaves zero `server.json`/clean receipt and cleans token/lock under ownership, **new server starts during/right after old `ownership.release()` without old-server receipt window touching new server metadata**, release failures (before unlock, after actual unlock, ambiguous descriptor/close state) and post-release receipt write failure yield zero valid receipt and exit `4`, **unresolved worker keeps process alive / retains lock / writes zero clean receipt**, bounded Uvicorn drain with stalled socket, `shutdown_failed` -> exit `4` + lock retained, `pidfd` + post-open `starttime` + `boot_id` verification.
 - `test_cli.py`: `argparse` parsing, `httpx.MockTransport` for `ask` (JSON & `--stream`), `cli_session.json` reuse + `--new-session` + `--session-id` + auto-renew on `404`, non-loopback `control.token` refusal, redirect/proxy disabled, symlink/`0o644` state file rejection, `stop` **when server deletes `server.json` while `stop` waits**, **original PID disappears without clean receipt (`4`)**, **PID identity mismatch or unavailable `pidfd` (`4`, zero signal sent)**, `sync --wait` (`UNSAFE_TO_SERVE` -> exit `1`), `recover --wait`, exit code matrix (`0/1/2/3/4/130/143`).
 
 ### Acceptance Criteria
