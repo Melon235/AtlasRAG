@@ -1,6 +1,6 @@
 # Stage 11 Acceptance Requirements — Local Application Server
 
-- **Status:** `READY_FOR_IMPLEMENTATION_AUTHORIZATION` (Incorporates `S11-DESIGN-F01`–`F05` closure & final launcher/guardrail reconciliation — **Implementation `NOT_STARTED`**)
+- **Status:** `COMPLETE / 26_OF_26_SATISFIED` (Verified across Layers A–D with `D11-02-AMENDMENT-01` — see [`stage-11-closeout/ACCEPTANCE_AUDIT.md`](stage-11-closeout/ACCEPTANCE_AUDIT.md))
 - **Design Reference:** [`stage-11-local-application-server.md`](stage-11-local-application-server.md)
 - **Scope Authority:** [`ADR-002-part-iv-web-demo-and-mcp-milestone-refinement.md`](../architecture/ADR-002-part-iv-web-demo-and-mcp-milestone-refinement.md)
 

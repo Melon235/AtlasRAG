@@ -1,6 +1,6 @@
 # Stage 11 Detailed Design — Local Application Server
 
-- **Status:** `READY_FOR_IMPLEMENTATION_AUTHORIZATION` (Incorporates `S11-DESIGN-F01`–`F05` closure & final launcher/guardrail reconciliation — **Implementation `NOT_STARTED`**)
+- **Status:** `COMPLETE / READY_FOR_PR_REVIEW` (Incorporates `OD11-01 = B`, `OD11-02 = B`, `OD11-03 = B`, `D11-02-AMENDMENT-01`, `WP-A`..`WP-E`, and independent Layer D audit `PASS` — see [`stage-11-closeout/CLOSEOUT_REPORT.md`](stage-11-closeout/CLOSEOUT_REPORT.md))
 - **Baseline (`origin/main`):** `9cd2344f2076d60ee53568eb35aaa625474dc645` (`PR #11` & `PR #12` **MERGED**)
 - **Approved Owner Decisions:** `OD11-01 = B`, `OD11-02 = B`, `OD11-03 = B` (**OWNER_APPROVED**)
 - **Governing Authorities:**

@@ -28,19 +28,22 @@ green remote CI result.
   - [stage-10-closeout/CLOSEOUT_REPORT.md](stage-10-closeout/CLOSEOUT_REPORT.md)
   - [stage-10-closeout/ACCEPTANCE_AUDIT.md](stage-10-closeout/ACCEPTANCE_AUDIT.md)
   - [stage-10-closeout/STAGE_11_HANDOFF.md](stage-10-closeout/STAGE_11_HANDOFF.md)
-- **Stage 11 Design & Planning Records (`READY_FOR_OWNER_REVIEW` — implementation `NOT_STARTED`):**
+- **Stage 11 Closeout & Acceptance Records (`COMPLETE / READY_FOR_PR_REVIEW`):**
   - [stage-11-local-application-server.md](stage-11-local-application-server.md)
   - [stage-11-acceptance.md](stage-11-acceptance.md)
   - [2026-11-27-stage-11-local-application-server.md](../superpowers/plans/2026-11-27-stage-11-local-application-server.md)
+  - [stage-11-closeout/CLOSEOUT_REPORT.md](stage-11-closeout/CLOSEOUT_REPORT.md)
+  - [stage-11-closeout/ACCEPTANCE_AUDIT.md](stage-11-closeout/ACCEPTANCE_AUDIT.md)
+  - [stage-11-closeout/STAGE_12_HANDOFF.md](stage-11-closeout/STAGE_12_HANDOFF.md)
 
 ### Revised Stage 10–14 Allocation (Refined via ADR-002)
 
 | Stage | Title | Status | Scope Summary |
 |---|---|---|---|
 | `10` | Application Runtime Foundation | **COMPLETE / ACCEPTED / MERGED** | In-process `ApplicationComposition`, `ApplicationCoordinator`, ownership lock, gate, freshness barrier, caches (`PR #11` merged at `833d1150`) |
-| `11` | Local Application Server | `DESIGN_READY / IMPLEMENTATION_NOT_STARTED` | Long-lived loopback runtime-owning FastAPI + Uvicorn server (`atlasrag serve`), `/api/v1/*` HTTP/SSE contract, process-local sessions & operations, local transport auth, thin operational CLI, OS signals & launcher termination, framework-independent service boundary |
+| `11` | Local Application Server | **COMPLETE / READY_FOR_PR_REVIEW** | Long-lived loopback runtime-owning FastAPI + Uvicorn server (`atlasrag serve`), `/api/v1/*` HTTP/SSE contract, process-local sessions & operations, local transport auth, thin operational CLI, `D11-02-AMENDMENT-01` post-release instance receipts, real-process TCP/SSE & isolated PG/Milvus/Redis E2E |
 | `12` | Web Demo and Existing RAG Acceptance | `NOT_STARTED` | Lightweight same-origin Web Demo (static HTML/CSS/JS, Fetch, safe Markdown, minimal SSE) + bounded real-model/real-KB end-to-end RAG demonstration (Qwen/BGE/generation/Redis cache/citations); maintenance remains CLI-only |
 | `13` | Domain-Aware RAG MCP Server | `DEFERRED` | Separately designed domain-aware inbound MCP retrieval module (`search_domain_docs`, `search_external_evidence`, zero-trust ACLs/metadata pre-filtering, canonical evidence validation, permission-aware Evidence Cache, domain epochs) |
 | `14` | Deployment and Final Integration | `NOT_STARTED` | Coordinated backup/restore, full RTX 3070 8GB VRAM/OOM validation, real MinerU subprocess settlement, dual-entrypoint Web+MCP concurrency/isolation, transferred Stage 9 `S9-17`/`S9-21` performance, Final Part IV Acceptance (`§94`) |
 
-Operational CLI remains a thin control/user client, never a third independent runtime. Stage 9 remains closed under its amended acceptance scope (`12/12` raw artifacts preserved and verified), and Stage 11 has **not** started.
+Operational CLI remains a thin control/user client, never a third independent runtime. Stage 9 remains closed under its amended acceptance scope (`12/12` raw artifacts preserved and verified), Stage 12 has **not** started, and Stage 13 remains **deferred**.
